@@ -17,7 +17,6 @@ namespace   wsrv    {
         private:
             struct  sockaddr_in address;
             int                 sock;
-            int                 connection;
         
         public:
             // Contructor
@@ -31,10 +30,6 @@ namespace   wsrv    {
             // Getters
             struct  sockaddr_in getAddr();
             int                 getSock();
-            int                 getConn();
-
-            // Setters
-            void    set_connection(int con);
 
     };
 

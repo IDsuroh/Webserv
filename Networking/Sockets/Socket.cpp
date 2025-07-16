@@ -33,12 +33,3 @@ struct  sockaddr_in wsrv::Socket::getAddr() {
 int wsrv::Socket::getSock() {
     return sock;
 }
-
-int wsrv::Socket::getConn()  {
-    return connection;
-}
-
-// Setters
-void    wsrv::Socket::set_connection(int con)    {
-    connection = con;
-}
