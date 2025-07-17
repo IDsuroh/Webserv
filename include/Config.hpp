@@ -18,16 +18,17 @@ struct Server   {
 class Config    {
     
     private:
-        explicit                    Config(const std::string& filename);
-        void                        parse();
-        const std::vector<Server>&  servers() const;
-    
-    public:
-        std::string         _filename;
         std::vector<Server> _servers;
+        std::string         _filename;
 
+        void                        parse();
         void    tokenize(const std::string& contents, std::vector<std::string>& tokens);
         void    parseTokens(const std::vector<std::string>& tokens);
+
+    public:
+        explicit        Config(const std::string& filename);
+
+        const std::vector<Server>&  getServers() const;
 
 };
 
