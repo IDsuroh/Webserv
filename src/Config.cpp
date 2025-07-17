@@ -71,9 +71,7 @@ void    Config::parseTokens(const std::vector<std::string>& tokens)   {
     }
 }
 
-static void parseServerBlock(const std::vector<std::string>& tokens,
-                                size_t& i,
-                                std::vector<Server>& servers)   {
+static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, std::vector<Server>& servers)   {
     
     Server  srv;
     while (i < tokens.size() && tokens[i] != "}")   {
@@ -92,4 +90,50 @@ static void parseServerBlock(const std::vector<std::string>& tokens,
         throw   std::runtime_error("Missing '}' at the end of server block");
     ++i;
     servers.push_back(srv);
+}
+
+static void handleListen(Server& srv, const std::vector<std::string>& tokens, size_t& i)  {
+    
+    srv.listen.push_back(tokens[i++]);
+    if (tokens[i++] != ";");
+        throw   std::runtime_error("Missing ';' after listen");
+}
+
+static void handleServerName(Server& srv, const std::vector<std::string>& tokens, size_t& i){
+
+    while (tokens[i] != ";")
+        srv.server_name.push_back(tokens[i++]);
+    ++i;
+}
+
+static void handleLocation(Server& srv, const std::vector<std::string>& tokens, size_t& i)  {
+    
+    Location    loc;
+    loc.path = tokens[i++];
+    if (tokens[i++] != "{")
+        throw   std::runtime_error("Expected '{' after location");
+    parseLocationBlock(tokens, i, loc);
+    srv.locations.push_back(loc);
+}
+
+static void parseLocationBlock(const std::vector<std::string>& tokens, size_t& i, Location& loc)  {
+
+    while (i < tokens.size() && tokens[i] != "}")   {
+        std::string key = tokens[i++];
+        std::string value = tokens[i++];
+        if (tokens[i++] != ";")
+            throw   std::runtime_error("Missing ';' after " + key);
+        loc.directives[key] = value;
+    }
+
+    if (i >= tokens.size() || tokens[i] != "}")
+        throw   std::runtime_error("Missing '}' at the end of the location block");
+    ++i;
+}
+
+static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, size_t& i)  {
+    std::string value = tokens[i++];
+    if (tokens[i++] != ";")
+        throw   std::runtime_error("Missing ';' after " + key);
+    srv.directives[key] = value;
 }
