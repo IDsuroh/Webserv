@@ -13,6 +13,7 @@ struct Server   {
     std::vector<std::string>            server_name;
     std::vector<Location>               locations;
     std::map<std::string, std::string>  directives;
+    std::map<std::string, std::string>  error_pages;
 };
 
 class Config    {

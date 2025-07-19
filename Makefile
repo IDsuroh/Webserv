@@ -3,8 +3,8 @@ CXX       := c++
 CXXFLAGS  := -Wall -Wextra -Werror -std=c++98
 
 SRCS := \
-    src/main.cpp \
-#     src/ConfigParser.cpp \
+	src/main.cpp \
+	src/Config.cpp \
 #     src/SocketManager.cpp \
 #     src/EventLoop.cpp \
 #     src/RequestParser.cpp \
