@@ -10,7 +10,17 @@ static void handleLocation(Server& srv, const std::vector<std::string>& tokens, 
 static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, size_t& i);
 // ****************************************************************************
 
+// Print Tokens Tester Function
+static void	testTokens(const std::vector<std::string>& tokens)	{
+	if (tokens.empty())	{
+		std::cerr << "No tokens found in config file\n";
+		return ;
+	}
 
+	for (size_t i = 0; i < tokens.size(); ++i)
+		std::cout << "Token[" << i << "]: " << tokens[i] << std::endl;
+	std::cout << "\nParsing Tokens\n";
+}
 
 // Config Constructor
 Config::Config(const std::string& filename)
@@ -37,7 +47,10 @@ void    Config::parse() {
 
     std::vector<std::string>    tokens;
     tokenize(contents.str(), tokens);
+	testTokens(tokens);
     parseTokens(tokens);
+
+	std::cout<< "\nResult:\n";
 
 }
 
@@ -83,6 +96,8 @@ void    Config::tokenize(const std::string& contents, std::vector<std::string>& 
 void    Config::parseTokens(const std::vector<std::string>& tokens)   {
 
     size_t  i = 0;
+	while (i < tokens.size() && tokens[i] != "server")
+		++i;
     while (i < tokens.size())   {
         if (tokens[i] == "server")  {
             ++i;
@@ -92,7 +107,7 @@ void    Config::parseTokens(const std::vector<std::string>& tokens)   {
             parseServerBlock(tokens, i, _servers);
         }
         else
-            throw std::runtime_error("Unexpected token: " + tokens[i]);
+            ++i;
     }
 }
 
@@ -108,8 +123,8 @@ static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, 
             handleListen(srv, tokens, i);
         else if (key == "server_name")
             handleServerName(srv, tokens, i);
-	else if (key == "error_page")
-	    handleErrorPage(srv, tokens, i);
+		else if (key == "error_page")
+	    	handleErrorPage(srv, tokens, i);
         else if (key == "location")
             handleLocation(srv, tokens, i);
         else
