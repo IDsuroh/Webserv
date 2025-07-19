@@ -4,7 +4,9 @@
 #include <arpa/inet.h>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <iostream>
 #include <map>

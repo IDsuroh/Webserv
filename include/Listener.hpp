@@ -8,4 +8,8 @@ struct  Listener    {
     const Server*   config;
 };
 
+void    makeNonBlocking(int fd);
+int     openAndListen(const std::string& spec);
+void    setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners);
+
 #endif

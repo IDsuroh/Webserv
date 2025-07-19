@@ -5,14 +5,7 @@ CXXFLAGS  := -Wall -Wextra -Werror -std=c++98
 SRCS := \
 	src/main.cpp \
 	src/Config.cpp \
-#     src/SocketManager.cpp \
-#     src/EventLoop.cpp \
-#     src/RequestParser.cpp \
-#     src/ResponseBuilder.cpp \
-#     src/StaticFileHandler.cpp \
-#     src/CGIExecutor.cpp \
-#     src/UploadDelete.cpp \
-#     src/VirtualHost.cpp
+	src/Listener.cpp \
 
 OBJS := $(SRCS:.cpp=.o)
 
