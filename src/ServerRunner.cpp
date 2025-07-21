@@ -31,9 +31,3 @@ void    ServerRunner::buildPollFds()    {
         _fds.push_back(p);
     }
 }
-
-void    ServerRunner::handleEvents()    {
-    for (size_t i = 0; i < _fds.size(); ++i)    {
-        
-    }
-}
