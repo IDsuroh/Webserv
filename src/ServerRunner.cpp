@@ -13,7 +13,8 @@ void    makeNonBlocking(int fd) {
         perror("fcntl GETFL");
         std::exit(1);
     }
-    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+	int	newFlag = flags | O_NONBLOCK;
+    if (fcntl(fd, F_SETFL, newFlag) < 0) {
         perror("fcntl SETFL");
         std::exit(1);
     }
@@ -83,7 +84,7 @@ void    ServerRunner::run() {
 }
 
 
-
+// where I stopped exploring
 void    ServerRunner::setupPollFds()    {
     _fds.clear();
     for (size_t i = 0; i < _listeners.size(); i++)  {
@@ -92,6 +93,7 @@ void    ServerRunner::setupPollFds()    {
         p.events = POLLIN | POLLOUT;
         p.revents = 0;
         _fds.push_back(p);
+		std::cout << "on position " << i << " => " <<_listeners[i].fd << " <- pollfd structure constructed\n";
     }
 }
 
@@ -174,7 +176,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			"Content-Length: 13\r\n"
 			"Connection: close\r\n"
 			"\r\n"
-			"Hello, world!";
+			"This is a TestRun... I need to make it more than this...";
 		
 		for (size_t i = 0; i < _fds.size(); ++i)	{
 			if (_fds[i].fd == clientFd)	{
