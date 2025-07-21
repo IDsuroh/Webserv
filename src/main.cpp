@@ -1,4 +1,5 @@
 #include "../include/Config.hpp"
+#include "../include/ServerRunner.hpp"
 
 // Print Structures Tester Function
 static void	printConfig(const std::vector<Server>& servers)	{

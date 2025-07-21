@@ -16,8 +16,7 @@ class   ServerRunner  {
         std::vector<struct pollfd>         _fds;
         std::map<int, Connection>   _connections;
     
-        void    buildListeners();
-        void    buildPollFds();
+        void    setupPollFds();
         void    handleEvents(); 
         void    acceptNewClient(int listenFd, const Server* srv);
         void    readFromClient(int clientFd);
@@ -25,5 +24,9 @@ class   ServerRunner  {
         void    closeConnection(int clientFd);   
 };
 
+// Listeners
+void    makeNonBlocking(int fd);
+int     openAndListen(const std::string& spec);
+void    setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners);
 
 #endif
