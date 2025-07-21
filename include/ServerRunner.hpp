@@ -13,7 +13,7 @@ class   ServerRunner  {
     private:
         std::vector<Server>         _servers;
         std::vector<Listener>       _listeners;
-        std::vector<struct pollfd>         _fds;
+        std::vector<struct pollfd> 	_fds;
         std::map<int, Connection>   _connections;
     
         void    setupPollFds();

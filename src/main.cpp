@@ -44,20 +44,8 @@ int	main(int argc, char** argv) {
 	const std::vector<Server>& servers = config.getServers();
 	printConfig(servers);
 
-	std::vector<Listener>	listeners;
-	setupListeners(servers, listeners);
-
-	for (std::vector<Server>::size_type s = 0; s < servers.size(); ++s)	{
-		std::cout
-			<< "Server #" << s << " listens on:\n";
-		
-		const std::vector<std::string>& listenAddrs = servers[s].listen;
-		for (std::vector<std::string>::size_type i = 0;
-			i < listenAddrs.size(); ++i)	{
-				std::cout
-					<< "  - " << listenAddrs[i] << std::endl;
-		}
-	}
+	ServerRunner	runner(servers);
+	runner.run();
 
 	return 0;
 }

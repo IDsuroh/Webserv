@@ -122,3 +122,93 @@ void    ServerRunner::handleEvents()    {
             closeConnection(fd);
     }
 }
+
+void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
+	int	clientFd = accept(listenFd, NULL, NULL);
+	if (clientFd < 0)	{
+		perror("accept");
+		return;
+	}
+	makeNonBlocking(clientFd);
+
+	Connection	connection;
+	connection.fd = clientFd;
+	connection.srv = srv;
+	connection.readBuffer.clear();
+	connection.writeBuffer.clear();
+	connection.headersComplete = false;
+	_connections[clientFd] = connection;
+
+	struct pollfd	p;
+	p.fd = clientFd;
+	p.events = POLLIN;
+	p.revents = 0;
+	_fds.push_back(p);
+}
+
+void	ServerRunner::readFromClient(int clientFd)	{
+	char	buffer[4096];
+	ssize_t	n = read(clientFd, buffer, sizeof(buffer));
+	if (n < 0)	{
+		if (errno != EAGAIN && errno != EWOULDBLOCK)	{
+			perror("read");
+			closeConnection(clientFd);
+		}
+		return ;
+	}
+	if (n == 0)	{
+		closeConnection(clientFd);
+		return ;
+	}
+
+	Connection& connection = _connections[clientFd];
+	connection.readBuffer.append(buffer, n);
+
+	if (!connection.headersComplete && connection.readBuffer.find("\r\n\r\n") != std::string::npos)	{
+		connection.headersComplete = false;
+		// TODO: parse HTTP request from conn.readBuf
+        // TODO: generate HTTP response into conn.writeBuf
+
+		connection.writeBuffer =
+			"HTTP/1.1 200 OK\r\n"
+			"Content-Length: 13\r\n"
+			"Connection: close\r\n"
+			"\r\n"
+			"Hello, world!";
+		
+		for (size_t i = 0; i < _fds.size(); ++i)	{
+			if (_fds[i].fd == clientFd)	{
+				_fds[i].events = POLLOUT;
+				break;
+			}
+		}
+	}
+}
+
+void	ServerRunner::writeToClient(int clientFd)	{
+	Connection&	connection = _connections[clientFd];
+	ssize_t	n = write(clientFd, connection.writeBuffer.c_str(), connection.writeBuffer.size());
+	if (n < 0)	{
+		if (errno != EAGAIN && errno != EWOULDBLOCK) {
+			perror("write");
+			closeConnection(clientFd);
+		}
+		return ;
+	}
+	connection.writeBuffer.erase(0, n);
+	if (connection.writeBuffer.empty())	{
+		closeConnection(clientFd);
+	}
+}
+
+void	ServerRunner::closeConnection(int clientFd)	{
+	close(clientFd);
+	_connections.erase(clientFd);
+
+	for (size_t	i = 0; i < _fds.size(); ++i)	{
+		if (_fds[i].fd == clientFd)	{
+			_fds.erase(_fds.begin() + i);
+			break;
+		}
+	}
+}
