@@ -2,19 +2,7 @@
 #define CONFIG_HPP
 
 #include "Headers.hpp"
-
-struct  Location    {
-    std::map<std::string, std::string>  directives;
-    std::string                         path;
-};
-
-struct Server   {
-    std::vector<std::string>            listen;
-    std::vector<std::string>            server_name;
-    std::vector<Location>               locations;
-    std::map<std::string, std::string>  directives;
-    std::map<std::string, std::string>  error_pages;
-};
+#include "Structs.hpp"
 
 class Config    {
     
@@ -32,5 +20,9 @@ class Config    {
         const std::vector<Server>&  getServers() const;
 
 };
+
+void    makeNonBlocking(int fd);
+int     openAndListen(const std::string& spec);
+void    setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners);
 
 #endif

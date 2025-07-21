@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <poll.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
