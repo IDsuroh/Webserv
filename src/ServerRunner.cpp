@@ -39,13 +39,15 @@ int openAndListen(const std::string& spec)  {
     addr.sin_addr.s_addr = (ip.empty() || ip == "*") ? INADDR_ANY : inet_addr(ip.c_str());
 
     if (bind(sockfd, (sockaddr*)&addr, sizeof(addr)) < 0)  {
-        perror("bind");
-        std::exit(1);
+        perror(("bind" + spec).c_str());
+        close(sockfd);
+        return -1;
     }
 
     if (listen(sockfd, SOMAXCONN) < 0)  {
-        perror("listen");
-        std::exit(1);
+        perror(("listen" + spec).c_str());
+        close(sockfd);
+        return -1;
     }
 
     return sockfd;
@@ -57,6 +59,8 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 		const Server&	srv = servers[s];
 		for (size_t i = 0; i < srv.listen.size(); ++i)	{
 			int	fd = openAndListen(srv.listen[i]);
+            if (fd < 0)
+                continue;
 			Listener	L;
 			L.fd = fd;
 			L.config = &srv;
@@ -84,7 +88,7 @@ void    ServerRunner::run() {
 }
 
 
-// where I stopped exploring
+
 void    ServerRunner::setupPollFds()    {
     _fds.clear();
     for (size_t i = 0; i < _listeners.size(); i++)  {

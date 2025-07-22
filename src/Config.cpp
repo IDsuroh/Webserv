@@ -118,6 +118,7 @@ static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, 
     
     Server  srv;
     while (i < tokens.size() && tokens[i] != "}")   {
+        std::cerr << ">>> entering parseWServerBlock at token[" << i << "] = '" << tokens[i] <<"\n";
         const std::string&  key = tokens[i++];
         if (key == "listen")
             handleListen(srv, tokens, i);
@@ -134,6 +135,8 @@ static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, 
     if (i >= tokens.size() || tokens[i] != "}")
         throw   std::runtime_error("Missing '}' at the end of server block");
     ++i;
+    std::cerr << "<<< leaving parseServerBlock now at token[" << i
+              << "] = '" << (i < tokens.size() ? tokens[i] : "<EOF>") << "'\n";
     servers.push_back(srv);
 }
 
@@ -188,11 +191,24 @@ static void handleLocation(Server& srv, const std::vector<std::string>& tokens, 
 static void parseLocationBlock(const std::vector<std::string>& tokens, size_t& i, Location& loc)  {
 
     while (i < tokens.size() && tokens[i] != "}")   {
-        std::string key = tokens[i++];
-        std::string value = tokens[i++];
-        if (tokens[i++] != ";")
+        
+        std::string                 key = tokens[i++];
+        std::vector<std::string>    args;
+        
+        while (i < tokens.size() && tokens[i] != ";")
+            args.push_back(tokens[i++]);
+        if (i >= tokens.size() || tokens[i] != ";")
             throw   std::runtime_error("Missing ';' after " + key);
-        loc.directives[key] = value;
+        i++;
+
+        std::string                 joined;
+        for (size_t j = 0; j < args.size(); ++j)    {
+            if (j)
+                joined += ' ';
+            joined += args[j];
+        }
+        
+        loc.directives[key] = joined;
     }
 
     if (i >= tokens.size() || tokens[i] != "}")
