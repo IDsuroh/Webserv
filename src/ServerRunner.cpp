@@ -67,13 +67,13 @@ int openAndListen(const std::string& spec)  {
     addr.sin_addr.s_addr = (ip.empty() || ip == "*") ? INADDR_ANY : inet_addr(ip.c_str());
 
     if (bind(sockfd, (sockaddr*)&addr, sizeof(addr)) < 0)  {
-        printSocketError(("bind" + spec).c_str());
+        printSocketError(("bind " + spec).c_str());
         close(sockfd);
         return -1;
     }
 
     if (listen(sockfd, SOMAXCONN) < 0)  {
-        printSocketError(("listen" + spec).c_str());
+        printSocketError(("listen " + spec).c_str());
         close(sockfd);
         return -1;
     }
