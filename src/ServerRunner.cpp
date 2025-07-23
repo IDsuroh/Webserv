@@ -16,13 +16,13 @@ static void	printSocketError(const char* msg)	{
 
 // Setting up Listeners functions
 void    makeNonBlocking(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);
+    int flags = fcntl(fd, F_GETFL, 0);		// 1) Grab the socket’s current “status flags”
     if (flags < 0)  {
         printSocketError("fcntl GETFL");
         std::exit(1);
     }
-	int	newFlag = flags | O_NONBLOCK;
-    if (fcntl(fd, F_SETFL, newFlag) < 0) {
+	int	newFlag = flags | O_NONBLOCK;		// 2) Add (bitwise-OR) the non-blocking flag
+    if (fcntl(fd, F_SETFL, newFlag) < 0) {	// 3) Write that back to the socket
         printSocketError("fcntl SETFL");
         std::exit(1);
     }
