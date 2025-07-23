@@ -19,7 +19,7 @@ void    ServerRunner::run() {
     setupListeners(_servers, _listeners);
     setupPollFds();
     while (true)    {
-        int n = poll(&_fds[0], _fds.size(), -1);
+        int n = poll(&_fds[0], _fds.size(), -1); // points to the first entry of _fds.size() entries and blocks indefinitely.
         if (n < 0)  {
             printSocketError("poll");
             break;
