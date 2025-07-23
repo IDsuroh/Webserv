@@ -22,12 +22,20 @@ static void	testTokens(const std::vector<std::string>& tokens)	{
 	std::cout << "\nParsing Tokens\n";
 }
 
+// ****************************************************************************
+
 // Config Constructor
 Config::Config(const std::string& filename)
     :   _filename(filename)	{
-    parse();}
+    parse();
+}
 
+// Get the list of servers
+const std::vector<Server>& Config::getServers() const  {
+    return _servers;
+}
 
+// ****************************************************************************
 
 // Parse the configuration file
 void    Config::parse() {
@@ -53,15 +61,6 @@ void    Config::parse() {
 	std::cout<< "\nResult:\n";
 
 }
-
-
-
-// Get the list of servers
-const std::vector<Server>& Config::getServers() const  {
-    return _servers;
-}
-
-
 
 // Tokenize the contents of the configuration file
 void    Config::tokenize(const std::string& contents, std::vector<std::string>& tokens) {
@@ -90,8 +89,6 @@ void    Config::tokenize(const std::string& contents, std::vector<std::string>& 
         tokens.push_back(current);
 }
 
-
-
 // Parse the tokens into server configurations
 void    Config::parseTokens(const std::vector<std::string>& tokens)   {
 
@@ -110,6 +107,9 @@ void    Config::parseTokens(const std::vector<std::string>& tokens)   {
             ++i;
     }
 }
+
+
+// ****************************************************************************
 
 
 

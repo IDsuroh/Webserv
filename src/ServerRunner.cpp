@@ -13,19 +13,39 @@ static void	printSocketError(const char* msg)	{
 }
 
 
+//**************************************************************************************************
+
+void    ServerRunner::run() {
+    setupListeners(_servers, _listeners);
+    setupPollFds();
+    while (true)    {
+        int n = poll(&_fds[0], _fds.size(), -1);
+        if (n < 0)  {
+            printSocketError("poll");
+            break;
+        }
+        handleEvents();
+    }
+}
+
+//**************************************************************************************************
 
 // Setting up Listeners functions
-void    makeNonBlocking(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);		// 1) Grab the socket’s current “status flags”
-    if (flags < 0)  {
-        printSocketError("fcntl GETFL");
-        std::exit(1);
-    }
-	int	newFlag = flags | O_NONBLOCK;		// 2) Add (bitwise-OR) the non-blocking flag
-    if (fcntl(fd, F_SETFL, newFlag) < 0) {	// 3) Write that back to the socket
-        printSocketError("fcntl SETFL");
-        std::exit(1);
-    }
+void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners)	{
+
+	for (size_t s = 0; s < servers.size(); ++s)	{
+		const Server&	srv = servers[s];
+		for (size_t i = 0; i < srv.listen.size(); ++i)	{
+			int	fd = openAndListen(srv.listen[i]);
+            if (fd < 0)
+                continue;
+			Listener	L;
+			L.fd = fd;
+			L.config = &srv;
+			outListeners.push_back(L);
+            std::cout << "Listening on " << srv.listen[i] << " for server #" << s << std::endl << std::endl;
+		}
+	}
 }
 
 int openAndListen(const std::string& spec)  {
@@ -61,44 +81,24 @@ int openAndListen(const std::string& spec)  {
     return sockfd;
 }
 
-void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners)	{
-
-	for (size_t s = 0; s < servers.size(); ++s)	{
-		const Server&	srv = servers[s];
-		for (size_t i = 0; i < srv.listen.size(); ++i)	{
-			int	fd = openAndListen(srv.listen[i]);
-            if (fd < 0)
-                continue;
-			Listener	L;
-			L.fd = fd;
-			L.config = &srv;
-			outListeners.push_back(L);
-            std::cout << "Listening on " << srv.listen[i] << " for server #" << s << std::endl << std::endl;
-		}
-	}
+void    makeNonBlocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);		// 1) Grab the socket’s current “status flags”
+    if (flags < 0)  {
+        printSocketError("fcntl GETFL");
+        std::exit(1);
+    }
+	int	newFlag = flags | O_NONBLOCK;		// 2) Add (bitwise-OR) the non-blocking flag
+    if (fcntl(fd, F_SETFL, newFlag) < 0) {	// 3) Write that back to the socket
+        printSocketError("fcntl SETFL");
+        std::exit(1);
+    }
 }
 
 //**************************************************************************************************
 
-
-
-void    ServerRunner::run() {
-    setupListeners(_servers, _listeners);
-    setupPollFds();
-    while (true)    {
-        int n = poll(&_fds[0], _fds.size(), -1);
-        if (n < 0)  {
-            printSocketError("poll");
-            break;
-        }
-        handleEvents();
-    }
-}
-
-
-
+// Setting up Pollfds before running poll() => important process! registering each listening socket.
 void    ServerRunner::setupPollFds()    {
-    _fds.clear();
+    //_fds.clear();		=> might need for future use.
     for (size_t i = 0; i < _listeners.size(); i++)  {
         struct pollfd   p;
         p.fd = _listeners[i].fd;
@@ -108,6 +108,8 @@ void    ServerRunner::setupPollFds()    {
 		std::cout << "on position " << i << " => " <<_listeners[i].fd << " <- pollfd structure constructed\n";
     }
 }
+
+//**************************************************************************************************
 
 
 void    ServerRunner::handleEvents()    {
