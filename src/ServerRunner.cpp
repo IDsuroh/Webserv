@@ -6,16 +6,24 @@ ServerRunner::ServerRunner(const std::vector<Server>& servers)
 
 //**************************************************************************************************
 
+
+// Helper Error function
+static void	printSocketError(const char* msg)	{
+	std::cerr << msg << ": " << std::strerror(errno) << std::endl;
+}
+
+
+
 // Setting up Listeners functions
 void    makeNonBlocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0)  {
-        perror("fcntl GETFL");
+        printSocketError("fcntl GETFL");
         std::exit(1);
     }
 	int	newFlag = flags | O_NONBLOCK;
     if (fcntl(fd, F_SETFL, newFlag) < 0) {
-        perror("fcntl SETFL");
+        printSocketError("fcntl SETFL");
         std::exit(1);
     }
 }
@@ -27,7 +35,7 @@ int openAndListen(const std::string& spec)  {
 
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
-        perror("socket");
+        printSocketError("socket");
         std::exit(1);
     }
     makeNonBlocking(sockfd);
@@ -39,13 +47,13 @@ int openAndListen(const std::string& spec)  {
     addr.sin_addr.s_addr = (ip.empty() || ip == "*") ? INADDR_ANY : inet_addr(ip.c_str());
 
     if (bind(sockfd, (sockaddr*)&addr, sizeof(addr)) < 0)  {
-        perror(("bind" + spec).c_str());
+        printSocketError(("bind" + spec).c_str());
         close(sockfd);
         return -1;
     }
 
     if (listen(sockfd, SOMAXCONN) < 0)  {
-        perror(("listen" + spec).c_str());
+        printSocketError(("listen" + spec).c_str());
         close(sockfd);
         return -1;
     }
@@ -80,7 +88,7 @@ void    ServerRunner::run() {
     while (true)    {
         int n = poll(&_fds[0], _fds.size(), -1);
         if (n < 0)  {
-            perror("poll");
+            printSocketError("poll");
             break;
         }
         handleEvents();
@@ -132,7 +140,7 @@ void    ServerRunner::handleEvents()    {
 void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 	int	clientFd = accept(listenFd, NULL, NULL);
 	if (clientFd < 0)	{
-		perror("accept");
+		printSocketError("accept");
 		return;
 	}
 	makeNonBlocking(clientFd);
@@ -157,7 +165,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 	ssize_t	n = read(clientFd, buffer, sizeof(buffer));
 	if (n < 0)	{
 		if (errno != EAGAIN && errno != EWOULDBLOCK)	{
-			perror("read");
+			printSocketError("read");
 			closeConnection(clientFd);
 		}
 		return ;
@@ -196,7 +204,7 @@ void	ServerRunner::writeToClient(int clientFd)	{
 	ssize_t	n = write(clientFd, connection.writeBuffer.c_str(), connection.writeBuffer.size());
 	if (n < 0)	{
 		if (errno != EAGAIN && errno != EWOULDBLOCK) {
-			perror("write");
+			printSocketError("write");
 			closeConnection(clientFd);
 		}
 		return ;
