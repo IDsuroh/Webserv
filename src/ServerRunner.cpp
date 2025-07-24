@@ -189,8 +189,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		std::ostringstream	hdr;
 			hdr	<<	"HTTP/1.1 200 OK\r\n"
 				<<	"Content-Length: " << body.size() << "\r\n"
-				<<	"Connection: close\r\n"
-				<<	"\r\n"; 
+				<<	"Connection: close\r\n\r\n";
 			
 		connection.writeBuffer = hdr.str() + body;
 
