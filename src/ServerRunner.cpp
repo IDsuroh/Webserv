@@ -127,7 +127,7 @@ void    ServerRunner::handleEvents()    {
                     break;
                 }
             }
-            if (isListener)
+            if (isListener)	// When one of the listening sockets becomes ready for a new connection.
                 acceptNewClient(fd, srv);
             else
                 readFromClient(fd);
@@ -185,13 +185,15 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		// TODO: parse HTTP request from conn.readBuf
         // TODO: generate HTTP response into conn.writeBuf
 
-		connection.writeBuffer =
-			"HTTP/1.1 200 OK\r\n"
-			"Content-Length: 13\r\n"
-			"Connection: close\r\n"
-			"\r\n"
-			"This is a TestRun... I need to make it more than this...";
-		
+		std::string			body = "This is a TestRun... I need to make it more than this...";
+		std::ostringstream	hdr;
+			hdr	<<	"HTTP/1.1 200 OK\r\n"
+				<<	"Content-Length: " << body.size() << "\r\n"
+				<<	"Connection: close\r\n"
+				<<	"\r\n"; 
+			
+		connection.writeBuffer = hdr.str() + body;
+
 		for (size_t i = 0; i < _fds.size(); ++i)	{
 			if (_fds[i].fd == clientFd)	{
 				_fds[i].events = POLLOUT;
