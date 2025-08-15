@@ -118,7 +118,6 @@ static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, 
     
     Server  srv;
     while (i < tokens.size() && tokens[i] != "}")   {
-        std::cerr << ">>> entering parseWServerBlock at token[" << i << "] = '" << tokens[i] <<"\n";
         const std::string&  key = tokens[i++];
         if (key == "listen")
             handleListen(srv, tokens, i);
