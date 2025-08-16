@@ -142,11 +142,12 @@ void    ServerRunner::handleEvents()    {
                     break;
                 }
             }
-			
+
             if (isListener)	// When one of the listening sockets becomes ready for a new connection.
                 acceptNewClient(fd, srv);
             else
                 readFromClient(fd);
+				
         }
         else if (re & POLLOUT)
             writeToClient(fd);
