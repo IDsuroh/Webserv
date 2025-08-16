@@ -134,13 +134,15 @@ void    ServerRunner::handleEvents()    {
         if (re & POLLIN)    {
             bool    isListener = false;
             const Server*   srv = NULL;
-            for (size_t j = 0; j < _listeners.size(); ++j)  {
+            
+			for (size_t j = 0; j < _listeners.size(); ++j)  {
                 if (_listeners[j].fd == fd) {
                     isListener = true;
                     srv = _listeners[j].config;
                     break;
                 }
             }
+			
             if (isListener)	// When one of the listening sockets becomes ready for a new connection.
                 acceptNewClient(fd, srv);
             else
@@ -251,5 +253,5 @@ void	ServerRunner::closeConnection(int clientFd)	{
 			break;
 		}
 	}
-	
+
 }
