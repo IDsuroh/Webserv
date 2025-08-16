@@ -20,6 +20,11 @@ void    ServerRunner::run() {
 	setupListeners(_servers, _listeners);
     
 	setupPollFds();
+
+	if (_fds.empty())	{
+		std::cerr << "No listeners configured/opened. \n";
+		return;
+	}
     
 	while (true)    {
         int n = poll(&_fds[0], _fds.size(), -1); // points to the first entry of _fds.size() entries and blocks indefinitely.
@@ -57,52 +62,95 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 
 int openAndListen(const std::string& spec)  {
     
-	size_t      colon = spec.find(':');
-    std::string ip = spec.substr(0, colon);
-    int         port = std::atoi(spec.substr(colon + 1).c_str());
+	std::string::size_type	colon = spec.find(':');
+	std::string				host;
+	std::string				port;
 
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        printSocketError("socket");
-        std::exit(1);
-    }
-    makeNonBlocking(sockfd);
+	if (colon == std::string::npos)	{
+		host = "";
+		port = spec;
+	}
+	else	{
+		
+		if (colon == 0)
+			host = "";
+		else
+			host = spec.substr(0, colon);
+		
+		if (colon + 1 >= spec.size())
+			port = "";
+		else
+			port = spec.substr(colon + 1);
+	
+	}
 
-    sockaddr_in addr;
-    std::memset(&addr, 0, sizeof(sockaddr_in));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = (ip.empty() || ip == "*") ? INADDR_ANY : inet_addr(ip.c_str());
+	struct	addrinfo	hints;
+	hints.ai_flags		= 0;
+	hints.ai_family 	= AF_INET;
+	hints.ai_socktype	= SOCK_STREAM;
+	hints.ai_protocol	= 0;
+	hints.ai_addrlen	= 0;
+	hints.ai_addr		= NULL;
+	hints.ai_canonname	= NULL;
+	hints.ai_next		= NULL;
 
-    if (bind(sockfd, (sockaddr*)&addr, sizeof(addr)) < 0)  {
-        printSocketError(("bind " + spec).c_str());
-        close(sockfd);
-        return -1;
-    }
+	if (host.empty() || host == "*")
+		hints.ai_flags |= AI_PASSIVE;
 
-    if (listen(sockfd, SOMAXCONN) < 0)  {
-        printSocketError(("listen " + spec).c_str());
-        close(sockfd);
-        return -1;
-    }
+	struct	addrinfo*	res	= NULL;
+	int	rc = getaddrinfo((host.empty() || host == "*") ? NULL : host.c_str(),
+						port.c_str(), &hints, &res);
+	if (rc != 0)	{
+		std::cerr << "getaddrinfo(" << spec << "): " << gai_strerror(rc) << std::endl;
+		return -1;
+	}
 
-    return sockfd;
+	int	sockfd = -1;
+
+	for (struct addrinfo* p = res; p != NULL; p = p->ai_next)	{
+		int	fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+		if (fd < 0)
+			continue;
+		
+		int	yes = 1;
+		setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
+	
+		int	flags = fcntl(fd, F_GETFL, 0);
+		if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)	{
+			printSocketError("fcntl");
+			close(fd);
+			continue;
+		}
+
+		if (bind(fd, p->ai_addr, p->ai_addrlen) == 0)	{
+			if (listen(fd, SOMAXCONN) == 0)	{
+				sockfd = fd;
+				break;
+			}
+			else
+				printSocketError("listen");
+		}
+		else
+			printSocketError("bind");
+		close(fd);
+	}
+
+	freeaddrinfo(res);
+	return sockfd;
+
 }
 
-void    makeNonBlocking(int fd) {
-    
-	int flags = fcntl(fd, F_GETFL, 0);		// 1) Grab the socket’s current “status flags”
-    if (flags < 0)  {
-        printSocketError("fcntl GETFL");
-        std::exit(1);
-    }
-
-	int	newFlag = flags | O_NONBLOCK;		// 2) Add (bitwise-OR) the non-blocking flag
-    if (fcntl(fd, F_SETFL, newFlag) < 0) {	// 3) Write that back to the socket
-        printSocketError("fcntl SETFL");
-        std::exit(1);
-    }
-
+bool	makeNonBlocking(int fd)	{
+	int	flags = fcntl(fd, F_GETFL, 0);
+	if (flags < 0)	{
+		printSocketError("fcntl GETFL");
+		return false;
+	}
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)	{
+		printSocketError("fcntl SETFL");
+		return false;
+	}
+	return true;
 }
 
 //**************************************************************************************************
@@ -114,7 +162,7 @@ void    ServerRunner::setupPollFds()    {
     for (size_t i = 0; i < _listeners.size(); i++)  {
         struct pollfd   p;
         p.fd = _listeners[i].fd;
-        p.events = POLLIN | POLLOUT;
+        p.events = POLLIN;
         p.revents = 0;
         _fds.push_back(p);
 		std::cout << "on position " << i << " => " <<_listeners[i].fd << " <- pollfd structure constructed\n";
@@ -202,7 +250,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 	connection.readBuffer.append(buffer, n);
 
 	if (!connection.headersComplete && connection.readBuffer.find("\r\n\r\n") != std::string::npos)	{
-		connection.headersComplete = false;
+		connection.headersComplete = true;
 		// TODO: parse HTTP request from conn.readBuf
         // TODO: generate HTTP response into conn.writeBuf
 
