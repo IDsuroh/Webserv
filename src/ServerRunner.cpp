@@ -265,6 +265,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		for (size_t i = 0; i < _fds.size(); ++i)	{
 			if (_fds[i].fd == clientFd)	{
 				_fds[i].events = POLLOUT;
+				_fds[i].revents = 0;
 				break;
 			}
 		}
