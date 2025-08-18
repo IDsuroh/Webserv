@@ -113,7 +113,7 @@ int openAndListen(const std::string& spec)  {
 			continue;
 		
 		int	yes = 1;
-		setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
+		setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 	
 		int	flags = fcntl(fd, F_GETFL, 0);
 		if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)	{
