@@ -69,8 +69,11 @@ void    Config::tokenize(const std::string& contents, std::vector<std::string>& 
 
     std::string current;
     for (size_t i = 0; i < contents.size(); ++i)    {
-        char    c = contents[i];
-        if (isspace(c)) {
+        
+        char            c = contents[i];
+        unsigned char   uc = static_cast<unsigned char>(c);
+
+        if (std::isspace(uc)) {
             if (!current.empty())   {
                 tokens.push_back(current);
                 current.clear();
