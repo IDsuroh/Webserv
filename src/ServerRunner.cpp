@@ -43,9 +43,11 @@ void    ServerRunner::run() {
 void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners)	{
 
 	for (size_t s = 0; s < servers.size(); ++s)	{
+		
 		const Server&	srv = servers[s];
 		
 		for (size_t i = 0; i < srv.listen.size(); ++i)	{
+			
 			int	fd = openAndListen(srv.listen[i]);
             if (fd < 0)
                 continue;
@@ -54,6 +56,7 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 			L.config = &srv;
 			outListeners.push_back(L);
             std::cout << "Listening on " << srv.listen[i] << " for server #" << s << std::endl << std::endl;
+		
 		}
 
 	}
@@ -71,17 +74,8 @@ int openAndListen(const std::string& spec)  {
 		port = spec;
 	}
 	else	{
-		
-		if (colon == 0)
-			host = "";
-		else
-			host = spec.substr(0, colon);
-		
-		if (colon + 1 >= spec.size())
-			port = "";
-		else
-			port = spec.substr(colon + 1);
-	
+		host = (colon == 0) ? "" : spec.substr(0, colon);
+		port = (colon + 1 >= spec.size()) ? "" : spec.substr(colon + 1);
 	}
 
 	struct	addrinfo	hints;
@@ -141,6 +135,7 @@ int openAndListen(const std::string& spec)  {
 }
 
 bool	makeNonBlocking(int fd)	{
+	
 	int	flags = fcntl(fd, F_GETFL, 0);
 	if (flags < 0)	{
 		printSocketError("fcntl GETFL");
@@ -151,6 +146,7 @@ bool	makeNonBlocking(int fd)	{
 		return false;
 	}
 	return true;
+
 }
 
 //**************************************************************************************************
@@ -160,13 +156,16 @@ void    ServerRunner::setupPollFds()    {
     
 	//_fds.clear();		=> might need for future use.
     for (size_t i = 0; i < _listeners.size(); i++)  {
-        struct pollfd   p;
+        
+		struct pollfd   p;
+
         p.fd = _listeners[i].fd;
         p.events = POLLIN;
         p.revents = 0;
         _fds.push_back(p);
 		std::cout << "on position " << i << " => " <<_listeners[i].fd << " <- pollfd structure constructed\n";
-    }
+    
+	}
 
 }
 
@@ -176,7 +175,8 @@ void    ServerRunner::setupPollFds()    {
 void    ServerRunner::handleEvents()    {
     
 	for (size_t i = 0; i < _fds.size(); ++i)    {
-        int     fd = _fds[i].fd;
+        
+		int     fd = _fds[i].fd;
         short   re = _fds[i].revents;
 
         if (re & POLLIN)    {
@@ -201,13 +201,15 @@ void    ServerRunner::handleEvents()    {
             writeToClient(fd);
         else if (re & (POLLERR | POLLHUP | POLLNVAL))
             closeConnection(fd);
-    }
+    
+	}
 
 }
 
 void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 	
 	int	clientFd = accept(listenFd, NULL, NULL);
+	
 	if (clientFd < 0)	{
 		printSocketError("accept");
 		return;
