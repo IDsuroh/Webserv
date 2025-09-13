@@ -1,5 +1,5 @@
-#ifndef STRUCT_HPP
-#define STRUCT_HPP
+#ifndef STRUCTS_HPP
+#define STRUCTS_HPP
 
 struct  Location    {
     std::map<std::string, std::string>  directives;
