@@ -16,9 +16,17 @@ static void	printSocketError(const char* msg)	{
 //**************************************************************************************************
 
 void    ServerRunner::run() {
-    setupListeners(_servers, _listeners);
-    setupPollFds();
-    while (true)    {
+    
+	setupListeners(_servers, _listeners);
+    
+	setupPollFds();
+
+	if (_fds.empty())	{
+		std::cerr << "No listeners configured/opened. \n";
+		return;
+	}
+    
+	while (true)    {
         int n = poll(&_fds[0], _fds.size(), -1); // points to the first entry of _fds.size() entries and blocks indefinitely.
         if (n < 0)  {
             printSocketError("poll");
@@ -26,6 +34,7 @@ void    ServerRunner::run() {
         }
         handleEvents();
     }
+
 }
 
 //**************************************************************************************************
@@ -33,9 +42,12 @@ void    ServerRunner::run() {
 // Setting up Listeners functions
 void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners)	{
 
-	for (size_t s = 0; s < servers.size(); ++s)	{
+	for (std::size_t s = 0; s < servers.size(); ++s)	{
+		
 		const Server&	srv = servers[s];
-		for (size_t i = 0; i < srv.listen.size(); ++i)	{
+		
+		for (std::size_t i = 0; i < srv.listen.size(); ++i)	{
+			
 			int	fd = openAndListen(srv.listen[i]);
             if (fd < 0)
                 continue;
@@ -44,103 +56,170 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 			L.config = &srv;
 			outListeners.push_back(L);
             std::cout << "Listening on " << srv.listen[i] << " for server #" << s << std::endl << std::endl;
+		
 		}
+
 	}
+
 }
 
 int openAndListen(const std::string& spec)  {
-    size_t      colon = spec.find(':');
-    std::string ip = spec.substr(0, colon);
-    int         port = std::atoi(spec.substr(colon + 1).c_str());
+    
+	std::string::size_type	colon = spec.find(':');
+	std::string				host;
+	std::string				port;
 
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        printSocketError("socket");
-        std::exit(1);
-    }
-    makeNonBlocking(sockfd);
+	if (colon == std::string::npos)	{
+		host = "";
+		port = spec;
+	}
+	else	{
+		host = (colon == 0) ? "" : spec.substr(0, colon);
+		port = (colon + 1 >= spec.size()) ? "" : spec.substr(colon + 1);
+	}
 
-    sockaddr_in addr;
-    std::memset(&addr, 0, sizeof(sockaddr_in));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = (ip.empty() || ip == "*") ? INADDR_ANY : inet_addr(ip.c_str());
+	struct	addrinfo	hints;
+	hints.ai_flags		= 0;
+	hints.ai_family 	= AF_INET;
+	hints.ai_socktype	= SOCK_STREAM;
+	hints.ai_protocol	= 0;
+	hints.ai_addrlen	= 0;
+	hints.ai_addr		= NULL;
+	hints.ai_canonname	= NULL;
+	hints.ai_next		= NULL;
 
-    if (bind(sockfd, (sockaddr*)&addr, sizeof(addr)) < 0)  {
-        printSocketError(("bind " + spec).c_str());
-        close(sockfd);
-        return -1;
-    }
+	if (host.empty() || host == "*")
+		hints.ai_flags |= AI_PASSIVE;
 
-    if (listen(sockfd, SOMAXCONN) < 0)  {
-        printSocketError(("listen " + spec).c_str());
-        close(sockfd);
-        return -1;
-    }
+	struct	addrinfo*	res	= NULL;
+	int	rc = getaddrinfo((host.empty() || host == "*") ? NULL : host.c_str(),
+						port.c_str(), &hints, &res);
+	if (rc != 0)	{
+		std::cerr << "getaddrinfo(" << spec << "): " << gai_strerror(rc) << std::endl;
+		return -1;
+	}
 
-    return sockfd;
+	int	sockfd = -1;
+
+	for (struct addrinfo* p = res; p != NULL; p = p->ai_next)	{
+		int	fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+		if (fd < 0)	{
+			printSocketError("socket");
+			continue;
+		}
+		
+		int	yes = 1;
+		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
+			printSocketError("sertsockopt SO_REUSEADDR");
+	
+		if (!makeNonBlocking(fd))	{
+			close(fd);
+			continue;
+		}
+
+		if (bind(fd, p->ai_addr, p->ai_addrlen) == 0)	{
+			if (listen(fd, SOMAXCONN) == 0)	{
+				sockfd = fd;
+				break;
+			}
+			else
+				printSocketError("listen");
+		}
+		else
+			printSocketError("bind");
+		close(fd);
+	}
+
+	freeaddrinfo(res);
+	return sockfd;
+
 }
 
-void    makeNonBlocking(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);		// 1) Grab the socket’s current “status flags”
-    if (flags < 0)  {
-        printSocketError("fcntl GETFL");
-        std::exit(1);
-    }
-	int	newFlag = flags | O_NONBLOCK;		// 2) Add (bitwise-OR) the non-blocking flag
-    if (fcntl(fd, F_SETFL, newFlag) < 0) {	// 3) Write that back to the socket
-        printSocketError("fcntl SETFL");
-        std::exit(1);
-    }
+bool	makeNonBlocking(int fd)	{
+
+#ifdef __APPLE__
+	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)	{
+		printSocketError("fcntl F_SETFL O_NONBLOCK");
+		return false;
+	}
+
+#else
+	int	flags = fcntl(fd, F_GETFL, 0);
+	if (flags == -1)	{
+		printSocketError("fcntl F_GETFL");
+		return false;
+	}
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)	{
+		printSocketError("fcntl F_SETFL O_NONBLOCK");
+		return false;
+	}
+
+#endif
+	return true;
+
 }
 
 //**************************************************************************************************
 
 // Setting up Pollfds before running poll() => important process! registering each listening socket.
 void    ServerRunner::setupPollFds()    {
-    //_fds.clear();		=> might need for future use.
-    for (size_t i = 0; i < _listeners.size(); i++)  {
-        struct pollfd   p;
+    
+	//_fds.clear();		=> might need for future use.
+    for (std::size_t i = 0; i < _listeners.size(); i++)  {
+        
+		struct pollfd   p;
+
         p.fd = _listeners[i].fd;
-        p.events = POLLIN | POLLOUT;
+        p.events = POLLIN;
         p.revents = 0;
         _fds.push_back(p);
 		std::cout << "on position " << i << " => " <<_listeners[i].fd << " <- pollfd structure constructed\n";
-    }
+    
+	}
+
 }
 
 //**************************************************************************************************
 
 
 void    ServerRunner::handleEvents()    {
-    for (size_t i = 0; i < _fds.size(); ++i)    {
-        int     fd = _fds[i].fd;
+    
+	for (std::size_t i = 0; i < _fds.size(); ++i)    {
+        
+		int     fd = _fds[i].fd;
         short   re = _fds[i].revents;
 
         if (re & POLLIN)    {
             bool    isListener = false;
             const Server*   srv = NULL;
-            for (size_t j = 0; j < _listeners.size(); ++j)  {
+            
+			for (size_t j = 0; j < _listeners.size(); ++j)  {
                 if (_listeners[j].fd == fd) {
                     isListener = true;
                     srv = _listeners[j].config;
                     break;
                 }
             }
+
             if (isListener)	// When one of the listening sockets becomes ready for a new connection.
                 acceptNewClient(fd, srv);
             else
                 readFromClient(fd);
+				
         }
         else if (re & POLLOUT)
             writeToClient(fd);
         else if (re & (POLLERR | POLLHUP | POLLNVAL))
             closeConnection(fd);
-    }
+    
+	}
+
 }
 
 void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
+	
 	int	clientFd = accept(listenFd, NULL, NULL);
+	
 	if (clientFd < 0)	{
 		printSocketError("accept");
 		return;
@@ -160,28 +239,35 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 	p.events = POLLIN;
 	p.revents = 0;
 	_fds.push_back(p);
+
 }
 
 void	ServerRunner::readFromClient(int clientFd)	{
+	
+	std::map<int, Connection>::iterator it = _connections.find(clientFd);
+	if (it == _connections.end())
+		return;
+
+	Connection& connection = it->second;
+
 	char	buffer[4096];
-	ssize_t	n = read(clientFd, buffer, sizeof(buffer));
-	if (n < 0)	{
-		if (errno != EAGAIN && errno != EWOULDBLOCK)	{
-			printSocketError("read");
-			closeConnection(clientFd);
+
+	while (true)	{
+		ssize_t	n = read(clientFd, buffer, sizeof(buffer));
+		if (n > 0)	{
+			connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
+			continue;
 		}
-		return ;
-	}
-	if (n == 0)	{
-		closeConnection(clientFd);
-		return ;
+		if (n == 0)	{
+			closeConnection(clientFd);
+			return ;
+		}
+		break;
 	}
 
-	Connection& connection = _connections[clientFd];
-	connection.readBuffer.append(buffer, n);
-
-	if (!connection.headersComplete && connection.readBuffer.find("\r\n\r\n") != std::string::npos)	{
-		connection.headersComplete = false;
+	if (!connection.headersComplete
+		&& connection.readBuffer.find("\r\n\r\n") != std::string::npos)	{
+		connection.headersComplete = true;
 		// TODO: parse HTTP request from conn.readBuf
         // TODO: generate HTTP response into conn.writeBuf
 
@@ -193,39 +279,53 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			
 		connection.writeBuffer = hdr.str() + body;
 
-		for (size_t i = 0; i < _fds.size(); ++i)	{
+		for (std::size_t i = 0; i < _fds.size(); ++i)	{
 			if (_fds[i].fd == clientFd)	{
 				_fds[i].events = POLLOUT;
 				break;
 			}
 		}
+
 	}
+
 }
 
 void	ServerRunner::writeToClient(int clientFd)	{
-	Connection&	connection = _connections[clientFd];
-	ssize_t	n = write(clientFd, connection.writeBuffer.c_str(), connection.writeBuffer.size());
-	if (n < 0)	{
-		if (errno != EAGAIN && errno != EWOULDBLOCK) {
-			printSocketError("write");
-			closeConnection(clientFd);
+	
+	std::map<int, Connection>::iterator it = _connections.find(clientFd);
+	if (it == _connections.end())
+		return;
+	Connection& connection = it->second;
+	
+	while (!connection.writeBuffer.empty())	{
+
+		const char*	data = connection.writeBuffer.c_str();
+		std::size_t	len = connection.writeBuffer.size();
+
+		ssize_t	n = write(clientFd, data, len);
+		if (n > 0)	{
+			connection.writeBuffer.erase(0, static_cast<std::size_t>(n));
+			continue;
 		}
-		return ;
+		if (n == 0)	{
+			return;
+		}
+		return;
 	}
-	connection.writeBuffer.erase(0, n);
-	if (connection.writeBuffer.empty())	{
-		closeConnection(clientFd);
-	}
+	closeConnection(clientFd);
+
 }
 
 void	ServerRunner::closeConnection(int clientFd)	{
+	
 	close(clientFd);
 	_connections.erase(clientFd);
 
-	for (size_t	i = 0; i < _fds.size(); ++i)	{
+	for (std::size_t	i = 0; i < _fds.size(); ++i)	{
 		if (_fds[i].fd == clientFd)	{
 			_fds.erase(_fds.begin() + i);
 			break;
 		}
 	}
+
 }

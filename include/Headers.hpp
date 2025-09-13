@@ -3,6 +3,7 @@
 
 #include <arpa/inet.h>
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -10,6 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <netdb.h>
 #include <poll.h>
 #include <sstream>
 #include <stdexcept>

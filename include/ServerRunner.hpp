@@ -25,7 +25,7 @@ class   ServerRunner  {
 };
 
 // Listeners
-void    makeNonBlocking(int fd);
+bool    makeNonBlocking(int fd);
 int     openAndListen(const std::string& spec);
 void    setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners);
 

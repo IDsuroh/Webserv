@@ -12,7 +12,8 @@ static void handleGenericDirective(Server& srv, const std::string& key, const st
 
 // Print Tokens Tester Function
 static void	testTokens(const std::vector<std::string>& tokens)	{
-	if (tokens.empty())	{
+	
+    if (tokens.empty())	{
 		std::cerr << "No tokens found in config file\n";
 		return ;
 	}
@@ -20,6 +21,7 @@ static void	testTokens(const std::vector<std::string>& tokens)	{
 	for (size_t i = 0; i < tokens.size(); ++i)
 		std::cout << "Token[" << i << "]: " << tokens[i] << std::endl;
 	std::cout << "\nParsing Tokens\n";
+    
 }
 
 // ****************************************************************************
@@ -67,8 +69,11 @@ void    Config::tokenize(const std::string& contents, std::vector<std::string>& 
 
     std::string current;
     for (size_t i = 0; i < contents.size(); ++i)    {
-        char    c = contents[i];
-        if (isspace(c)) {
+        
+        char            c = contents[i];
+        unsigned char   uc = static_cast<unsigned char>(c);
+
+        if (std::isspace(uc)) {
             if (!current.empty())   {
                 tokens.push_back(current);
                 current.clear();
@@ -87,6 +92,7 @@ void    Config::tokenize(const std::string& contents, std::vector<std::string>& 
     }
     if (!current.empty())
         tokens.push_back(current);
+
 }
 
 // Parse the tokens into server configurations
@@ -106,6 +112,7 @@ void    Config::parseTokens(const std::vector<std::string>& tokens)   {
         else
             ++i;
     }
+
 }
 
 
@@ -118,8 +125,8 @@ static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, 
     
     Server  srv;
     while (i < tokens.size() && tokens[i] != "}")   {
-        std::cerr << ">>> entering parseWServerBlock at token[" << i << "] = '" << tokens[i] <<"\n";
-        const std::string&  key = tokens[i++];
+        const std::string&  key = tokens[i];
+        i++;
         if (key == "listen")
             handleListen(srv, tokens, i);
         else if (key == "server_name")
@@ -138,6 +145,7 @@ static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, 
     std::cerr << "<<< leaving parseServerBlock now at token[" << i
               << "] = '" << (i < tokens.size() ? tokens[i] : "<EOF>") << "'\n";
     servers.push_back(srv);
+
 }
 
 
@@ -148,6 +156,7 @@ static void handleListen(Server& srv, const std::vector<std::string>& tokens, si
     srv.listen.push_back(tokens[i++]);
     if (tokens[i++] != ";")
         throw   std::runtime_error("Missing ';' after listen");
+
 }
 
 
@@ -170,6 +179,7 @@ static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens,
 	if (tokens[i++] != ";")
 		throw std::runtime_error("Missing ';' after error_page");
 	srv.error_pages[error_code] = uri;
+
 }
 
 
@@ -183,6 +193,7 @@ static void handleLocation(Server& srv, const std::vector<std::string>& tokens, 
         throw   std::runtime_error("Expected '{' after location");
     parseLocationBlock(tokens, i, loc);
     srv.locations.push_back(loc);
+
 }
 
 
@@ -214,14 +225,17 @@ static void parseLocationBlock(const std::vector<std::string>& tokens, size_t& i
     if (i >= tokens.size() || tokens[i] != "}")
         throw   std::runtime_error("Missing '}' at the end of the location block");
     ++i;
+
 }
 
 
 
 // Handle generic directives in the server block
 static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, size_t& i)  {
+    
     std::string value = tokens[i++];
     if (tokens[i++] != ";")
         throw   std::runtime_error("Missing ';' after " + key);
     srv.directives[key] = value;
+
 }
