@@ -55,7 +55,8 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 			L.fd = fd;
 			L.config = &srv;
 			outListeners.push_back(L);
-            std::cout << "Listening on " << srv.listen[i] << " for server #" << s << std::endl << std::endl;
+            std::cout	<< "Listening on " << srv.listen[i] << " for server #"
+						<< s << std::endl << std::endl;
 		
 		}
 

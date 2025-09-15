@@ -1,7 +1,8 @@
 #ifndef SERVERRUNNER_HPP
 #define SERVERRUNNER_HPP
 
-#include "Config.hpp"
+#include "Headers.hpp"
+#include "Structs.hpp"
 
 class   ServerRunner  {
     
