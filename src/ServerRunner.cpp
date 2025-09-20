@@ -112,7 +112,9 @@ int openAndListen(const std::string& spec)  {
 		const int	enable = 1;
 		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) < 0)
 			printSocketError("setsockopt SO_REUSEADDR");
-	
+		// For this socket fd, go to the socket menu (SOL_SOCKET) and turn on (1) the REUSEADDR setting (SO_REUSEADDR).
+		// SO_REUSEADDR, allows immediate re-binding, but without it, binding might fail due to the old connection still being in TIME_WAIT.
+		
 		if (!makeNonBlocking(fd))	{
 			close(fd);
 			continue;
@@ -139,8 +141,8 @@ int openAndListen(const std::string& spec)  {
 bool	makeNonBlocking(int fd)	{
 
 #ifdef __APPLE__
-	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)	{
-		printSocketError("fcntl F_SETFL O_NONBLOCK");
+	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)	{ // fcntl = file control, changes properties of an open file descriptor.
+		printSocketError("fcntl F_SETFL O_NONBLOCK"); // int fcntl(int fd, int cmd, ... /* arg */);
 		return false;
 	}
 
