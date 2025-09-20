@@ -152,7 +152,7 @@ bool	makeNonBlocking(int fd)	{
 		printSocketError("fcntl F_GETFL");
 		return false;
 	}
-	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)	{
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)	{ // If flags = 0b0010 and O_NONBLOCK = 0b0100 → newFlags = 0b0110
 		printSocketError("fcntl F_SETFL O_NONBLOCK");
 		return false;
 	}
