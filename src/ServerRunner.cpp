@@ -109,8 +109,8 @@ int openAndListen(const std::string& spec)  {
 			continue;
 		}
 		
-		int	yes = 1;
-		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
+		const int	enable = 1;
+		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) < 0)
 			printSocketError("setsockopt SO_REUSEADDR");
 	
 		if (!makeNonBlocking(fd))	{
