@@ -79,31 +79,31 @@ int openAndListen(const std::string& spec)  {
 		port = (colon + 1 >= spec.size()) ? "" : spec.substr(colon + 1);
 	}
 
-	struct	addrinfo	hints;
+	struct	addrinfo	hints; // recipe for what type of addresses we want
 	hints.ai_flags		= 0;
-	hints.ai_family 	= AF_INET;
-	hints.ai_socktype	= SOCK_STREAM;
-	hints.ai_protocol	= 0;
+	hints.ai_family 	= AF_INET; // IPv4 addresses only
+	hints.ai_socktype	= SOCK_STREAM; // TCP connections only
+	hints.ai_protocol	= 0; // default protocol -> default for that type -> TCP
 	hints.ai_addrlen	= 0;
 	hints.ai_addr		= NULL;
 	hints.ai_canonname	= NULL;
 	hints.ai_next		= NULL;
 
 	if (host.empty() || host == "*")
-		hints.ai_flags |= AI_PASSIVE;
+		hints.ai_flags |= AI_PASSIVE; // Listening on all available network interfaces
 
 	struct	addrinfo*	res	= NULL;
-	int	rc = getaddrinfo((host.empty() || host == "*") ? NULL : host.c_str(),
-						port.c_str(), &hints, &res);
+	int	rc = getaddrinfo((host.empty() || host == "*") ? NULL : host.c_str(), // make it socket-compatible
+						port.c_str(), &hints, &res); // this function instanciates/builds a linked list of addresses
 	if (rc != 0)	{
 		std::cerr << "getaddrinfo(" << spec << "): " << gai_strerror(rc) << std::endl;
-		return -1;
+		return -1; // get address info str error converts errors into human readable message
 	}
 
 	int	sockfd = -1;
 
 	for (struct addrinfo* p = res; p != NULL; p = p->ai_next)	{
-		int	fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+		int	fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol); // like buying a phone machine
 		if (fd < 0)	{
 			printSocketError("socket");
 			continue;
@@ -111,7 +111,7 @@ int openAndListen(const std::string& spec)  {
 		
 		int	yes = 1;
 		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
-			printSocketError("sertsockopt SO_REUSEADDR");
+			printSocketError("setsockopt SO_REUSEADDR");
 	
 		if (!makeNonBlocking(fd))	{
 			close(fd);
