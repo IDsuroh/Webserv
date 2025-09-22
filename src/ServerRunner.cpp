@@ -120,8 +120,8 @@ int openAndListen(const std::string& spec)  {
 			continue;
 		}
 
-		if (bind(fd, p->ai_addr, p->ai_addrlen) == 0)	{
-			if (listen(fd, SOMAXCONN) == 0)	{
+		if (bind(fd, p->ai_addr, p->ai_addrlen) == 0)	{ // plugging the phone into a specific wall jack: a local (IP, port)
+			if (listen(fd, SOMAXCONN) == 0)	{ // making the phone ready to accept calls; keeping a waiting line
 				sockfd = fd;
 				break;
 			}
