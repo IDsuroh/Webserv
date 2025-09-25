@@ -48,7 +48,7 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 		const Server&	srv = servers[s];
 		
 		for (std::size_t i = 0; i < srv.listen.size(); ++i)	{
-			const std::string& spec = src.listen[i];
+			const std::string& spec = srv.listen[i];
 			
 			int	fd;
             std::map<std::string, int>::iterator it = specToFd.find(spec);
@@ -241,6 +241,7 @@ void    ServerRunner::handleEvents()    {
 }
 
 void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
+	
 	for (;;) {
 		int	clientFd = accept(listenFd, NULL, NULL);
 		
@@ -266,7 +267,9 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		p.events = POLLIN;
 		p.revents = 0;
 		_fds.push_back(p);
+	
 	}
+	
 }
 
 void	ServerRunner::readFromClient(int clientFd)	{
