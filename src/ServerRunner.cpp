@@ -42,15 +42,25 @@ void    ServerRunner::run() {
 // Setting up Listeners functions
 void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners)	{
 
+	std::map<std::string, int> specToFd;
+	
 	for (std::size_t s = 0; s < servers.size(); ++s)	{
-		
 		const Server&	srv = servers[s];
 		
 		for (std::size_t i = 0; i < srv.listen.size(); ++i)	{
+			const std::string& spec = src.listen[i];
 			
-			int	fd = openAndListen(srv.listen[i]);
-            if (fd < 0)
-                continue;
+			int	fd;
+            std::map<std::string, int>::iterator it = specToFd.find(spec);
+			if (it != specToFd.end())
+				fd = it->second;
+			else {
+				fd = openAndListen(spec);
+				if (fd < 0)
+					continue;
+				specToFd[spec] = fd;
+			}
+			
 			Listener	L;
 			L.fd = fd;
 			L.config = &srv;
@@ -167,15 +177,22 @@ bool	makeNonBlocking(int fd)	{
 // Setting up Pollfds before running poll() => important process! registering each listening socket.
 void    ServerRunner::setupPollFds()    {
     
-	//_fds.clear();		=> might need for future use.
+	_fds.clear();
+	std::set<int> added;
+
     for (std::size_t i = 0; i < _listeners.size(); i++)  {
-        
+        int fd = _listeners[i].fd;
+		if (added.find(fd) != added.end())
+			continue;
+		
 		struct pollfd   p;
 
         p.fd = _listeners[i].fd;
         p.events = POLLIN;
         p.revents = 0;
         _fds.push_back(p);
+		added.insert(fd);
+		
 		std::cout << "on position " << i << " => " <<_listeners[i].fd << " <- pollfd structure constructed\n";
     
 	}
@@ -187,62 +204,69 @@ void    ServerRunner::setupPollFds()    {
 
 void    ServerRunner::handleEvents()    {
     
-	for (std::size_t i = 0; i < _fds.size(); ++i)    {
+	for (std::size_t i = _fds.size(); i-- > 0; )    {
         
 		int     fd = _fds[i].fd;
         short   re = _fds[i].revents;
 
-        if (re & POLLIN)    {
-            bool    isListener = false;
-            const Server*   srv = NULL;
-            
-			for (size_t j = 0; j < _listeners.size(); ++j)  {
-                if (_listeners[j].fd == fd) {
-                    isListener = true;
-                    srv = _listeners[j].config;
-                    break;
-                }
-            }
+		if (re == 0)
+			continue;
 
-            if (isListener)	// When one of the listening sockets becomes ready for a new connection.
-                acceptNewClient(fd, srv);
-            else
-                readFromClient(fd);
-				
+		if (re & (POLLERR | POLLHUP | POLLNVAL))	{
+			closeConnection(fd);
+			continue;
+		}
+		
+        bool    isListener = false;
+        const Server*   srv = NULL;
+		for (size_t j = 0; j < _listeners.size(); ++j)  {
+        	if (_listeners[j].fd == fd) {
+            	isListener = true;
+                srv = _listeners[j].config;
+                break;
+            }
         }
-        else if (re & POLLOUT)
-            writeToClient(fd);
-        else if (re & (POLLERR | POLLHUP | POLLNVAL))
-            closeConnection(fd);
-    
+
+        if (isListener)	{ // When one of the listening sockets becomes ready for a new connection.
+            if (re & POLLIN)    
+				acceptNewClient(fd, srv);
+			continue;
+		}
+		if (re & POLLIN)
+			readFromClient(fd);
+		if (re & POLLOUT)
+			writeToClient(fd);
 	}
 
 }
 
 void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
+	for (;;) {
+		int	clientFd = accept(listenFd, NULL, NULL);
+		
+		if (clientFd < 0)	{
+			printSocketError("accept");
+			return;
+		}
+		if (!makeNonBlocking(clientFd)) {
+			close(clientfd);
+			continue;
+		}
+
+		Connection	connection;
+		connection.fd = clientFd;
+		connection.srv = srv;
+		connection.readBuffer.clear();
+		connection.writeBuffer.clear();
+		connection.headersComplete = false;
+		_connections[clientFd] = connection;
 	
-	int	clientFd = accept(listenFd, NULL, NULL);
-	
-	if (clientFd < 0)	{
-		printSocketError("accept");
-		return;
+		struct pollfd	p;
+		p.fd = clientFd;
+		p.events = POLLIN;
+		p.revents = 0;
+		_fds.push_back(p);
 	}
-	makeNonBlocking(clientFd);
-
-	Connection	connection;
-	connection.fd = clientFd;
-	connection.srv = srv;
-	connection.readBuffer.clear();
-	connection.writeBuffer.clear();
-	connection.headersComplete = false;
-	_connections[clientFd] = connection;
-
-	struct pollfd	p;
-	p.fd = clientFd;
-	p.events = POLLIN;
-	p.revents = 0;
-	_fds.push_back(p);
-
 }
 
 void	ServerRunner::readFromClient(int clientFd)	{
