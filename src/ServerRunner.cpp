@@ -132,7 +132,7 @@ int openAndListen(const std::string& spec)  {
 
 		if (bind(fd, p->ai_addr, p->ai_addrlen) == 0)	{ // plugging the phone into a specific wall jack: a local (IP, port)
 			if (listen(fd, SOMAXCONN) == 0)	{ // making the phone ready to accept calls; keeping a waiting line
-				sockfd = fd;
+				sockfd = fd; // listen makes the fd into a listening TCP socket and associates SYN queue and Accept queue
 				break;
 			}
 			else
@@ -228,7 +228,7 @@ void    ServerRunner::handleEvents()    {
         }
 
         if (isListener)	{ // When one of the listening sockets becomes ready for a new connection.
-            if (re & POLLIN)    
+            if (re & POLLIN) // the listening socket is reported readable when ACCEPT queue has at least one fully established connection waiting.
 				acceptNewClient(fd, srv);
 			continue;
 		}
