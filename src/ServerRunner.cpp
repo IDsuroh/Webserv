@@ -246,8 +246,12 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		int	clientFd = accept(listenFd, NULL, NULL); // accept() takes one fully-established connection off the listener’s accept queue and returns a new fd dedicated to that client
 		
 		if (clientFd < 0)	{
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break;
 			printSocketError("accept");
-			return;
+			break;
 		}
 		if (!makeNonBlocking(clientFd)) {
 			close(clientFd);
