@@ -360,3 +360,43 @@ void	ServerRunner::closeConnection(int clientFd)	{
 	}
 
 }
+
+/* Big Logic Flow of this pile of functions
+
+1. Startup
+
+./webserv webserv.config → you parse the config.
+
+setupListeners(...) opens the listening sockets (e.g., 127.0.0.1:8080).
+
+setupPollFds() puts those listener fds into _fds with events = POLLIN.
+
+2. Enter the loop
+
+poll(&_fds[0], _fds.size(), -1) goes to sleep in the kernel.
+(Right now, only listener fds are watched.)
+
+3. When a client connects
+
+Browser does TCP 3-way handshake → kernel puts the new connection in the listener’s accept queue and marks the listener readable.
+
+poll() wakes and returns; _fds[i].revents for that listener has POLLIN.
+
+4. handleEvents() runs
+
+Sees the listener POLLIN → calls accept() (often in a loop), getting new client fd(s).
+
+Adds each client fd to _fds with events = POLLIN and a Connection entry in our connection std::map.
+
+5. Requests & responses
+
+When request bytes arrive on a client fd, kernel marks it POLLIN → next poll() wakes → readFromClient(fd) appends to readBuffer.
+
+When there is a response ready, change that fd’s events to POLLOUT.
+
+When the socket can take more bytes, kernel sets POLLOUT → writeToClient(fd) sends, and you either keep the connection (flip back to POLLIN) or close it.
+
+6. Other wakeups
+
+poll() also wakes for errors/hangups (POLLERR|POLLHUP|POLLNVAL) on any fd, not just new connections.
+*/
