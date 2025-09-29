@@ -246,9 +246,9 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		int	clientFd = accept(listenFd, NULL, NULL); // accept() takes one fully-established connection off the listener’s accept queue and returns a new fd dedicated to that client
 		
 		if (clientFd < 0)	{
-			if (errno == EINTR)
+			if (errno == EINTR) // “The system call was interrupted by a signal.”
 				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
+			if (errno == EAGAIN || errno == EWOULDBLOCK) // “There are no more connections to accept right now.”
 				break;
 			printSocketError("accept");
 			break;
