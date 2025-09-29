@@ -242,15 +242,15 @@ void    ServerRunner::handleEvents()    {
 
 void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 	
-	for (;;) {
-		int	clientFd = accept(listenFd, NULL, NULL);
+	for (;;) { // If accept() is only called once, there would be extra ready connections sitting in the accept queue, forcing another immediate poll() wakeup. It’s more efficient to drain the queue now.
+		int	clientFd = accept(listenFd, NULL, NULL); // accept() takes one fully-established connection off the listener’s accept queue and returns a new fd dedicated to that client
 		
 		if (clientFd < 0)	{
 			printSocketError("accept");
 			return;
 		}
 		if (!makeNonBlocking(clientFd)) {
-			close(clientfd);
+			close(clientFd);
 			continue;
 		}
 
@@ -266,7 +266,9 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		p.fd = clientFd;
 		p.events = POLLIN;
 		p.revents = 0;
-		_fds.push_back(p);
+		_fds.push_back(p); // Add the new client fd to the poll() std::vector,
+		// initially watching for readability (request bytes).
+		// This is what lets poll() wake again when the client sends the HTTP request.
 	
 	}
 	
