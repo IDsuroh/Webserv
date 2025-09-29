@@ -325,6 +325,7 @@ void	ServerRunner::writeToClient(int clientFd)	{
 	std::map<int, Connection>::iterator it = _connections.find(clientFd);
 	if (it == _connections.end())
 		return;
+
 	Connection& connection = it->second;
 	
 	while (!connection.writeBuffer.empty())	{
