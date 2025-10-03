@@ -341,16 +341,19 @@ void	ServerRunner::writeToClient(int clientFd)	{
 
 		ssize_t	n = write(clientFd, data, len);
 		if (n > 0)	{
-			connection.writeBuffer.erase(0, static_cast<std::size_t>(n));
+			connection.writeBuffer.erase(0, static_cast<std::size_t>(n)); // remove the previous bytes then loop to send more.
 			continue;
 		}
-		if (n == 0)	{
+		if (n < 0)	{
+			if (errno == EINTR) // n < 0 -> interrupted by a signal before any data was writen -> retry the write.
+				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) // Socket can't accept more bytes right now — keep POLLOUT and try later.
+				return;
+			closeConnection(clientFd); // Any other error (EPIPE, ECONNRESET, etc.) — peer closed or real error.
 			return;
 		}
-		return;
 	}
 	closeConnection(clientFd);
-
 }
 
 void	ServerRunner::closeConnection(int clientFd)	{
