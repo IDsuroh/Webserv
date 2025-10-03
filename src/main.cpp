@@ -40,6 +40,8 @@ int	main(int argc, char** argv) {
 		return 1;
 	}
 
+	signal(SIGPIPE, SIG_IGN) // ignore SIGPIPE signal and sets errno = EPIPE
+
 	Config config(argv[1]);
 	const std::vector<Server>& servers = config.getServers();
 	printConfig(servers);
