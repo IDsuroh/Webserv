@@ -152,10 +152,18 @@ static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, 
 
 // Handle the "listen" directive
 static void handleListen(Server& srv, const std::vector<std::string>& tokens, size_t& i)  {
-    
-    srv.listen.push_back(tokens[i++]);
-    if (tokens[i++] != ";")
+
+	if (i >= tokens.size())
+		throw	std::runtime_error("Unexpected EOF after listen");
+
+	const std::string	arg = tokens[i++];
+
+    if (i >= tokens.size() || tokens[i] != ";")
         throw   std::runtime_error("Missing ';' after listen");
+
+	++i;
+
+	srv.listen.push_back(arg);
 
 }
 
