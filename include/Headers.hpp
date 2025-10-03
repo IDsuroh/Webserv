@@ -13,6 +13,8 @@
 #include <map>
 #include <netdb.h>
 #include <poll.h>
+#include <set>
+#include <signal.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
