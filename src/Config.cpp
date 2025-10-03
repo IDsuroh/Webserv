@@ -164,9 +164,17 @@ static void handleListen(Server& srv, const std::vector<std::string>& tokens, si
 // Handle the "server_name" directive
 static void handleServerName(Server& srv, const std::vector<std::string>& tokens, size_t& i)	{
 
-    while (tokens[i] != ";")
-        srv.server_name.push_back(tokens[i++]);
-    ++i;
+	if (i >= tokens.size())
+		throw	std::runtime_error("Unexpected EOF after server_name");
+
+	while (i < tokens.size() && tokens[i] != ";")
+		srv.server_name.push_back(tokens[i++]);
+
+	if (i >= tokens.size() || tokens[i] != ";")
+		throw	std::runtime_error("Missing ';' after server_name");
+	
+	++i;
+
 }
 
 
@@ -232,10 +240,25 @@ static void parseLocationBlock(const std::vector<std::string>& tokens, size_t& i
 
 // Handle generic directives in the server block
 static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, size_t& i)  {
-    
-    std::string value = tokens[i++];
-    if (tokens[i++] != ";")
-        throw   std::runtime_error("Missing ';' after " + key);
-    srv.directives[key] = value;
+
+	if (i >= tokens.size())
+		throw	std::runtime_error("Unexpected EOF after " + key);
+
+	std::vector<std::string>	args;
+	while (i < tokens.size() && tokens[i] != ";")
+		args.push_back(tokens[i++]);
+
+	if (i >= tokens.size() || tokens[i] != ";")
+		throw	std::runtime_error("Missing ';' after " + key);
+	
+	++i;
+
+	std::string	joined;
+	for (size_t j = 0; j < args.size(); ++j)	{
+		if (j)
+			joined += ' ';
+		joined += args[j];
+	}
+	srv.directives[key] = joined;
 
 }
