@@ -175,21 +175,23 @@ bool	makeNonBlocking(int fd)	{
 //**************************************************************************************************
 
 // Setting up Pollfds before running poll() => important process! registering each listening socket.
-void    ServerRunner::setupPollFds()    {
+void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPollFds() = listeners only (startup). Clients get added as they connect.
 
-	_fds.clear();
-	std::set<int> added;
-
+	std::set<int> added; // We can have multiple Listener records pointing to the same underlying fd (e.g., two server {} blocks both listening on 127.0.0.1:8080).
+	// make sure only deduplicates happen.
+	// Deduplicate by FD: many _listeners can share the same fd
+	// (virtual hosts on the same ip:port), but poll() needs
+	// exactly ONE pollfd per unique fd.
     for (std::size_t i = 0; i < _listeners.size(); i++)  {
         int fd = _listeners[i].fd;
 		if (added.find(fd) != added.end())
 			continue;
 		
-		struct pollfd   p;
+		struct pollfd   p; // tells the kernel which fd and what events we want
 
         p.fd = _listeners[i].fd;
         p.events = POLLIN;
-        p.revents = 0;
+        p.revents = 0; // the poll() is the function that fills in the revents to tell what exactly happened.
         _fds.push_back(p);
 		added.insert(fd);
 		
