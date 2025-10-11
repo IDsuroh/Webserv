@@ -42,12 +42,12 @@ void    ServerRunner::run() {
 // Setting up Listeners functions
 void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners)	{
 
-	std::map<std::string, int> specToFd;
+	std::map<std::string, int> specToFd; // To prevent opening the same IP:port more than once.
 	
-	for (std::size_t s = 0; s < servers.size(); ++s)	{
+	for (std::size_t s = 0; s < servers.size(); ++s)	{ // server blocks
 		const Server&	srv = servers[s];
 		
-		for (std::size_t i = 0; i < srv.listen.size(); ++i)	{
+		for (std::size_t i = 0; i < srv.listen.size(); ++i)	{ // each server's listen entries (server can listen on multiple specifications.
 			const std::string& spec = srv.listen[i];
 			
 			int	fd;
@@ -104,7 +104,7 @@ int openAndListen(const std::string& spec)  {
 
 	struct	addrinfo*	res	= NULL;
 	int	rc = getaddrinfo((host.empty() || host == "*") ? NULL : host.c_str(), // make it socket-compatible
-						port.c_str(), &hints, &res); // this function instanciates/builds a linked list of addresses
+						port.c_str(), &hints, &res); // this function instanciates/builds a linked list of addresses -> addrinfo nodes which represent candidate local address to bind.
 	if (rc != 0)	{
 		std::cerr << "getaddrinfo(" << spec << "): " << gai_strerror(rc) << std::endl;
 		return -1; // get address info str error converts errors into human readable message
@@ -123,8 +123,8 @@ int openAndListen(const std::string& spec)  {
 		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) < 0)
 			printSocketError("setsockopt SO_REUSEADDR");
 		// For this socket fd, go to the socket menu (SOL_SOCKET) and turn on (1) the REUSEADDR setting (SO_REUSEADDR).
-		// SO_REUSEADDR, allows immediate re-binding, but without it, binding might fail due to the old connection still being in TIME_WAIT.
-		
+		// SO_REUSEADDR, allows immediate re-binding, but without it, binding might fail due to the old connection still being in TIME_WAIT. Is a safety method
+
 		if (!makeNonBlocking(fd))	{
 			close(fd);
 			continue;
