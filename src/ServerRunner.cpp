@@ -75,7 +75,7 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 }
 
 int openAndListen(const std::string& spec)  {
-    
+
 	std::string::size_type	colon = spec.find(':');
 	std::string				host;
 	std::string				port;
@@ -176,7 +176,7 @@ bool	makeNonBlocking(int fd)	{
 
 // Setting up Pollfds before running poll() => important process! registering each listening socket.
 void    ServerRunner::setupPollFds()    {
-    
+
 	_fds.clear();
 	std::set<int> added;
 
@@ -203,7 +203,7 @@ void    ServerRunner::setupPollFds()    {
 
 
 void    ServerRunner::handleEvents()    {
-    
+
 	for (std::size_t i = _fds.size(); i-- > 0; )    {
         
 		int     fd = _fds[i].fd;
@@ -241,7 +241,7 @@ void    ServerRunner::handleEvents()    {
 }
 
 void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
-	
+
 	for (;;) { // If accept() is only called once, there would be extra ready connections sitting in the accept queue, forcing another immediate poll() wakeup. It’s more efficient to drain the queue now.
 		int	clientFd = accept(listenFd, NULL, NULL); // accept() takes one fully-established connection off the listener’s accept queue and returns a new fd dedicated to that client
 		
@@ -279,7 +279,7 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 }
 
 void	ServerRunner::readFromClient(int clientFd)	{
-	
+
 	std::map<int, Connection>::iterator it = _connections.find(clientFd);
 	if (it == _connections.end())
 		return;
@@ -312,7 +312,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			hdr	<<	"HTTP/1.1 200 OK\r\n"
 				<<	"Content-Length: " << body.size() << "\r\n"
 				<<	"Connection: close\r\n\r\n";
-			
+
 		connection.writeBuffer = hdr.str() + body;
 
 		for (std::size_t i = 0; i < _fds.size(); ++i)	{
@@ -327,13 +327,13 @@ void	ServerRunner::readFromClient(int clientFd)	{
 }
 
 void	ServerRunner::writeToClient(int clientFd)	{
-	
+
 	std::map<int, Connection>::iterator it = _connections.find(clientFd);
 	if (it == _connections.end())
 		return;
 
 	Connection& connection = it->second;
-	
+
 	while (!connection.writeBuffer.empty())	{
 
 		const char*	data = connection.writeBuffer.c_str();
@@ -357,7 +357,7 @@ void	ServerRunner::writeToClient(int clientFd)	{
 }
 
 void	ServerRunner::closeConnection(int clientFd)	{
-	
+
 	close(clientFd);
 	_connections.erase(clientFd);
 
