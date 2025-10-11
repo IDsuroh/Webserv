@@ -115,7 +115,7 @@ int openAndListen(const std::string& spec)  {
 	for (struct addrinfo* p = res; p != NULL; p = p->ai_next)	{
 		int	fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol); // like buying a phone machine
 		if (fd < 0)	{
-			printSocketError("socket");
+			printSocketError("socket"); // creating an endpoint so that there is one end of a communication channel to send or receive data over a network.
 			continue;
 		}
 		
