@@ -295,12 +295,18 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 			continue;
 		}
 
+		int	fdflags = fcntl(clientFd, F_GETFD);
+		if (fdflags != -1)
+			fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC); // FD_CLOEXEC a file-descriptor flag meaning “close this fd automatically when we call execve().”
+
 		Connection	connection;
 		connection.fd = clientFd;
 		connection.srv = srv;
+		connection.listenFd = listenFd;
 		connection.readBuffer.clear();
 		connection.writeBuffer.clear();
 		connection.headersComplete = false;
+		connection.requestParsed = false;
 		_connections[clientFd] = connection;
 	
 		struct pollfd	p;
@@ -344,7 +350,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		// TODO: parse HTTP request from conn.readBuf
         // TODO: generate HTTP response into conn.writeBuf
 
-		std::string			body = "This is a TestRun... I need to make it more than this...";
+		std::string			body = "This is a TestRun... I need to make it more than this..."; // Temporary response
 		std::ostringstream	hdr;
 			hdr	<<	"HTTP/1.1 200 OK\r\n"
 				<<	"Content-Length: " << body.size() << "\r\n"
