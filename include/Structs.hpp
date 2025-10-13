@@ -21,10 +21,12 @@ struct  Listener    {
 
 struct Connection   {
     int             fd;
+    int             listenFd;
     const Server*   srv;
     std::string     readBuffer;
     std::string     writeBuffer;
     bool            headersComplete;
+    bool            requestParsed;
 
 };
 
