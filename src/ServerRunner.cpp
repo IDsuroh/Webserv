@@ -35,13 +35,13 @@ void    ServerRunner::run() {
         handleEvents();
     }
 	// setupListeners(): opens the actual listening sockets (via openAndListen), and builds _listeners entries that map each listening fd to a particular Server config (virtual host).
-	//		It also dedupes so the same IP:port is opened once and shared by multiple servers.
+	//		It also dedupes so the same IP:port is opened once and shared by multiple servers. Deduplicate => having no duplicates of the same fd.
 	// setupPollFds(): registers each unique listening fd in the _fds array with events = POLLIN. That array is the subscription list passed to poll().
 	//		In other words: this function tells poll() what to watch (listeners) and for which events (readable → “there’s a connection to accept”).
 	// poll() is a system call to the kernel so it waits and watches over the fds.
 	// Then the loop:
 	//		poll() sleeps until any registered fd is ready.
-	//		If a listener is ready (POLLIN), call acceptNewClient() → that adds a client fd to _fds with POLLIN.
+	//		If a listener is ready (POLLIN), call acceptNewClient() -> that adds a client fd to _fds with POLLIN.
 	//		When a response is ready, flip that client’s events to POLLOUT so poll() wakes the kernel when there is something to write.
 }
 
@@ -128,7 +128,7 @@ int openAndListen(const std::string& spec)  {
 			printSocketError("socket");
 			continue;
 		}
-		
+
 		const int	enable = 1;
 		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) < 0)
 			printSocketError("setsockopt SO_REUSEADDR");
@@ -187,7 +187,7 @@ bool	makeNonBlocking(int fd)	{
 	return true;
 
 	// F_SETFL => set file status flag. Returns a bitmask containing:
-	//		the access mode (read-only, write-only, read-write) — use flags & O_ACCMODE to inspect
+	//		the access mode (read-only, write-only, read-write)
 	// 		status flags like O_NONBLOCK, O_APPEND, O_SYNC, O_ASYNC, …
 	// F_GETFL => get file status flag.
 	//		can turn on/off flags such as O_NONBLOCK or O_APPEND.
@@ -240,8 +240,9 @@ void    ServerRunner::handleEvents()    {
 		//		i = 0 → L0 has POLLIN → acceptNewClient() accepts 2 clients → push_back [ C2, C3 ].
 		//		_fds is now [ L0, L1, C2, C3 ] (size = 4).
 		//	Forward loop continues: i = 1 (L1), then i = 2 (C2), i = 3 (C3).
-		//	They have revents=0, so they’re skipped—but still iterated.
+		//	They have revents=0, so they should be skipped but they are still iterated.
 		//	Backward loop avoids that: it starts at the last index from the original size and never touches things appended during this pass.
+		// Also will skip on situations where we delete one index.
 
 		int     fd = _fds[i].fd;
         short   re = _fds[i].revents;
