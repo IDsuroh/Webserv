@@ -69,11 +69,12 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 					continue;
 				specToFd[spec] = fd;
 			}
-			
+
+			//	_listeners array populated
 			Listener	L;
 			L.fd = fd;
 			L.config = &srv;
-			outListeners.push_back(L);
+			outListeners.push_back(L);	// Adds to _listeners array
             std::cout	<< "Listening on " << srv.listen[i] << " for server #"
 						<< s << std::endl << std::endl;
 		
@@ -85,9 +86,9 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 
 int openAndListen(const std::string& spec)  {
 
-	std::string::size_type	colon = spec.find(':');
-	std::string				host;
-	std::string				port;
+	std::size_t		colon = spec.find(':');	// spec.find() returns the index position
+	std::string		host;
+	std::string		port;
 
 	if (colon == std::string::npos)	{
 		host = "";
@@ -98,14 +99,14 @@ int openAndListen(const std::string& spec)  {
 		port = (colon + 1 >= spec.size()) ? "" : spec.substr(colon + 1);
 	}
 
-	struct	addrinfo	hints; // recipe for what type of addresses we want
-	hints.ai_flags		= 0;
-	hints.ai_family 	= AF_INET; // IPv4 addresses only
-	hints.ai_socktype	= SOCK_STREAM; // TCP connections only
-	hints.ai_protocol	= 0; // default protocol -> default for that type -> TCP
-	hints.ai_addrlen	= 0;
-	hints.ai_addr		= NULL;
-	hints.ai_canonname	= NULL;
+	struct	addrinfo	hints;	// recipe for what type of addresses we want
+	hints.ai_flags		= 0;	// Behavioral Flags (hints.ai_flags = 0; initially no special behavior)
+	hints.ai_family 	= AF_INET;	// IPv4 addresses only
+	hints.ai_socktype	= SOCK_STREAM;	// TCP connections only
+	hints.ai_protocol	= 0;	// default protocol -> default for that type -> TCP
+	hints.ai_addrlen	= 0;	// address length => let getaddrinfo() fill this section
+	hints.ai_addr		= NULL;	// socket address => should be set to NULL for getaddrinfo() to fill
+	hints.ai_canonname	= NULL;	// official hostname
 	hints.ai_next		= NULL;
 
 	if (host.empty() || host == "*")
@@ -123,7 +124,7 @@ int openAndListen(const std::string& spec)  {
 
 	for (struct addrinfo* p = res; p != NULL; p = p->ai_next)	{
 		int	fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol); // like buying a phone machine
-		 // creating an endpoint so that there is one end of a communication channel to send or receive data over a network.
+		// creating an endpoint so that there is one end of a communication channel to send or receive data over a network.
 		if (fd < 0)	{
 			printSocketError("socket");
 			continue;
@@ -247,15 +248,23 @@ void    ServerRunner::handleEvents()    {
 		int     fd = _fds[i].fd;
         short   re = _fds[i].revents;
 
+		// 1. Skip if nothing happened
 		if (re == 0)
 			continue;
 
+		// 2. Check for errors first
 		if (re & (POLLERR | POLLHUP | POLLNVAL))	{
 			closeConnection(fd);
 			continue;
 		}
-		
-        bool    isListener = false;
+		/*
+		POLLERR = "Error condition" (socket error, network problem)
+		POLLHUP = "Hang up" (peer closed the connection)
+		POLLNVAL = "Invalid request" (fd is not open, invalid fd)
+		*/
+
+		// 3. Figure out what type of socket this is
+        bool    		isListener = false;
         const Server*   srv = NULL;
 		for (size_t j = 0; j < _listeners.size(); ++j)  {
         	if (_listeners[j].fd == fd) {
@@ -265,24 +274,37 @@ void    ServerRunner::handleEvents()    {
             }
         }
 
-        if (isListener)	{ // When one of the listening sockets becomes ready for a new connection.
-            if (re & POLLIN) // the listening socket is reported readable when ACCEPT queue has at least one fully established connection waiting.
-				acceptNewClient(fd, srv);
-			continue;
+		// 4. Handle listener sockets
+        if (isListener)	{
+            if (re & POLLIN)
+				acceptNewClient(fd, srv); 	// New connection waiting
+			continue;	// Skip client handling for listeners
 		}
+
+		// 5. Handle client sockets
 		if (re & POLLIN)
-			readFromClient(fd);
+			readFromClient(fd);	// HTTP request data
 		if (re & POLLOUT)
-			writeToClient(fd);
+			writeToClient(fd);	// Send HTTP response
 	}
 
+	// Checks on bitwise operations of the revents of the pollfd struct.
+	/*
+	What POLLIN means:
+		For listeners: "New connection waiting to be accepted"
+		For clients: "HTTP request data arrived"
+
+	What POLLOUT means:
+		"Socket buffer has space - you can write() without blocking"
+		"Kernel is ready to accept more bytes for transmission"
+	*/
 }
 
 void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 
 	for (;;) { // If accept() is only called once, there would be extra ready connections sitting in the accept queue, forcing another immediate poll() wakeup. It’s more efficient to drain the queue now.
 		int	clientFd = accept(listenFd, NULL, NULL); // accept() takes one fully-established connection off the listener’s accept queue and returns a new fd dedicated to that client
-		
+
 		if (clientFd < 0)	{
 			if (errno == EINTR) // “The system call was interrupted by a signal.”
 				continue;
@@ -298,7 +320,7 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 
 		int	fdflags = fcntl(clientFd, F_GETFD);
 		if (fdflags != -1)
-			fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC); // FD_CLOEXEC a file-descriptor flag meaning “close this fd automatically when we call execve().”
+			fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC); // FD_CLOEXEC => a file-descriptor flag meaning “close this fd automatically when we call execve().”
 
 		Connection	connection;
 		connection.fd = clientFd;
@@ -431,6 +453,28 @@ poll(&_fds[0], _fds.size(), -1) goes to sleep in the kernel.
 
 3. When a client connects
 
+	// SETUP
+	listen(fd, SOMAXCONN);    // ← Creates queues, then returns immediately
+	                          //   Your code continues...
+
+	// LATER: EVENT LOOP
+	poll(&_fds[0], size, -1); // ← Goes to sleep here
+
+	//   ╔═══════════════════════════════════════════╗
+	//   ║  WHILE YOU'RE SLEEPING:                   ║
+	//   ║  Kernel handles handshakes automatically  ║  
+	//   ║  - Receives SYN packets                   ║
+	//   ║  - Sends SYN-ACK responses               ║
+	//   ║  - Receives final ACK                    ║
+	//   ║  - Moves connection to accept queue       ║
+	//   ║  - Sets listener fd as readable          ║
+	//   ╚═══════════════════════════════════════════╝
+
+	poll() wakes up           // ← "Hey! New connection ready!"
+
+	// HANDLE RESULT
+	accept(listenFd, ...);    // ← Takes the completed connection
+
 Browser does TCP 3-way handshake → kernel puts the new connection in the listener’s accept queue and marks the listener readable.
 
 poll() wakes and returns; _fds[i].revents for that listener has POLLIN.
@@ -457,7 +501,7 @@ poll() also wakes for errors/hangups (POLLERR|POLLHUP|POLLNVAL) on any fd, not j
 /*TCP 3-way handshake
 Purpose: both sides agree to communicate and pick initial sequence numbers for reliable byte streams.
 SYN (Client → Server)
-	“I want to connect, here’s my initial sequence number ISN(c).”
+	“I want to connect, here’s my initial sequence number ISN(c).” ISN => Initial Sequence Number
 	Server puts this half-open attempt in the SYN queue.
 SYN-ACK (Server → Client)
 	“I heard you. Here’s my initial sequence number ISN(s). I’m acknowledging yours.”
@@ -469,4 +513,36 @@ ACK (Client → Server)
 
 	SYN = SYNchronize sequence numbers.
 	ACK = ACKnowledgment.
+
+KERNEL QUEUES DURING HANDSHAKES:
+
+Time 0: listen() called
+┌─────────────────┐
+│ SYN Queue: []   │
+│ Accept Queue:[] │  
+└─────────────────┘
+
+Time 1: Client A sends SYN
+┌─────────────────┐
+│ SYN Queue:      │
+│ [A_handshaking] │  ← A is in middle of handshake
+│ Accept Queue:[] │
+└─────────────────┘
+
+Time 2: Client B sends SYN, A completes handshake  
+┌─────────────────┐
+│ SYN Queue:      │
+│ [B_handshaking] │  ← B still handshaking
+│ Accept Queue:   │
+│ [A_ready] ✓     │  ← A ready to accept!
+└─────────────────┘
+                    → Listener becomes POLLIN
+
+Time 3: Your accept() call
+┌─────────────────┐
+│ SYN Queue:      │
+│ [B_handshaking] │  ← B still in progress
+│ Accept Queue:[] │  ← A taken by your app
+└─────────────────┘
+
 */
