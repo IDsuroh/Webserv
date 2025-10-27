@@ -318,10 +318,6 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 			continue;
 		}
 
-		int	fdflags = fcntl(clientFd, F_GETFD);
-		if (fdflags != -1)
-			fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC); // FD_CLOEXEC => a file-descriptor flag meaning “close this fd automatically when we call execve().”
-
 		Connection	connection;
 		connection.fd = clientFd;
 		connection.srv = srv;
@@ -331,17 +327,18 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		connection.headersComplete = false;
 		connection.requestParsed = false;
 		_connections[clientFd] = connection;
-	
+
 		struct pollfd	p;
 		p.fd = clientFd;
 		p.events = POLLIN;
-		p.revents = 0; // For this iteration, it is first set to revents == 0. then it is added to the 
-		_fds.push_back(p); // Add the new client fd to the poll() std::vector,
+		p.revents = 0;
+		_fds.push_back(p);
+		// Add the new client fd to the poll() std::vector,
 		// initially watching for readability (request bytes).
 		// This is what lets poll() wake again when the client sends the HTTP request.
-	
+
 	}
-	
+
 }
 
 void	ServerRunner::readFromClient(int clientFd)	{
@@ -364,14 +361,15 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			closeConnection(clientFd);
 			return ;
 		}
-		break;
+		return ;
 	}
 
 	if (!connection.headersComplete
 		&& connection.readBuffer.find("\r\n\r\n") != std::string::npos)	{
 		connection.headersComplete = true;
-		// TODO: parse HTTP request from conn.readBuf
-        // TODO: generate HTTP response into conn.writeBuf
+    // TODO (soon): parse request line + headers here
+    // TODO: pick vhost by Host header + connection.listenFd
+    // TODO: call router to build real response
 
 		std::string			body = "This is a TestRun... I need to make it more than this..."; // Temporary response
 		std::ostringstream	hdr;
@@ -402,22 +400,14 @@ void	ServerRunner::writeToClient(int clientFd)	{
 
 	while (!connection.writeBuffer.empty())	{
 
-		const char*	data = connection.writeBuffer.c_str();
-		std::size_t	len = connection.writeBuffer.size();
-
-		ssize_t	n = write(clientFd, data, len);
+		ssize_t	n = write(clientFd, connection.writeBuffer.c_str(), connection.writeBuffer.size());
 		if (n > 0)	{
 			connection.writeBuffer.erase(0, static_cast<std::size_t>(n)); // remove the previous bytes then loop to send more.
 			continue;
 		}
-		if (n < 0)	{
-			if (errno == EINTR) // n < 0 -> interrupted by a signal before any data was writen -> retry the write.
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK) // Socket can't accept more bytes right now — keep POLLOUT and try later.
-				return;
-			closeConnection(clientFd); // Any other error (EPIPE, ECONNRESET, etc.) — peer closed or real error.
-			return;
-		}
+
+		return ;
+
 	}
 	closeConnection(clientFd);
 }
@@ -427,7 +417,7 @@ void	ServerRunner::closeConnection(int clientFd)	{
 	close(clientFd);
 	_connections.erase(clientFd);
 
-	for (std::size_t	i = 0; i < _fds.size(); ++i)	{
+	for (std::size_t i = 0; i < _fds.size(); ++i)	{
 		if (_fds[i].fd == clientFd)	{
 			_fds.erase(_fds.begin() + i);
 			break;
@@ -455,29 +445,24 @@ poll(&_fds[0], _fds.size(), -1) goes to sleep in the kernel.
 
 	// SETUP
 	listen(fd, SOMAXCONN);    // ← Creates queues, then returns immediately
-	                          //   Your code continues...
+	                          //   Code continues...
 
 	// LATER: EVENT LOOP
 	poll(&_fds[0], size, -1); // ← Goes to sleep here
 
 	//   ╔═══════════════════════════════════════════╗
-	//   ║  WHILE YOU'RE SLEEPING:                   ║
+	//   ║  WHILE SLEEPING:                   		 ║
 	//   ║  Kernel handles handshakes automatically  ║  
 	//   ║  - Receives SYN packets                   ║
-	//   ║  - Sends SYN-ACK responses               ║
-	//   ║  - Receives final ACK                    ║
+	//   ║  - Sends SYN-ACK responses                ║
+	//   ║  - Receives final ACK                     ║
 	//   ║  - Moves connection to accept queue       ║
-	//   ║  - Sets listener fd as readable          ║
+	//   ║  - Sets listener fd as readable           ║
 	//   ╚═══════════════════════════════════════════╝
 
 	poll() wakes up           // ← "Hey! New connection ready!"
+	poll() returns; _fds[i].revents for that listener has POLLIN.
 
-	// HANDLE RESULT
-	accept(listenFd, ...);    // ← Takes the completed connection
-
-Browser does TCP 3-way handshake → kernel puts the new connection in the listener’s accept queue and marks the listener readable.
-
-poll() wakes and returns; _fds[i].revents for that listener has POLLIN.
 
 4. handleEvents() runs
 
@@ -485,13 +470,17 @@ Sees the listener POLLIN → calls accept() (often in a loop), getting new clien
 
 Adds each client fd to _fds with events = POLLIN and a Connection entry in our connection std::map.
 
+	// HANDLE RESULT
+	accept(listenFd, ...);    // ← Takes the completed connection
+
+
 5. Requests & responses
 
 When request bytes arrive on a client fd, kernel marks it POLLIN → next poll() wakes → readFromClient(fd) appends to readBuffer.
 
 When there is a response ready, change that fd’s events to POLLOUT.
 
-When the socket can take more bytes, kernel sets POLLOUT → writeToClient(fd) sends, and you either keep the connection (flip back to POLLIN) or close it.
+When the socket can take more bytes, kernel sets POLLOUT → writeToClient(fd) sends, and either keep the connection (flip back to POLLIN) or close it.
 
 6. Other wakeups
 
@@ -538,11 +527,11 @@ Time 2: Client B sends SYN, A completes handshake
 └─────────────────┘
                     → Listener becomes POLLIN
 
-Time 3: Your accept() call
+Time 3: accept() call
 ┌─────────────────┐
 │ SYN Queue:      │
 │ [B_handshaking] │  ← B still in progress
-│ Accept Queue:[] │  ← A taken by your app
+│ Accept Queue:[] │  ← A taken by app
 └─────────────────┘
 
 */

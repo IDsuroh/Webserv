@@ -51,8 +51,10 @@ int	main(int argc, char** argv) {
 		return 1;
 	}
 
-	signal(SIGPIPE, SIG_IGN) // ignore SIGPIPE signal and sets errno = EPIPE, don’t crash if a peer vanishes mid-write
+	signal(SIGPIPE, SIG_IGN);
+		// ignore SIGPIPE signal and sets errno = EPIPE, don’t crash if a peer vanishes mid-write
 		// SIGPIPE = a signal raised when writing to a broken pipe/socket. Default kills the process.
+		// SIG_IGN means "Ignore the signal"
 		// EPIPE = the error code write() returns when SIGPIPE is ignored (or suppressed) and the peer is closed.
 
 	Config config(argv[1]);
