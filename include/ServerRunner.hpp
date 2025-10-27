@@ -7,7 +7,7 @@
 class   ServerRunner  {
     
     public:
-        explicit    ServerRunner(const std::vector<Server>& servers);
+        ServerRunner(const std::vector<Server>& servers);
 
         void    run();
 

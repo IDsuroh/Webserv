@@ -41,7 +41,7 @@ void    ServerRunner::run() {
 	// poll() is a system call to the kernel so it waits and watches over the fds.
 	// Then the loop:
 	//		poll() sleeps until any registered fd is ready.
-	//		If a listener is ready (POLLIN), call acceptNewClient() -> that adds a client fd to _fds with POLLIN.
+	//		If a listener is ready (POLLIN), call acceptNewClient(), which is in handleEvents() -> that adds a client fd to _fds with POLLIN.
 	//		When a response is ready, flip that client’s events to POLLOUT so poll() wakes the kernel when there is something to write.
 }
 
@@ -50,8 +50,8 @@ void    ServerRunner::run() {
 // Setting up Listeners functions
 void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners)	{
 
-	std::map<std::string, int> specToFd; // To prevent opening the same IP:port more than once.
-	// because Servers can share the same IP:ports.
+	std::map<std::string, int> specToFd;
+	// To prevent opening the same IP:port more than once because Servers can share the same IP:ports.
 	
 	for (std::size_t s = 0; s < servers.size(); ++s)	{ // server blocks
 		const Server&	srv = servers[s];
@@ -201,9 +201,10 @@ bool	makeNonBlocking(int fd)	{
 // Setting up Pollfds before running poll() => important process! registering each listening socket.
 void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPollFds() = listeners only (startup). Clients get added as they connect.
 
-	std::set<int> added; // We can have multiple Listener records pointing to the same underlying fd (e.g., two server {} blocks both listening on 127.0.0.1:8080).
+	std::set<int> added;
+	// We can have multiple Listener records pointing to the same underlying fd (e.g., two server {} blocks both listening on 127.0.0.1:8080).
 	// make sure only deduplicates happen. Deduplicate => having no duplicates of the same fd.
-	// Deduplicate by FD: many _listeners can share the same fd
+	// Deduplicate by FD: many _listeners can share the same fd which was populated by setupListeners().
 	// (virtual hosts on the same ip:port), but poll() needs exactly ONE pollfd per unique fd.
     for (std::size_t i = 0; i < _listeners.size(); i++)  {
         int fd = _listeners[i].fd;

@@ -15,7 +15,7 @@ class Config    {
         void    parseTokens(const std::vector<std::string>& tokens);
 
     public:
-        explicit        Config(const std::string& filename);
+        Config(const std::string& filename);
 
         const std::vector<Server>&  getServers() const;
 
