@@ -303,8 +303,11 @@ void    ServerRunner::handleEvents()    {
 
 void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 
-	for (;;) { // If accept() is only called once, there would be extra ready connections sitting in the accept queue, forcing another immediate poll() wakeup. It’s more efficient to drain the queue now.
-		int	clientFd = accept(listenFd, NULL, NULL); // accept() takes one fully-established connection off the listener’s accept queue and returns a new fd dedicated to that client
+	for (;;) {
+		// If accept() is only called once, there would be extra ready connections sitting in the accept queue,
+		// forcing another immediate poll() wakeup. It’s more efficient to drain the queue now.
+		int	clientFd = accept(listenFd, NULL, NULL);
+		// accept() takes one fully-established connection off the listener’s accept queue and returns a new fd dedicated to that client
 
 		if (clientFd < 0)	{
 			if (errno == EINTR) // “The system call was interrupted by a signal.”
