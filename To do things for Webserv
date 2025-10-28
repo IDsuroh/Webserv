@@ -1,0 +1,122 @@
+To do things for Webserv.
+
+1. Not implemented / still stubs (based on what’s in the tree)
+
+2. No concrete HTTP request parser yet (request-line + header folding + canonicalization).
+
+3. No Host header validation.
+
+4. No body readers (Content-Length / chunked) or client_max_body_size enforcement.
+
+5. No per-connection HTTP state machine (HEADERS → BODY → READY → WRITE).
+
+6. No timeouts (header/read/write/idle).
+
+7. No response builder (status line, headers, error pages) or keep-alive logic.
+
+8. No “app side” callback interface to hand a ready HttpRequest to your partner and receive an HttpResponse.
+
+
+Tightened plan — fix & focus Part A (“HTTP Core”)
+
+A. Define clear request/response types (1 file, 1 hour)
+
+	struct HttpRequest { method, target, version, headers (std::map<std::string,std::string> with lowercase keys), host, content_length, transfer_encoding, body_reader_state, keep_alive, ... }
+
+	struct HttpResponse { status, reason, headers, body; bool close; }
+
+	Add enum ConnState { S_HEADERS, S_BODY, S_READY, S_WRITE, S_CLOSED }; to Connection.
+
+B. Wire a minimal state machine in ServerRunner (incremental)
+
+	1. HEADERS parsing (line-by-line)
+
+		In readFromClient(): read into readBuffer; parse CRLF-delimited lines until you hit the blank line.
+
+		Parse request line: METHOD SP request-target SP HTTP/1.1\r\n → 400 on format error.
+
+		Collect headers; lowercase header keys; coalesce folded values (if any).
+
+		Validate: HTTP/1.1 requires Host → 400 if missing or malformed.
+
+		Set Connection: keep-alive/close behavior (HTTP/1.1 default keep-alive unless header says close).
+
+		Transition: if there’s a body to come → S_BODY; else → S_READY.
+
+	2. BODY readers (incremental, non-blocking)
+
+		Implement mutually exclusive readers:
+
+		Content-Length: read exactly N bytes across polls; overflow → 413; if more data arrives, keep it for next request on same connection.
+
+		Transfer-Encoding: chunked: incremental chunk decoder (size line in hex, chunk data, CRLF, trailers → you may ignore/collect); unsupported TE → 400 or 501.
+
+		client_max_body_size: ask partner’s config facade for the value (or expose from Server/Location). Enforce before/while buffering → 413 with close unless keep-alive allowed.
+
+		On completion → S_READY.
+
+	3. READY → call “app side”
+
+		Define an interface the “app” owns, e.g. HttpResponse App::handle(const HttpRequest&, const Server& /*vhost*/, const Location& /*match*/);
+
+		For now, stub it in ServerRunner as a lambda or placeholder that returns 200 text/plain “Hello from core”.
+
+		Transition to S_WRITE with a serialized response (see next).
+
+	4. WRITE (response serializer)
+
+		Build: HTTP/1.1 <status> <reason>\r\nHeaders...\r\n\r\n<body>
+
+		Always send Date, Server: webserv, Connection: keep-alive/close, Content-Length (unless you implement response chunked for streaming).
+
+		Honor keep-alive: after write completes → reset connection buffers and go back to S_HEADERS or close if close was chosen.
+
+	5. Timeouts
+
+		Track per-connection timestamps:
+
+			header timeout (e.g., 10s without completing headers) → 408 + close
+
+			body idle timeout (e.g., 15–30s between reads) → 408 + close
+
+			write timeout (e.g., 10–15s) → close
+
+			This satisfies “A request should never hang indefinitely.”
+
+	6. Error handling
+
+		Map parse errors to status codes: 400 (bad syntax), 413 (body too large), 405 (later, when app rejects method), 404/500 from app, and default error pages if partner doesn’t supply custom ones in config.
+
+		Ensure you can send an error from any state (e.g., mid-headers → generate minimal response and flip to S_WRITE).
+
+	7. HTTP correctness polish
+
+		Be strict on Content-Length vs Transfer-Encoding conflicts (RFC: if both, TE wins for 1.1; or reject—document your choice).
+
+		Method token + path normalization (basic sanity; partner will do full mapping).
+
+C. Things you don’t decide (leave to partner / “app side”)
+
+vhost pick (listener + Host), location match (longest-prefix), method allow lists (405 + Allow), path/root mapping & normalization, static files & MIME, index/autoindex, custom error_page, CGI + uploads (multipart), and logging. You just give them a validated HttpRequest and expect a complete HttpResponse back. (All defined in the subject’s config and features.)
+
+
+You — HTTP Core (finalized checklist)
+- Per-connection state machine and buffers.
+- Request line + headers parser (lowercase keys, strict CRLF)..
+- Host header validation (HTTP/1.1).
+- Keep-alive/close negotiation.
+- Body readers: Content-Length and chunked (incremental).
+- client_max_body_size enforcement (read from config / partner API).
+- Timeouts: header/body/write/idle.
+- Response serializer (+ default error pages and accurate status codes).
+- Error path from any state.
+- Minimal “app stub” call to prove hand-off.
+
+Partner — App/Routing/Resources (parallelizable now)
+- Vhost select (listener + Host).
+- Location match (longest prefix) and allowed methods → 405 + Allow.
+- Path normalization + root mapping (prevent .. traversal).
+- Static file serving + MIME; index files; autoindex pages.
+- error_page mapping to custom pages.
+- CGI runner (env, timeouts) and uploads (multipart).
+- Config validation & defaults; logging.
