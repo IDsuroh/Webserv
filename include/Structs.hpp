@@ -27,7 +27,69 @@ struct Connection   {
     std::string     writeBuffer;
     bool            headersComplete;
     bool            requestParsed;
+	ConnectionState	state;
+	HTTP_Request	request;
+	HTTP_Response	response;
+	std::size_t		writeOffset;
 
+	Connection()
+	:	fd(-1),
+		listenFd(-1),
+		srv(NULL),
+		readBuffer(),
+		writeBuffer(),
+		headersComplete(false),
+		requestParsed(false),
+		state(S_HEADERS),
+		writeOffset(0)
+	{}
+};
+
+// HTTP Core Types
+
+enum ConnectionState	{
+	S_HEADERS,
+	S_BODY,
+	S_READY,
+	S_WRITE,
+	S_CLOSED
+};	// Per-connection state for the HTTP parser
+
+enum BodyReaderState	{
+	BR_NONE,
+	BR_CONTENT_LENGTH,
+	BR_CHUNKED,
+	BR_DONE,
+	BR_ERROR
+};
+
+struct HTTP_Request	{
+	bool								keep_alive;
+	std::string							method;
+	std::string							target;
+	std::string							version;
+	std::string							host;
+	std::string							transfer_encoding;
+	std::string							body;
+	std::map<std::string, std::string>	headers;
+	std::size_t							content_length;
+	BodyReaderState						body_reader_state;
+
+	HTTP_Request()
+	: content_length(0), body_reader_state(BR_NONE), keep_alive(true)
+	{}
+};
+
+struct HTTP_Response	{
+	int									status;
+	bool								close;
+	std::string							reason;
+	std::string							body;
+	std::map<std::string, std::string>	headers;
+
+	HTTP_Response()
+	: status(200), reason("OK"), close(false)
+	{}
 };
 
 #endif
