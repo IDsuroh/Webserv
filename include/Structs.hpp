@@ -1,6 +1,8 @@
 #ifndef STRUCTS_HPP
 #define STRUCTS_HPP
 
+// ----------------- Core config types -----------------
+
 struct  Location    {
     std::map<std::string, std::string>  directives;
     std::string                         path;
@@ -14,38 +16,7 @@ struct Server   {
     std::map<std::string, std::string>  error_pages;
 };
 
-struct  Listener    {
-    int             fd;
-    const Server*   config;
-};
-
-struct Connection   {
-    int             fd;
-    int             listenFd;
-    const Server*   srv;
-    std::string     readBuffer;
-    std::string     writeBuffer;
-    bool            headersComplete;
-    bool            requestParsed;
-	ConnectionState	state;
-	HTTP_Request	request;
-	HTTP_Response	response;
-	std::size_t		writeOffset;
-
-	Connection()
-	:	fd(-1),
-		listenFd(-1),
-		srv(NULL),
-		readBuffer(),
-		writeBuffer(),
-		headersComplete(false),
-		requestParsed(false),
-		state(S_HEADERS),
-		writeOffset(0)
-	{}
-};
-
-// HTTP Core Types
+// ----------------- HTTP core types -----------------
 
 enum ConnectionState	{
 	S_HEADERS,
@@ -89,6 +60,39 @@ struct HTTP_Response	{
 
 	HTTP_Response()
 	: status(200), reason("OK"), close(false)
+	{}
+};
+
+// ----------------- Runtime types -----------------
+
+struct  Listener    {
+    int             fd;
+    const Server*   config;
+};
+
+struct Connection   {
+    int             fd;
+    int             listenFd;
+    const Server*   srv;
+    std::string     readBuffer;
+    std::string     writeBuffer;
+    bool            headersComplete;
+    bool            requestParsed;
+	ConnectionState	state;
+	HTTP_Request	request;
+	HTTP_Response	response;
+	std::size_t		writeOffset;
+
+	Connection()
+	:	fd(-1),
+		listenFd(-1),
+		srv(NULL),
+		readBuffer(),
+		writeBuffer(),
+		headersComplete(false),
+		requestParsed(false),
+		state(S_HEADERS),
+		writeOffset(0)
 	{}
 };
 
