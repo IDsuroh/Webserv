@@ -1,4 +1,6 @@
 #include "../include/ServerRunner.hpp"
+#include "../include/HttpParser.hpp"
+#include "../include/HttpSerialize.hpp"
 
 ServerRunner::ServerRunner(const std::vector<Server>& servers)
     :   _servers(servers)
@@ -353,44 +355,76 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 	Connection& connection = it->second;
 
+	// 1) Drain readable bytes into readBuffer (non-blocking)
 	char	buffer[4096];
-
 	while (true)	{
 		ssize_t	n = read(clientFd, buffer, sizeof(buffer));
 		if (n > 0)	{
 			connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
-			continue;
+			continue; // keep draining readiness
 		}
-		if (n == 0)	{
+		if (n == 0)	{ // peer closed
 			closeConnection(clientFd);
 			return ;
 		}
-		return ;
+		if (n < 0)	{
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break; // done for now
+			closeConnection(clientFd); // fatal error
+			return ;
+		}
 	}
 
-	if (!connection.headersComplete
-		&& connection.readBuffer.find("\r\n\r\n") != std::string::npos)	{
-		connection.headersComplete = true;
-    // TODO (soon): parse request line + headers here
-    // TODO: pick vhost by Host header + connection.listenFd
-    // TODO: call router to build real response
+	// 2) If we are in HEADERS state, try to parse the head block
+	if (connection.state == S_HEADERS)	{
+		std::size_t	delim = http::find_header_terminator(connection.readBuffer);
+		if (delim == std::string::npos)
+			return ; // Need more data to complete headers
 
-		std::string			body = "This is a TestRun... I need to make it more than this..."; // Temporary response
-		std::ostringstream	hdr;
-			hdr	<<	"HTTP/1.1 200 OK\r\n"
-				<<	"Content-Length: " << body.size() << "\r\n"
-				<<	"Connection: close\r\n\r\n";
+		// Split buffer into head and remainder (possibly start of body)
+		std::string	head	= connection.readBuffer.substr(0, delim);
+		std::string	after	= connection.readBuffer.substr(delim + 4); // skip CRLFCRLF
+		connection.readBuffer.swap(after); // keep only "after" in readBuffer
 
-		connection.writeBuffer = hdr.str() + body;
-
-		for (std::size_t i = 0; i < _fds.size(); ++i)	{
-			if (_fds[i].fd == clientFd)	{
-				_fds[i].events = POLLOUT;
-				break;
+		int			status = 0;
+		std::string	reason;
+		if (!http::parse_head(head, connection.request, status, reason))	{
+			// Build a simple error response and switch to write
+			std::string	body;
+			if (status == 505)
+				body = "HTTP Version Not Supported\r\n";
+			else if (status == 501)
+				body = "Transfer-Encoding not implemented\r\n";
+			else
+				body = "Bad Request\r\n";
+			
+			connection.writeBuffer = http::build_simple_response(status, reason, body);
+			for (std::size_t i = 0; i < _fds.size(); ++i)	{
+				if (_fds[i].fd == clientFd)	{
+					_fds[i].events = POLLOUT;
+					break;
+				}
 			}
+			connection.state = S_WRITE;
+			return ;
 		}
 
+		connection.headersComplete = true;
+
+		// Transition depending on body presence
+		if (connection.request.body_reader_state == BR_NONE)	{ // has no body to read
+			connection.state = S_READY; // app-ready
+			return ;
+		}
+		else	{
+			connection.state = S_BODY; // still need to read the body
+			return ;
+		}
 	}
+
+	// S_BODY handling comes next (Content-Length / chunked decoders)
 
 }
 

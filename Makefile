@@ -6,6 +6,8 @@ SRCS := \
 	src/main.cpp \
 	src/Config.cpp \
 	src/ServerRunner.cpp \
+	src/HttpSerialize.cpp \
+	src/HttpParser.cpp \
 
 OBJS := $(SRCS:.cpp=.o)
 
