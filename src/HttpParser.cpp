@@ -4,7 +4,7 @@ namespace   {
 
     /* Lowercase a copy of a string (ASCII). */
     std::string toLowerCopy(const std::string& s)   {
-        std::string out(s);
+        std::string out(s);	// copy constructor
         for (std::size_t i = 0; i < out.size(); ++i)    {
             unsigned char   c = static_cast<unsigned char>(out[i]);
             out[i] = static_cast<char>(std::tolower(c));
