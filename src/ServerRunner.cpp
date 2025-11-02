@@ -359,18 +359,18 @@ void	ServerRunner::readFromClient(int clientFd)	{
 	char	buffer[4096];
 	while (true)	{
 		ssize_t	n = read(clientFd, buffer, sizeof(buffer));
-		if (n > 0)	{
+		if (n > 0)	{	// number of bytes read
 			connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
 			continue; // keep draining readiness
 		}
-		if (n == 0)	{ // peer closed
+		if (n == 0)	{ // peer closed - EOF (no more bytes)
 			closeConnection(clientFd);
 			return ;
 		}
 		if (n < 0)	{
-			if (errno == EINTR)
+			if (errno == EINTR)	// interrupted by a signal
 				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
+			if (errno == EAGAIN || errno == EWOULDBLOCK)	// non-blocking socket with no more data available
 				break; // done for now
 			closeConnection(clientFd); // fatal error
 			return ;
@@ -392,22 +392,17 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		std::string	reason;
 		if (!http::parse_head(head, connection.request, status, reason))	{
 			// Build a simple error response and switch to write
-			std::string	body;
-			if (status == 505)
-				body = "HTTP Version Not Supported\r\n";
-			else if (status == 501)
-				body = "Transfer-Encoding not implemented\r\n";
-			else
-				body = "Bad Request\r\n";
+			std::string	body =	(status == 505) ? "HTTP Version Not Supported\r\n"
+							  : (status == 501) ? "Transfer-Encoding not implemented\r\n" : "Bad Request\r\n";
 			
 			connection.writeBuffer = http::build_simple_response(status, reason, body);
-			for (std::size_t i = 0; i < _fds.size(); ++i)	{
+			for (std::size_t i = 0; i < _fds.size(); ++i)	{	// stop waiting for reads and change to writing mode
 				if (_fds[i].fd == clientFd)	{
-					_fds[i].events = POLLOUT;
+					_fds[i].events = POLLOUT;	// need to send error back so it is flipped to POLLOUT
 					break;
 				}
 			}
-			connection.state = S_WRITE;
+			connection.state = S_WRITE;	// set connection to write mode.
 			return ;
 		}
 

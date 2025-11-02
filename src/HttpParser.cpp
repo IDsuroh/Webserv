@@ -179,7 +179,7 @@ namespace   {
         request.content_length = 0;
         std::map<std::string, std::string>::const_iterator clit = request.headers.find("content-length");
         if (clit != request.headers.end())  {
-            const std::string&  s = trim(clit->second);
+            std::string s = trim(clit->second);
             if (s.empty())  {
                 outStatus = 400;
                 outReason = "Bad Request";
