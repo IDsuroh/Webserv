@@ -1,9 +1,33 @@
-What “App / Routing / Resources” means (in this project)
-    -   App = “Given a valid HttpRequest and the chosen Server config, decide the response.”
-    -   Routing = “Pick which virtual host (optional) and which location block handles this path,
-                    check allowed methods, and map the URL to a resource handler.”
-    -   Resources = “What we actually serve”: a static file, a directory (index/autoindex),
-                    a CGI program, or an upload target. This layer also applies error_page overrides.
+APP / ROUTING / RESOURCES — IDEA MAP
+GOAL
+    - HTTP Core turns bytes → HttpRequest (method, target, headers, body) and calls the App.
+    - The App decides HttpResponse (status, headers, body) based on config (Server + Location).
+
+WHAT "THE APP" IS
+- A single entry that receives: (chosen) Server, HttpRequest.
+- It returns: HttpResponse (fully filled).
+- It does NOT deal with sockets, poll(), chunking, or timeouts (Core already did that).
+
+WHAT “ROUTING” MEANS
+- (Optional) Virtual host selection:
+    If Core already set Server via Host:, skip.
+    Otherwise: among servers bound to the same listener,
+        pick the one whose server_name matches Host (lowercase, without :port).
+        Fallback to the first server.
+- Location match (longest prefix):
+    From Server.locations, choose the Location whose path is the longest prefix of the URL path (ignore query).
+    If none, use server-level defaults (no location).
+- Method allow-list → 405:
+    Read allow_methods (Location overrides Server).
+    If req.method not allowed → 405 + Allow: GET, POST, ..., short body.
+
+WHAT “RESOURCES” MEANS
+- The concrete handler you dispatch to after routing:
+    A) Static file
+    B) Directory (index file or autoindex page)
+    C) CGI program (e.g., .py via python, .php via php-cgi)
+    D) Upload target (multipart/form-data)
+- Also apply error_page overrides for error statuses.
 
 
 What Roh must finish before Hugo starts (minimal gate)
