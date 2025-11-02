@@ -8,7 +8,8 @@ SRCS := \
 	src/Config.cpp \
 	src/ServerRunner.cpp \
 	src/HttpSerialize.cpp \
-	src/HttpParser.cpp
+	src/HttpParser.cpp \
+	src/HttpBody.cpp
 
 OBJS := $(SRCS:.cpp=.o)
 

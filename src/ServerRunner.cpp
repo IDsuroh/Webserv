@@ -1,6 +1,7 @@
 #include "../include/ServerRunner.hpp"
 #include "../include/HttpParser.hpp"
 #include "../include/HttpSerialize.hpp"
+#include "../include/HttpBody.hpp"
 
 ServerRunner::ServerRunner(const std::vector<Server>& servers)
     :   _servers(servers)
@@ -332,6 +333,11 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		connection.writeBuffer.clear();
 		connection.headersComplete = false;
 		connection.requestParsed = false;
+		connection.request.body.clear();
+		connection.request.body_received = 0;
+		connection.request.chunk_state = CS_SIZE;
+		connection.request.chunk_bytes_left = 0;
+		connection.clientMaxBodySize = (1u << 20);
 		_connections[clientFd] = connection;
 
 		struct pollfd	p;
@@ -419,7 +425,43 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		}
 	}
 
-	// S_BODY handling comes next (Content-Length / chunked decoders)
+	// 3) If we are in BODY state, consume body incrementally
+	if (connection.state == S_BODY)	{
+		int					st = 0;
+		std::string			rsn;
+		http::BodyResult	br;
+
+		const std::size_t	maxBody = connection.clientMaxBodySize;
+
+		if (connection.request.body_reader_state == BR_CONTENT_LENGTH)
+			br = http::consume_body_content_length(connection, maxBody, st, rsn);
+		else
+			br = http::consume_body_chunked(connection, maxBody, st, rsn);
+
+		if (br == http::BODY_COMPLETE)	{
+			connection.state = S_READY;
+			return ;
+		}
+		if (br == http::BODY_ERROR)	{
+			std::string	body;
+			if (st == 413)
+				body = "Payload Too Large\r\n";
+			else
+				body = "Bad Request\r\n";
+			connection.writeBuffer = http::build_simple_response(st, rsn, body);
+
+			for (std::size_t i = 0; i < _fds.size(); ++i)	{
+				if (_fds[i].fd == clientFd)	{
+					_fds[i].events = POLLOUT;
+					break;
+				}
+				connection.state = S_WRITE;
+				return ;
+			}
+		}
+
+		return ;
+	}
 
 }
 

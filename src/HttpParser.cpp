@@ -25,7 +25,6 @@ namespace   {
         std::size_t i = s.size();
         while (i > 0 && (s[i - 1] == ' ' || s[i - 1] == '\t' || s[i - 1] == '\r' || s[i - 1] == '\n'))
             --i;
-            
         return s.substr(0, i);
     }
     std::string trim(const std::string& s)  {
