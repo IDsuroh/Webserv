@@ -338,6 +338,7 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		connection.request.chunk_state = CS_SIZE;
 		connection.request.chunk_bytes_left = 0;
 		connection.clientMaxBodySize = (1u << 20);
+			// Bit shift: 1u (unsigned 1) shifted 20 bits → 1,048,576 bytes (1 MiB) default.
 		_connections[clientFd] = connection;
 
 		struct pollfd	p;
