@@ -120,3 +120,15 @@ Partner — App/Routing/Resources (parallelizable now)
 - error_page mapping to custom pages.
 - CGI runner (env, timeouts) and uploads (multipart).
 - Config validation & defaults; logging.
+
+-----------------------------------------------------------------------------------------------
+- Implement try catch method in the int main to avoid possibilities of compile errors
+
+1. Do I already implement virtual hosts?
+No. Not yet and we do not need to implement.
+
+2. Why copy the servers vector in ServerRunner ctor?
+ServerRunner::ServerRunner(const std::vector<Server>& servers)
+    : _servers(servers) {}
+
+“We copy the std::vector<Server> into ServerRunner so the runner owns a stable snapshot of the configuration. That avoids dangling references if the original container goes out of scope and prevents unexpected mutations from elsewhere. Since configs are small and built once at startup, the copy cost is negligible in C++98.”

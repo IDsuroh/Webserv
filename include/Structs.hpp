@@ -34,6 +34,14 @@ enum BodyReaderState	{
 	BR_ERROR
 };
 
+enum ChunkState	{
+	CS_SIZE,
+	CS_DATA,
+	CS_DATA_CRLF,
+	CS_TRAILERS,
+	CS_DONE
+};
+
 struct HTTP_Request	{
 	bool								keep_alive;
 	std::string							method;
@@ -44,10 +52,25 @@ struct HTTP_Request	{
 	std::string							body;
 	std::map<std::string, std::string>	headers;
 	std::size_t							content_length;
+	std::size_t							body_received;
+	std::size_t							chunk_bytes_left;
 	BodyReaderState						body_reader_state;
+	ChunkState							chunk_state;
 
 	HTTP_Request()
-	: content_length(0), body_reader_state(BR_NONE), keep_alive(true)
+	:	keep_alive(true)
+	,	method()
+	,	target()
+	,	version()
+	,	host()
+	,	transfer_encoding()
+	,	body()
+	,	headers()
+	,	content_length(0)
+	,	body_reader_state(BR_NONE)
+	,	body_received(0)
+	,	chunk_state(CS_SIZE)
+	,	chunk_bytes_left(0)
 	{}
 };
 
@@ -82,17 +105,21 @@ struct Connection   {
 	HTTP_Request	request;
 	HTTP_Response	response;
 	std::size_t		writeOffset;
+	std::size_t		clientMaxBodySize;
 
 	Connection()
-	:	fd(-1),
-		listenFd(-1),
-		srv(NULL),
-		readBuffer(),
-		writeBuffer(),
-		headersComplete(false),
-		requestParsed(false),
-		state(S_HEADERS),
-		writeOffset(0)
+	:	fd(-1)
+	,	listenFd(-1)
+	,	srv(NULL)
+	,	readBuffer()
+	,	writeBuffer()
+	,	headersComplete(false)
+	,	requestParsed(false)
+	,	state(S_HEADERS)
+	,	request()
+	,	response()
+	,	writeOffset(0)
+	,	clientMaxBodySize(1048576)	// default 1 MiB; override from config
 	{}
 };
 
