@@ -1,0 +1,190 @@
+What “App / Routing / Resources” means (in this project)
+    -   App = “Given a valid HttpRequest and the chosen Server config, decide the response.”
+    -   Routing = “Pick which virtual host (optional) and which location block handles this path,
+                    check allowed methods, and map the URL to a resource handler.”
+    -   Resources = “What we actually serve”: a static file, a directory (index/autoindex),
+                    a CGI program, or an upload target. This layer also applies error_page overrides.
+
+
+What Roh must finish before Hugo starts (minimal gate)
+1. Parser is stable
+    - Request line + headers parsed and validated (Host required, HTTP/1.1 enforced).
+    - Header keys lowercase; keep_alive decided; Content-Length and Transfer-Encoding selected into BR_*.
+2. Body readers work
+    - BR_CONTENT_LENGTH: reads exactly N bytes.
+    - BR_CHUNKED: incremental chunk decoder (size line → data → CRLF → trailers).
+    - Enforce clientMaxBodySize (413), and leave any extra bytes in readBuffer for the next request.
+3. State machine reaches S_READY
+    - At S_READY, HttpRequest is fully constructed (method/target/headers/body ready).
+4. Hook for App is in place
+    - (Optional) Vhost pick: after headers are parsed,
+        set connection.srv = selectVhost(connection.listenFd, request.host) (or let the App do it—see below).
+    - Call app_handle_request(*connection.srv, connection.request, connection.response).
+5. Serializer exists
+    - Can turn HTTP_Response into bytes (status line, headers, body; Connection: close vs keep-alive).
+6. Write path
+    - Non-blocking send with writeOffset until done; reuse connection if keep-alive, else close.
+
+👉 Once these are done, Hugo can run end-to-end tests by only editing the App side.
+
+What Hugo builds (scope, steps, and where to look)=>
+0) (Optional) Vhost selection
+
+const Server* select_vhost(const std::vector<const Server*>& candidates,
+                           const std::string& host_header);
+
+
+- Candidates = all Server* bound to the connection’s listenFd.
+- Normalize host (lowercase, strip :port), exact-match any server_name, else default to the first.
+
+1) Location match (longest prefix)
+const Location* pick_location(const Server& srv, const std::string& path);
+
+- Compare path to every location.path; choose the longest that is a prefix.
+- If none, return NULL -> apply server-level defaults.
+
+2) Allowed methods -> 405 + Allow
+- Read allow_methods directive (location overrides server).
+- If req.method not allowed:
+    status = 405
+    resp.headers["Allow"] = "GET, POST, DELETE" (as configured)
+    small body; usually keep-alive can remain true.
+
+3) Path normalization + root mapping (security)
+- Get root from location or server.
+- Normalize req.target:
+    Split off query "?…" (store only path portion for filesystem).
+    Percent-decode valid %XX sequences (leave invalid encodings → 400 or 403).
+    Remove dot segments (. and ..) per RFC 3986.
+- Build full_path = root + normalized_path.
+- Ensure no traversal: full_path must stay under root (check normalized or via realpath and prefix-compare).
+    If outside → 403 Forbidden.
+
+4) Static resources (files/dirs)
+- If full_path is a file:
+    status=200, set Content-Type (simple extension map), Content-Length, body = file contents.
+    For HEAD: same headers, empty body.
+- If full_path is a directory:
+    Try index files (e.g., index.html index.htm).
+    If not found and autoindex on: generate an HTML listing.
+    Else: typically 403 (or 404, per spec).
+
+5) error_page mapping
+- If you set an error (404/405/413/500…), and error_page has an entry for that code:
+    Replace resp.body with the file contents of the mapped page
+        (resolve under root or absolute path per config rules).
+    Keep the original status code.
+
+6) CGI (later milestone)
+- Map certain extensions or locations to CGI (cgi_pass/interpreter).
+- Build CGI env (REQUEST_METHOD, QUERY_STRING, CONTENT_LENGTH, CONTENT_TYPE, SCRIPT_FILENAME, etc.).
+- Fork/exec with timeouts, capture stdout; parse CGI headers + body; return as response.
+- Limit output size, and guard against hangs (timeouts → 504).
+
+7) Uploads (multipart/form-data)
+- Parse boundary; collect file parts to an upload_dir (from config).
+- Return 201/200 as appropriate.
+
+8) Config validation & defaults; logging
+- Validate directives on startup; set defaults
+    (root, index, autoindex off, client_max_body_size, allowed methods).
+- Access log per request and error log on failures.
+
+A minimal app_handle_request we can start from
+========================================================================================================================
+// App.cpp
+#include "App.hpp"
+#include <sys/stat.h>
+#include <fstream>
+
+static const Location* pick_location(const Server& srv, const std::string& path);
+static bool is_method_allowed(const Server& srv, const Location* loc,
+                              const std::string& method, std::string& allowHdr);
+static bool normalize_and_map(const Server& srv, const Location* loc,
+                              const std::string& target,
+                              std::string& normalized, std::string& full);
+static const char* guess_mime(const std::string& path);
+static bool serve_file(const std::string& full, const HTTP_Request& req, HTTP_Response& resp);
+static bool serve_dir(const Server& srv, const Location* loc,
+                      const std::string& dir, HTTP_Response& resp);
+
+bool app_handle_request(const Server& srv,
+                        const HTTP_Request& req,
+                        HTTP_Response& resp)
+{
+    // 1) Location
+    const Location* loc = pick_location(srv, req.target);
+
+    // 2) Allowed methods
+    std::string allow;
+    if (!is_method_allowed(srv, loc, req.method, allow)) {
+        resp.status = 405; resp.reason = "Method Not Allowed";
+        resp.headers["Allow"] = allow;
+        resp.body = "Method Not Allowed\r\n";
+        return true;
+    }
+
+    // 3) Normalize + map to FS
+    std::string pathNorm, fullPath;
+    if (!normalize_and_map(srv, loc, req.target, pathNorm, fullPath)) {
+        resp.status = 403; resp.reason = "Forbidden";
+        resp.body   = "Forbidden\r\n";
+        return true;
+    }
+
+    // 4) File vs directory
+    struct stat st;
+    if (stat(fullPath.c_str(), &st) != 0) {
+        resp.status = 404; resp.reason = "Not Found";
+        resp.body   = "Not Found\r\n";
+        return true;
+    }
+
+    if (S_ISREG(st.st_mode)) {
+        return serve_file(fullPath, req, resp); // sets 200 + headers/body
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        return serve_dir(srv, loc, fullPath, resp); // index or autoindex or 403
+    }
+
+    resp.status = 403; resp.reason = "Forbidden";
+    resp.body   = "Forbidden\r\n";
+    return true;
+}
+========================================================================================================================
+
+
+
+Who does what (clean contract)
+    Roh (HTTP Core)
+        - Non-blocking event loop (poll), accept, per-connection state machine.
+        - Parse request line + headers; decide body mode; read body incrementally; enforce client_max_body_size.
+        - Keep-alive detection; timeouts; error handling for malformed requests; serialize HTTP_Response; write with partial sends.
+
+    Hugo (App/Routing/Resources)
+        - (Optional) final vhost choice by Host.
+        - Location match; method allow lists → 405 + Allow.
+        - Normalize path + root mapping; traversal protection.
+        - Static files; MIME; index/autoindex; error_page mapping.
+        - CGI & uploads (if time).
+        - Validation of config directives; logging.
+
+Suggested task order for Hugo (with quick tests)
+
+Wiring: make app_handle_request compile; return 404 for everything.
+curl -i http://host:port/anything → 404.
+
+Location match + allowed methods.
+curl -i -X DELETE http://… → 405 + Allow: header.
+
+Normalize + map + static files (+ minimal MIME).
+curl -i /file.txt → 200 + Content-Type.
+
+Directories: index then autoindex.
+curl -i / → index page or listing.
+
+error_page mapping.
+Missing resource returns custom error body.
+
+Nice-to-have: vhost names, logging, CGIs, uploads.
