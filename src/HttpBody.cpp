@@ -32,12 +32,13 @@ namespace   {
         // hex digits only
         for (std::size_t i = 0; i < hex.size(); ++i)    {
             unsigned char   c = static_cast<unsigned char>(hex[i]);
-            if (!std::isxdigit(c))
+            if (!std::isxdigit(c))  // '0' ~ '9', 'a' ~ 'f', 'A' ~ 'F'
                 return false;
         }
 
-        char*   endp = 0;
+        char*   endp = 0;   // null pointer value saying that this pointer doesn't point anywhere yet.
         unsigned long   v = std::strtoul(hex.c_str(), &endp, 16);
+        // unsigned long strtoul(const char* str, char** endptr, int base);
         if (*endp != '\0')
             return false;
         out = static_cast<std::size_t>(v);
@@ -106,7 +107,7 @@ namespace http  {
                     connection.readBuffer.swap(after);
 
                     std::size_t sz = 0;
-                    if (!parse_hex_size(line,sz))   {
+                    if (!parse_hex_size(line, sz))   { // why are we calling hex?
                         status = 400;
                         reason = "Bad Request";
                         return BODY_ERROR;
