@@ -36,11 +36,6 @@ namespace   {
                 return false;
         }
 
-        /* convert
-         * strtoul handles up to 32-bit; for 64-bit, we can use strtoull, but CL/TE sizes
-         * in webserv, context are well within size_t on 42 testbeds.
-         */
-
         char*   endp = 0;
         unsigned long   v = std::strtoul(hex.c_str(), &endp, 16);
         if (*endp != '\0')
@@ -126,68 +121,68 @@ namespace http  {
                     break;
                 }
 
-            case CS_DATA:   {
-                if (connection.readBuffer.empty())
-                    return BODY_INCOMPLETE;
+                case CS_DATA:   {
+                    if (connection.readBuffer.empty())
+                        return BODY_INCOMPLETE;
 
-                std::size_t avail = connection.readBuffer.size();
-                std::size_t take = (avail < r.chunk_bytes_left) ? avail : r.chunk_bytes_left;
+                    std::size_t avail = connection.readBuffer.size();
+                    std::size_t take = (avail < r.chunk_bytes_left) ? avail : r.chunk_bytes_left;
 
-                if (r.body_received + take > max_body)  {
-                    status = 413;
-                    reason = "Payload Too Large";
-                    return BODY_ERROR;
+                    if (r.body_received + take > max_body)  {
+                        status = 413;
+                        reason = "Payload Too Large";
+                        return BODY_ERROR;
+                    }
+
+                    r.body.append(connection.readBuffer.data(), take);
+                    r.body_received += take;
+                    r.chunk_bytes_left -= take;
+
+                    if (take == avail)
+                        connection.readBuffer.clear();
+                    else    {
+                        std::string after = connection.readBuffer.substr(take);
+                        connection.readBuffer.swap(after);
+                    }
+
+                    if (r.chunk_bytes_left == 0)
+                        r.chunk_state = CS_DATA_CRLF;
+                    break;
                 }
 
-                r.body.append(connection.readBuffer.data(), take);
-                r.body_received += take;
-                r.chunk_bytes_left -= take;
+                case CS_DATA_CRLF:  {
+                    if (connection.readBuffer.size() < 2)
+                        return BODY_INCOMPLETE;
+                    if (!(connection.readBuffer[0] =='\r' && connection.readBuffer[1] == '\n')) {
+                        status = 400;
+                        reason = "Bad Request";
+                        return BODY_ERROR;
+                    }
+                    if (connection.readBuffer.size() == 2)
+                        connection.readBuffer.clear();
+                    else    {
+                        std::string after = connection.readBuffer.substr(2);
+                        connection.readBuffer.swap(after);
+                    }
+                    r.chunk_state = CS_SIZE;
+                    break;
+                }
 
-                if (take == avail)
-                    connection.readBuffer.clear();
-                else    {
-                    std::string after = connection.readBuffer.substr(take);
+                case CS_TRAILERS:   {
+                    std::size_t pos = connection.readBuffer.find("\r\n\r\n");
+                    if (pos == std::string::npos)
+                        return BODY_INCOMPLETE;
+
+                    // If trailers are kept => std::string  trailers = connection.readBuffer.substr(0, pos);
+                    std::string after = connection.readBuffer.substr(pos + 4);
                     connection.readBuffer.swap(after);
+
+                    r.chunk_state = CS_DONE;
+                    return BODY_COMPLETE;
                 }
 
-                if (r.chunk_bytes_left == 0)
-                    r.chunk_state = CS_DATA_CRLF;
-                break;
-            }
-
-            case CS_DATA_CRLF:  {
-                if (connection.readBuffer.size() < 2)
-                    return BODY_INCOMPLETE;
-                if (!(connection.readBuffer[0] =='\r' && connection.readBuffer[1] == '\n')) {
-                    status = 400;
-                    reason = "Bad Request";
-                    return BODY_ERROR;
-                }
-                if (connection.readBuffer.size() == 2)
-                    connection.readBuffer.clear();
-                else    {
-                    std::string after = connection.readBuffer.substr(2);
-                    connection.readBuffer.swap(after);
-                }
-                r.chunk_state = CS_SIZE;
-                break;
-            }
-
-            case CS_TRAILERS:   {
-                std::size_t pos = connection.readBuffer.find("\r\n\r\n");
-                if (pos == std::string::npos)
-                    return BODY_INCOMPLETE;
-
-                // If trailers are kept => std::string  trailers = connection.readBuffer.substr(0, pos);
-                std::string after = connection.readBuffer.substr(pos + 4);
-                connection.readBuffer.swap(after);
-
-                r.chunk_state = CS_DONE;
-                return BODY_COMPLETE;
-            }
-
-            case CS_DONE:
-                return BODY_COMPLETE;
+                case CS_DONE:
+                    return BODY_COMPLETE;
             }
         }
     }

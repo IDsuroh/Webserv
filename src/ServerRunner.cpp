@@ -456,9 +456,10 @@ void	ServerRunner::readFromClient(int clientFd)	{
 					_fds[i].events = POLLOUT;
 					break;
 				}
-				connection.state = S_WRITE;
-				return ;
 			}
+
+			connection.state = S_WRITE;
+			return ;
 		}
 
 		return ;

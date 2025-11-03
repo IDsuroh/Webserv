@@ -103,7 +103,7 @@ namespace   {
 
                 if (!current.empty())   {
                     if (current[0] == ' ' || current[0] == '\t')    {
-                        // Continuation (obs-fold)
+                        // Continuation (obs-fold) of splitted sentence
                         if (!lastKey.empty())   {
                             std::string v = trim(current);
                             if (!v.empty()) {
@@ -191,7 +191,15 @@ namespace   {
                     return false;
                 }
             }
-            request.content_length = static_cast<std::size_t>(std::strtoul(s.c_str(), NULL, 10));
+            errno = 0;
+            unsigned long   v = std::strtoul(s.c_str(), NULL, 10);
+            // unsigned long strtoul(const char* str, char** endptr, int base);
+            if (errno == ERANGE)    {
+                outStatus = 413;
+                outReason = "Payload Too Large";
+                return false;
+            }
+            request.content_length = static_cast<std::size_t>(v);
         }
 
         // Transfer-Encoding

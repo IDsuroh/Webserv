@@ -29,9 +29,7 @@ enum ConnectionState	{
 enum BodyReaderState	{
 	BR_NONE,
 	BR_CONTENT_LENGTH,
-	BR_CHUNKED,
-	BR_DONE,
-	BR_ERROR
+	BR_CHUNKED
 };
 
 enum ChunkState	{
