@@ -7,7 +7,7 @@ SRCS := \
 	src/main.cpp \
 	src/Config.cpp \
 	src/ServerRunner.cpp \
-	src/HttpSerialize.cpp \
+	src/HttpSerializer.cpp \
 	src/HttpParser.cpp \
 	src/HttpBody.cpp
 

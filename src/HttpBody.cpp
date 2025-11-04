@@ -98,7 +98,7 @@ namespace http  {
         for (;;)    {
             switch (r.chunk_state)  {
                 case CS_SIZE:   {
-                    std:size_t  pos = connection.readBuffer.find("\r\n");
+                    std::size_t  pos = connection.readBuffer.find("\r\n");
                     if (pos == std::string::npos)
                         return BODY_INCOMPLETE;
                     

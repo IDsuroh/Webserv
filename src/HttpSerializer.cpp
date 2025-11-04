@@ -1,4 +1,4 @@
-#include "HttpSerialize.hpp"
+#include "HttpSerializer.hpp"
 
 namespace http  {
 
@@ -6,7 +6,7 @@ namespace http  {
         std::ostringstream  oss;
         oss << "HTTP/1.1 " << status << ' ' << reason << "\r\n";
         oss << "Server: webserv\r\n";
-        oss << "Constent-Length: " << body.size() << "\r\n";
+        oss << "Content-Length: " << body.size() << "\r\n";
         oss << "Content-Type: text/plain\r\n";
         oss << "Connection: close\r\n";
         oss << "\r\n";
