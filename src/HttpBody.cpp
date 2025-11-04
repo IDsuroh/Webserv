@@ -185,7 +185,8 @@ namespace http  {
                     // If trailers are kept => std::string  trailers = connection.readBuffer.substr(0, pos);
                     std::string after = connection.readBuffer.substr(pos + 2);
                     connection.readBuffer.swap(after);
-                }
+                	}
+				}
 
                 case CS_DONE:
                     return BODY_COMPLETE;
