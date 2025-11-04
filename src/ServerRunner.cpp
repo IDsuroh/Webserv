@@ -100,7 +100,7 @@ int openAndListen(const std::string& spec)  {
 	else	{
 		host = (colon == 0) ? "" : spec.substr(0, colon);
 		port = (colon + 1 >= spec.size()) ? "" : spec.substr(colon + 1);
-	}
+	}	// What if the evaluator sets an IP with only the host and without the port? In that case, what can we do?
 
 	struct	addrinfo	hints;	// recipe for what type of addresses we want
 	hints.ai_flags		= 0;	// Behavioral Flags (hints.ai_flags = 0; initially no special behavior)
@@ -430,14 +430,23 @@ void	ServerRunner::readFromClient(int clientFd)	{
 	if (connection.state == S_BODY)	{
 		int					st = 0;
 		std::string			rsn;
-		http::BodyResult	br;
+		http::BodyResult	br = http::BODY_INCOMPLETE;
 
 		const std::size_t	maxBody = connection.clientMaxBodySize;
 
-		if (connection.request.body_reader_state == BR_CONTENT_LENGTH)
-			br = http::consume_body_content_length(connection, maxBody, st, rsn);
-		else
-			br = http::consume_body_chunked(connection, maxBody, st, rsn);
+		switch (connection.request.body_reader_state)	{
+			case BR_CONTENT_LENGTH:
+				br = http::consume_body_content_length(connection, maxBody, st, rsn);
+				break;
+			case BR_CHUNKED:
+				br = http::consume_body_chunked(connection, maxBody, st, rsn);
+				break;
+			default:
+				st = 400;
+				rsn = "Bad Request";
+				br = http::BODY_ERROR;
+		}
+		// BR_NONE should never happen since headers phase puts S_READY for BR_NONE
 
 		if (br == http::BODY_COMPLETE)	{
 			connection.state = S_READY;

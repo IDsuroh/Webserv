@@ -132,3 +132,11 @@ ServerRunner::ServerRunner(const std::vector<Server>& servers)
     : _servers(servers) {}
 
 “We copy the std::vector<Server> into ServerRunner so the runner owns a stable snapshot of the configuration. That avoids dangling references if the original container goes out of scope and prevents unexpected mutations from elsewhere. Since configs are small and built once at startup, the copy cost is negligible in C++98.”
+
+-----------------------------------------------------------------------------------------------
+
+Things to clear out
+
+1. What is a virtual host?
+
+2. What is the difference between this virtual host and the virtual host that we are refering to when it comes to IP:ports from different servers? 

@@ -107,7 +107,7 @@ namespace http  {
                     connection.readBuffer.swap(after);
 
                     std::size_t sz = 0;
-                    if (!parse_hex_size(line, sz))   { // why are we calling hex?
+                    if (!parse_hex_size(line, sz))   { // Chunked transfer encoding (RFC 7230 §4.1) sends each chunk size in hexadecimal
                         status = 400;
                         reason = "Bad Request";
                         return BODY_ERROR;
@@ -170,16 +170,21 @@ namespace http  {
                 }
 
                 case CS_TRAILERS:   {
-                    std::size_t pos = connection.readBuffer.find("\r\n\r\n");
-                    if (pos == std::string::npos)
-                        return BODY_INCOMPLETE;
+					for (;;)	{
+                    	std::size_t pos = connection.readBuffer.find("\r\n");
+                    	if (pos == std::string::npos)
+                    	    return BODY_INCOMPLETE;
 
+						if (pos == 0)	{
+							// Blank line: trailers end
+							std::string	after = connection.readBuffer.substr(2);
+							connection.readBuffer.swap(after);
+							r.chunk_state = CS_DONE;
+							return BODY_COMPLETE;
+						}
                     // If trailers are kept => std::string  trailers = connection.readBuffer.substr(0, pos);
-                    std::string after = connection.readBuffer.substr(pos + 4);
+                    std::string after = connection.readBuffer.substr(pos + 2);
                     connection.readBuffer.swap(after);
-
-                    r.chunk_state = CS_DONE;
-                    return BODY_COMPLETE;
                 }
 
                 case CS_DONE:
