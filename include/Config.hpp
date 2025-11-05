@@ -10,7 +10,7 @@ class Config    {
         std::vector<Server> _servers;
         std::string         _filename;
 
-        void                        parse();
+        void	parse();
         void    tokenize(const std::string& contents, std::vector<std::string>& tokens);
         void    parseTokens(const std::vector<std::string>& tokens);
 

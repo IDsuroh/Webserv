@@ -48,12 +48,8 @@ void    Config::parse() {
 
     std::ostringstream  contents;
     std::string         line;
-    while (std::getline(in, line))  {
-        size_t  pos = line.find('#');
-        if (pos != std::string::npos)
-            line.erase(pos);
+    while (std::getline(in, line))
         contents << line << '\n';
-    }
 
     std::vector<std::string>    tokens;
     tokenize(contents.str(), tokens);
@@ -66,33 +62,75 @@ void    Config::parse() {
 
 // Tokenize the contents of the configuration file
 void    Config::tokenize(const std::string& contents, std::vector<std::string>& tokens) {
+	tokens.clear();
 
     std::string current;
+	bool		inSingle = false;
+	bool		inDouble = false;
+
     for (size_t i = 0; i < contents.size(); ++i)    {
         
         char            c = contents[i];
         unsigned char   uc = static_cast<unsigned char>(c);
 
-        if (std::isspace(uc)) {
-            if (!current.empty())   {
-                tokens.push_back(current);
-                current.clear();
-            }
-        }
-        else if (c == '{' || c == '}' || c == ';')  {
-            if (!current.empty())   {
-                tokens.push_back(current);
-                current.clear();
-            }
-            tokens.push_back(std::string(1, c));
-        }
-        else    {
-            current.push_back(c);
-        }
+		// simple escapes inside quotes: \" or \'
+		if ((inSingle || inDouble) && c == '\\')	{
+			if (i + 1 < contents.size())	{	// normal case: when there is a next character
+				current.push_back(contents[i + 1]);
+				++i;
+			}
+			else
+				current.push_back('\\');
+			continue;
+		}
+        
+		// Toggle quotes (not including the quote chars)
+		if (!inDouble && c == '\'')	{
+			inSingle = !inSingle;
+			continue;
+		}
+		if (!inSingle && c == '\"')	{
+			inDouble = !inDouble;
+			continue;
+		}
+
+		// Outside quotes: when '#' starts a comment.
+		if (!inSingle && !inDouble && c == '#')	{
+			while (i < contents.size() && contents[i] != '\n')
+				++i;
+			continue;
+		}
+
+		if (!inSingle && !inDouble)	{
+			// Structural tokens stay separate
+			if (c == '{' || c == '}' || c == ';')  {
+        	    if (!current.empty())   {
+        	        tokens.push_back(current);
+        	        current.clear();
+            	}
+            	tokens.push_back(std::string(1, c));
+				continue;
+			}
+			
+			// Whitespace splits tokens (only outside quotes)
+			if (std::isspace(uc))	{
+				if (!current.empty())	{
+					tokens.push_back(current);
+					current.clear();
+				}
+				continue;
+			}
+		}
+
+		// Regular character
+		current.push_back(c);
     }
+
     if (!current.empty())
         tokens.push_back(current);
 
+	if (inSingle || inDouble)
+		throw	std::runtime_error("Unterminated quoted string in config");
 }
 
 // Parse the tokens into server configurations
