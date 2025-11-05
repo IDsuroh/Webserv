@@ -391,6 +391,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 		if (!http::extract_next_head(connection.readBuffer, head))
 			return ;
+		// Not enough for a real head yet: either no CRLFCRLF at all, or only empty heads seen so far so need to read more.
 
 		int			status = 0;
 		std::string	reason;
