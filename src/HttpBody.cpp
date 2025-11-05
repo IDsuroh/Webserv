@@ -170,22 +170,11 @@ namespace http  {
                 }
 
                 case CS_TRAILERS:   {
-					for (;;)	{
-                    	std::size_t pos = connection.readBuffer.find("\r\n");
-                    	if (pos == std::string::npos)
-                    	    return BODY_INCOMPLETE;
+					if (!http::consume_all_trailers(connection.readBuffer, true))
+						return BODY_INCOMPLETE;
 
-						if (pos == 0)	{
-							// Blank line: trailers end
-							std::string	after = connection.readBuffer.substr(2);
-							connection.readBuffer.swap(after);
-							r.chunk_state = CS_DONE;
-							return BODY_COMPLETE;
-						}
-                    // If trailers are kept => std::string  trailers = connection.readBuffer.substr(0, pos);
-                    std::string after = connection.readBuffer.substr(pos + 2);
-                    connection.readBuffer.swap(after);
-                	}
+					r.chunk_state = CS_DONE;
+					return BODY_COMPLETE;
 				}
 
                 case CS_DONE:
@@ -193,5 +182,34 @@ namespace http  {
             }
         }
     }
+
+
+	bool	consume_all_trailers(std::string& buffer, bool eat_extra_blank_lines)	{
+		for (;;)	{
+			std::size_t	pos = buffer.find("\r\n");
+			if (pos == std::string::npos)
+				return false;
+
+			if (pos == 0)	{
+				// Terminating blank line of trailers: remove the first CRLF
+				if (buffer.size() <= 2)
+					buffer.clear();
+				else	{
+					std::string	after = buffer.substr(2);
+					buffer.swap(after);
+				}
+				return true;
+			}
+			
+			// Drop one trailer line (line + CRLF)
+			std::size_t	drop = pos + 2;
+			if (buffer.size() <= drop)
+				buffer.clear();
+			else	{
+				std::string	after = buffer.substr(drop);
+				buffer.swap(after);
+			}
+		}
+	}
 
 } // namespace http

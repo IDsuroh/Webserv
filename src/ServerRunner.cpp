@@ -386,14 +386,11 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 	// 2) If we are in HEADERS state, try to parse the head block
 	if (connection.state == S_HEADERS)	{
-		std::size_t	delim = http::find_header_terminator(connection.readBuffer);
-		if (delim == std::string::npos)
-			return ; // Need more data to complete headers
+		
+		std::string	head;
 
-		// Split buffer into head and remainder (possibly start of body)
-		std::string	head	= connection.readBuffer.substr(0, delim);
-		std::string	after	= connection.readBuffer.substr(delim + 4); // skip CRLFCRLF
-		connection.readBuffer.swap(after); // keep only "after" in readBuffer
+		if (!http::extract_next_head(connection.readBuffer, head))
+			return ;
 
 		int			status = 0;
 		std::string	reason;

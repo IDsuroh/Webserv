@@ -238,12 +238,8 @@ namespace   {
 
 namespace http  {
 
-    std::size_t find_header_terminator(const std::string& buf)  {
-        return buf.find("\r\n\r\n");
-    }
-
-    bool    parse_head(const std::string& head, HTTP_Request& request, int& status, std::string& reason)    {
-        std::size_t eol = head.find("\r\n");
+    bool    parse_head(const std::string& head, HTTP_Request& request, int& status, std::string& reason)    {    
+		std::size_t eol = head.find("\r\n");
         if (eol == std::string::npos)   {
             status = 400;
             reason = "Bad Request";
@@ -260,5 +256,36 @@ namespace http  {
         
         return true;
     }
+
+	bool	extract_next_head(std::string& buffer, std::string& out_head)	{
+		for (;;)	{
+			std::size_t	delim = buffer.find("\r\n\r\n");
+			if (delim == std::string::npos)
+				return false;
+
+			if (delim == 0)	{
+				// Buffer begins with "\r\n\r\n" (empty head): remove first 4 bytes and try again
+				if (buffer.size() <= 4)
+					buffer.clear();
+				else	{
+					std::string	after = buffer.substr(4);
+					buffer.swap(after);
+				}
+				continue;
+			}
+
+			// Non-empty head: copy [0, delim) and drop head + CRLFCRLF
+			out_head = buffer.substr(0, delim);
+			
+			std::size_t	drop = delim + 4;
+			if (buffer.size() <= drop)
+				buffer.clear();
+			else	{
+				std::string	after = buffer.substr(drop);
+				buffer.swap(after);
+			}
+			return true;
+		}
+	}
 
 } // namespace http

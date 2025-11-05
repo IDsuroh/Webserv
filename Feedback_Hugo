@@ -1,0 +1,118 @@
+Config.cpp
+
+void Config::parse()
+
+    Detect # only when outside quotes (to avoid cutting valid strings).
+
+void Config::tokenize(const std::string& contents, std::vector<std::string>& tokens)
+
+    "My site name" → will be split into 3 tokens ("My", "site", "name") because there is no quote handling. Allow "some value with spaces" or '...' as a single token.
+
+static void handleListen(Server& srv, const std::vector<std::string>& tokens, size_t& i)
+
+    const std::string arg = tokens[i++]; can be replaced with const std::string& arg = tokens[i]; ++i;. It’s more efficient.
+
+    NGINX allows listen 8080 8081; and the function doesn’t handle this situation — currently only "8080" is stored (incomplete).
+
+static void handleServerName(Server& srv, const std::vector<std::string>& tokens, size_t& i)
+
+    Currently accepts server_name ; (consider whether you want to throw an error).
+
+// I think the following version of the function is better.
+static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens, size_t& i) {
+
+    if (i + 2 >= tokens.size())
+        throw std::runtime_error("Incomplete error_page directive");
+
+    const std::string& error_code = tokens[i++];
+    const std::string& uri = tokens[i++];
+
+    if (i >= tokens.size() || tokens[i] != ";")
+        throw std::runtime_error("Missing ';' after error_page");
+    ++i;
+
+    srv.error_pages[error_code] = uri;
+}
+
+    Does not support multiple codes: nginx allows error_page 404 500 502 /50x.html;. Your code fails in that case (reads error_code="404", uri="500" and expects ; — sees a path and throws).
+
+    No URI validation: accepts any string (generally ok), but you could require it to start with / or http://.../https://....
+
+static void parseLocationBlock(const std::vector<std::string>& tokens, size_t& i, Location& loc)
+
+    No bounds-check before reading key: if the file ends inside the block, std::string key = tokens[i++] accesses out-of-bounds → UB/crash.
+
+    Error consumes ; correctly, but the message has no context (line) — fine for now.
+
+    Loss of cardinality: storing everything “joined” (e.g. methods GET POST → "GET POST") forces you to split again at runtime.
+
+    Duplicate directives: simple assignment silently overwrites; decide whether to forbid or “last wins”.
+
+    Accidental nested blocks: if someone puts a { inside a location by mistake, the loop will treat it as a normal argument and only break later.
+
+    ChatGPT provided a more robust version.
+
+static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, size_t& i)
+
+    Silent overwrite: if the same key appears twice, the last one wins with no warning.
+
+    Loss of cardinality: everything becomes a string; at runtime you must re-split for multi-value directives (e.g. index, methods).
+
+    Unknown directives pass: typos like rooot will be accepted and stored — hard to debug.
+
+    No validation of number/type of arguments: client_max_body_size without a value, or autoindex foo bar, are accepted until they blow up later.
+
+    Empty args: key ; is accepted (will be "") — probably unwanted for most directives.
+
+ServerRunner.cpp
+
+ServerRunner::ServerRunner(const std::vector<Server>& servers)
+
+    (Optional) validate here that there is at least one valid listen in the configs; if not, throw a clear exception (facilitates fail-fast).
+
+void ServerRunner::run()
+
+    Why use -1 in int n = poll(&_fds[0], _fds.size(), -1);? Wouldn’t it be safer to use a defined timeout? I’ve read that it is…
+
+void setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners)
+
+    If setupPollFds() registers one pollfd per Listener, you’ll insert the same fd multiple times into poll() (one for each Listener sharing that fd). This is inefficient and may complicate logic.
+    Correct: add only one pollfd per unique fd.
+
+    It’s almost fine for the 42 scope (no virtual hosts), as long as your config doesn’t repeat the same listen in more than one server{}. If repeated, your code will create multiple Listener objects with the same fd, which is confusing and can duplicate entries in poll().
+
+Minimal adjustments:
+
+    Reject duplicates among server blocks (or ignore subsequent ones with a warning).
+
+    Ensure exactly one Listener per unique fd in outListeners.
+
+// Suggested improvement for the next version:
+void ServerRunner::setupPollFds() {
+    _fds.clear();                        // to have a clean list on multiple calls
+    _fds.reserve(_listeners.size());
+
+    std::set<int> added;
+    for (std::size_t i = 0; i < _listeners.size(); ++i) {
+        int fd = _listeners[i].fd;
+        if (!added.insert(fd).second) continue; // checks and inserts in 1 line!
+
+        struct pollfd p;
+        p.fd = fd;
+        p.events = POLLIN; 
+        p.revents = 0;
+        _fds.push_back(p);
+    }
+}
+
+void ServerRunner::handleEvents()
+
+    Curiosity: you have for (std::size_t i = _fds.size(); i-- > 0; ). ChatGPT pointed me to a different way: swap the current pfd with the last before deleting it (the new last), avoiding index shifts and skipping items.
+
+void ServerRunner::acceptNewClient(int listenFd, const Server* srv)
+
+    FD_CLOEXEC on the client fd (good practice) — closes the fd in execve:
+
+        fcntl(clientFd, F_SETFD, fcntl(clientFd, F_GETFD) | FD_CLOEXEC);
+
+
