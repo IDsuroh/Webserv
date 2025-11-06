@@ -7,13 +7,13 @@ void Config::parse()
 void Config::tokenize(const std::string& contents, std::vector<std::string>& tokens)
 
     "My site name" → will be split into 3 tokens ("My", "site", "name") because there is no quote handling. Allow "some value with spaces" or '...' as a single token.
--------------------------------------------- done -----------------------------------------------------------
+
 static void handleListen(Server& srv, const std::vector<std::string>& tokens, size_t& i)
 
     const std::string arg = tokens[i++]; can be replaced with const std::string& arg = tokens[i]; ++i;. It’s more efficient.
 
     NGINX allows listen 8080 8081; and the function doesn’t handle this situation — currently only "8080" is stored (incomplete).
-
+-------------------------------------------- done -----------------------------------------------------------
 static void handleServerName(Server& srv, const std::vector<std::string>& tokens, size_t& i)
 
     Currently accepts server_name ; (consider whether you want to throw an error).

@@ -192,17 +192,27 @@ static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, 
 static void handleListen(Server& srv, const std::vector<std::string>& tokens, size_t& i)  {
 
 	if (i >= tokens.size())
-		throw	std::runtime_error("Unexpected EOF after listen");
+		throw	std::runtime_error("Listen: Unexpected EOF after listen");
 
-	const std::string	arg = tokens[i++];
+	bool	hadAny = false;
+
+	// Coolect one or more args until ';' (e.g. "8080", "127.0.0.1:8080", etc.)
+	for (; i < tokens.size() && tokens[i] != ";"; ++i)	{
+		const std::string&	arg = tokens[i];	// avoid unnecessary temp
+		if (arg == "{" || arg == "}")
+			throw	std::runtime_error("Listen: Unexpected token '" + arg + "'");
+		
+		srv.listen.push_back(arg);
+		hadAny = true;
+	}
+
+	if (!hadAny)
+		throw	std::runtime_error("Listen: Need at least one address/port");
 
     if (i >= tokens.size() || tokens[i] != ";")
-        throw   std::runtime_error("Missing ';' after listen");
+        throw   std::runtime_error("Listen: Missing ';' after listen");
 
 	++i;
-
-	srv.listen.push_back(arg);
-
 }
 
 
