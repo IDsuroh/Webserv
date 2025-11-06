@@ -1,13 +1,13 @@
 #include "../include/Config.hpp"
 
 // Forward declarations of static functions
-static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, std::vector<Server>& servers);
-static void handleListen(Server& srv, const std::vector<std::string>& tokens, size_t& i);
-static void handleServerName(Server& srv, const std::vector<std::string>& tokens, size_t& i);
-static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens, size_t& i);
-static void parseLocationBlock(const std::vector<std::string>& tokens, size_t& i, Location& loc);
-static void handleLocation(Server& srv, const std::vector<std::string>& tokens, size_t& i);
-static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, size_t& i);
+static void parseServerBlock(const std::vector<std::string>& tokens, std::size_t& i, std::vector<Server>& servers);
+static void handleListen(Server& srv, const std::vector<std::string>& tokens, std::size_t& i);
+static void handleServerName(Server& srv, const std::vector<std::string>& tokens, std::size_t& i);
+static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens, std::size_t& i);
+static void parseLocationBlock(const std::vector<std::string>& tokens, std::size_t& i, Location& loc);
+static void handleLocation(Server& srv, const std::vector<std::string>& tokens, std::size_t& i);
+static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, std::size_t& i);
 // ****************************************************************************
 
 // Print Tokens Tester Function
@@ -18,7 +18,7 @@ static void	testTokens(const std::vector<std::string>& tokens)	{
 		return ;
 	}
 
-	for (size_t i = 0; i < tokens.size(); ++i)
+	for (std::size_t i = 0; i < tokens.size(); ++i)
 		std::cout << "Token[" << i << "]: " << tokens[i] << std::endl;
 	std::cout << "\nParsing Tokens\n";
     
@@ -68,7 +68,7 @@ void    Config::tokenize(const std::string& contents, std::vector<std::string>& 
 	bool		inSingle = false;
 	bool		inDouble = false;
 
-    for (size_t i = 0; i < contents.size(); ++i)    {
+    for (std::size_t i = 0; i < contents.size(); ++i)    {
         
         char            c = contents[i];
         unsigned char   uc = static_cast<unsigned char>(c);
@@ -136,7 +136,7 @@ void    Config::tokenize(const std::string& contents, std::vector<std::string>& 
 // Parse the tokens into server configurations
 void    Config::parseTokens(const std::vector<std::string>& tokens)   {
 
-    size_t  i = 0;
+    std::size_t  i = 0;
 	while (i < tokens.size() && tokens[i] != "server")
 		++i;
     while (i < tokens.size())   {
@@ -159,7 +159,7 @@ void    Config::parseTokens(const std::vector<std::string>& tokens)   {
 
 
 // Static functions to handle different parts of the configuration
-static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, std::vector<Server>& servers)   {
+static void parseServerBlock(const std::vector<std::string>& tokens, std::size_t& i, std::vector<Server>& servers)   {
     
     Server  srv;
     while (i < tokens.size() && tokens[i] != "}")   {
@@ -189,7 +189,7 @@ static void parseServerBlock(const std::vector<std::string>& tokens, size_t& i, 
 
 
 // Handle the "listen" directive
-static void handleListen(Server& srv, const std::vector<std::string>& tokens, size_t& i)  {
+static void handleListen(Server& srv, const std::vector<std::string>& tokens, std::size_t& i)  {
 
 	if (i >= tokens.size())
 		throw	std::runtime_error("Listen: Unexpected EOF after listen");
@@ -218,25 +218,35 @@ static void handleListen(Server& srv, const std::vector<std::string>& tokens, si
 
 
 // Handle the "server_name" directive
-static void handleServerName(Server& srv, const std::vector<std::string>& tokens, size_t& i)	{
+static void handleServerName(Server& srv, const std::vector<std::string>& tokens, std::size_t& i)	{
 
 	if (i >= tokens.size())
-		throw	std::runtime_error("Unexpected EOF after server_name");
+		throw	std::runtime_error("Server_Name: Unexpected EOF after server_name");
 
-	while (i < tokens.size() && tokens[i] != ";")
-		srv.server_name.push_back(tokens[i++]);
+	bool	hadAny = false;
+
+	for (; i < tokens.size() && tokens[i] != ";"; ++i)	{
+		const std::string& name = tokens[i];
+
+		if (name == "{" || name == "}")
+			throw	std::runtime_error("Server_Name: Unexpected token '" + name + "'");
+	
+		srv.server_name.push_back(name);
+		hadAny = true;
+	}
+	if (!hadAny)
+		throw	std::runtime_error("Server_Name: Need at least one name");
 
 	if (i >= tokens.size() || tokens[i] != ";")
-		throw	std::runtime_error("Missing ';' after server_name");
+		throw	std::runtime_error("Server_Name: Missing ';' after server_name");
 	
 	++i;
-
 }
 
 
 
 // Handle the "error_page" directive
-static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens, size_t& i)  {
+static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens, std::size_t& i)  {
 
 	std::string	error_code = tokens[i++];
 	std::string	uri = tokens[i++];
@@ -249,7 +259,7 @@ static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens,
 
 
 // Handle the "location" directive
-static void handleLocation(Server& srv, const std::vector<std::string>& tokens, size_t& i)  {
+static void handleLocation(Server& srv, const std::vector<std::string>& tokens, std::size_t& i)  {
     
     Location    loc;
     loc.path = tokens[i++];
@@ -263,7 +273,7 @@ static void handleLocation(Server& srv, const std::vector<std::string>& tokens, 
 
 
 // Parse the location block
-static void parseLocationBlock(const std::vector<std::string>& tokens, size_t& i, Location& loc)  {
+static void parseLocationBlock(const std::vector<std::string>& tokens, std::size_t& i, Location& loc)  {
 
     while (i < tokens.size() && tokens[i] != "}")   {
         
@@ -277,7 +287,7 @@ static void parseLocationBlock(const std::vector<std::string>& tokens, size_t& i
         i++;
 
         std::string                 joined;
-        for (size_t j = 0; j < args.size(); ++j)    {
+        for (std::size_t j = 0; j < args.size(); ++j)    {
             if (j)
                 joined += ' ';
             joined += args[j];
@@ -295,7 +305,7 @@ static void parseLocationBlock(const std::vector<std::string>& tokens, size_t& i
 
 
 // Handle generic directives in the server block
-static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, size_t& i)  {
+static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, std::size_t& i)  {
 
 	if (i >= tokens.size())
 		throw	std::runtime_error("Unexpected EOF after " + key);
@@ -310,7 +320,7 @@ static void handleGenericDirective(Server& srv, const std::string& key, const st
 	++i;
 
 	std::string	joined;
-	for (size_t j = 0; j < args.size(); ++j)	{
+	for (std::size_t j = 0; j < args.size(); ++j)	{
 		if (j)
 			joined += ' ';
 		joined += args[j];
