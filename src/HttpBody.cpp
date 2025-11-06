@@ -170,7 +170,7 @@ namespace http  {
                 }
 
                 case CS_TRAILERS:   {
-					if (!http::consume_all_trailers(connection.readBuffer, true))
+					if (!http::consume_all_trailers(connection.readBuffer))
 						return BODY_INCOMPLETE;
 
 					r.chunk_state = CS_DONE;
@@ -184,7 +184,7 @@ namespace http  {
     }
 
 
-	bool	consume_all_trailers(std::string& buffer, bool eat_extra_blank_lines)	{
+	bool	consume_all_trailers(std::string& buffer)	{
 		for (;;)	{
 			std::size_t	pos = buffer.find("\r\n");
 			if (pos == std::string::npos)
