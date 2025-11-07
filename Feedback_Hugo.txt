@@ -13,7 +13,7 @@ static void handleListen(Server& srv, const std::vector<std::string>& tokens, si
     const std::string arg = tokens[i++]; can be replaced with const std::string& arg = tokens[i]; ++i;. It’s more efficient.
 
     NGINX allows listen 8080 8081; and the function doesn’t handle this situation — currently only "8080" is stored (incomplete).
--------------------------------------------- done -----------------------------------------------------------
+
 static void handleServerName(Server& srv, const std::vector<std::string>& tokens, size_t& i)
 
     Currently accepts server_name ; (consider whether you want to throw an error).
@@ -63,7 +63,7 @@ static void handleGenericDirective(Server& srv, const std::string& key, const st
     No validation of number/type of arguments: client_max_body_size without a value, or autoindex foo bar, are accepted until they blow up later.
 
     Empty args: key ; is accepted (will be "") — probably unwanted for most directives.
-
+-------------------------------------------- done -----------------------------------------------------------
 ServerRunner.cpp
 
 ServerRunner::ServerRunner(const std::vector<Server>& servers)
@@ -116,3 +116,292 @@ void ServerRunner::acceptNewClient(int listenFd, const Server* srv)
         fcntl(clientFd, F_SETFD, fcntl(clientFd, F_GETFD) | FD_CLOEXEC);
 
 
+ServerRunner (continuation).cpp
+
+void ServerRunner::readFromClient(int clientFd)
+
+    Connection “freezes” in S_READY
+        If there’s no body (BR_NONE), you do:
+
+            connection.state = S_READY;
+            return;
+        But the pollfd still has events = POLLIN.
+        No new event will occur → the request stalls forever.
+        Fix: as soon as you enter S_READY, produce the response (or call the layer that does) and change the fd to POLLOUT + S_WRITE.
+
+    Limits → defense against slowloris / DoS attacks
+    Currently, readBuffer can grow indefinitely waiting for \r\n\r\n.
+        Add limits:
+
+        Max header size (e.g., 8–16 KiB): if exceeded before finding \r\n\r\n → send 431/400 and close.
+
+        Timeout per state: if you track last_activity, expire S_HEADERS/S_BODY after a threshold.
+
+    Avoid unnecessary copies
+    Instead of substr + swap, use
+
+        connection.readBuffer.erase(0, delim + 4);
+        (no extra string allocation).
+
+    Be careful with errno usage in both read and write (must capture immediately before other calls).
+
+void ServerRunner::writeToClient(int clientFd)
+
+    Doesn’t handle EAGAIN / EWOULDBLOCK
+        On a non-blocking socket, write() may return -1 with errno = EAGAIN, meaning “can’t send more now”.
+        If you close immediately, you’ll cut the response mid-way.
+
+    Doesn’t handle EINTR
+        If the write is interrupted by a signal, you must retry.
+
+    Always closes at the end
+        In HTTP/1.1, the default is to keep the connection alive if the client requested it.
+        You should only close if Connection: close or on error.
+
+    Missing pollfd update
+        When the buffer becomes empty and you’re keeping the connection alive, you must switch events back to POLLIN (to read the next request).
+
+    Improved version example:
+
+void ServerRunner::writeToClient(int clientFd) {
+    std::map<int, Connection>::iterator it = _connections.find(clientFd);
+    if (it == _connections.end()) return;
+
+    Connection& c = it->second;
+
+    while (!c.writeBuffer.empty()) {
+        ssize_t n = ::write(clientFd, c.writeBuffer.c_str(), c.writeBuffer.size());
+        if (n > 0) {
+            c.writeBuffer.erase(0, static_cast<std::size_t>(n));
+            continue;
+        }
+        if (n < 0) {
+            if (errno == EINTR) continue;                     // retry
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {    // can't send more now
+                // stay registered for POLLOUT, retry next poll()
+                return;
+            }
+            closeConnection(clientFd);                        // real error
+            return;
+        }
+        // n == 0 → remote closed
+        closeConnection(clientFd);
+        return;
+    }
+
+    // Entire buffer sent
+    if (c.request.keep_alive && !c.response.close) {
+        // Reuse connection: wait for next request
+        c.state = S_HEADERS;
+        c.readBuffer.clear();
+        c.request = HTTP_Request();
+        c.response = HTTP_Response();
+
+        for (size_t i = 0; i < _fds.size(); ++i) {
+            if (_fds[i].fd == clientFd) {
+                _fds[i].events = POLLIN;   // back to listening
+                break;
+            }
+        }
+    } else {
+        closeConnection(clientFd); // terminate if not keep-alive
+    }
+}
+
+void ServerRunner::closeConnection(int clientFd)
+
+    Avoid O(n) complexity when removing/updating events
+    Maintain a map fd → index in _fds (update when erasing with swap-and-pop):
+
+    // O(1) removal (swap with back + pop), but update index for swapped fd
+    std::size_t idx = fdIndex[fd];
+    std::size_t last = _fds.size() - 1;
+    std::swap(_fds[idx], _fds[last]);
+    fdIndex[_fds[idx].fd] = idx;
+    _fds.pop_back();
+    fdIndex.erase(fd);
+
+HttpBody.cpp
+
+BodyResult consume_body_content_length(Connection& connection, std::size_t max_body, int& status, std::string& reason)
+
+    The usual substr + swap pattern works and may even shrink capacity,
+    but it performs a full allocation/copy.
+    
+    Simpler alternatives:
+
+    connection.readBuffer.erase(0, take);
+    (clearer and sufficient, also O(n)).
+
+BodyResult consume_body_chunked(Connection& connection, std::size_t max_body, int& status, std::string& reason)
+
+    Line length limit (SIZE and TRAILERS)
+    To defend against DoS, enforce a max number of bytes per line (e.g., 8–16 KB).
+    If find("\r\n") doesn’t appear within that limit → return 413 or 400.
+
+    Buffer management (same as previous)
+    substr + swap works but allocates/copies.
+    erase(0, n) is simpler; for optimized performance, you can keep a read offset and compact occasionally.
+
+HttpParser.cpp
+
+bool isTokenChar(unsigned char c)
+
+    std::isalnum(c) depends on the current locale.
+
+    In pt_PT.UTF-8, for instance, isalnum('ç') may return true — which is not valid in HTTP (tchar is ASCII-only).
+
+Solution:
+
+inline bool isTokenChar(unsigned char c) {
+    if (c > 0x7F) return false; // tchar is ASCII only
+
+    // ALPHA / DIGIT (ASCII only, no locale dependency)
+    if ((c >= '0' && c <= '9') ||
+        (c >= 'A' && c <= 'Z') ||
+        (c >= 'a' && c <= 'z'))
+        return true;
+
+    switch (c) {
+        case '!': case '#': case '$': case '%': case '&': case '\'': case '*':
+        case '+': case '-': case '.': case '^': case '_': case '`': case '|': case '~':
+            return true;
+    }
+    return false;
+}
+
+bool parseRequestLine(const std::string& line, HTTP_Request& request, int& outStatus, std::string& outReason)
+
+    Possible improvements (RFC / real-world cases)
+
+    Trailing \r → often appears as "HTTP/1.1\r" → strip final CR before comparing.
+
+    Multiple spaces / HTAB between fields → RFC defines SP, but real clients use multiple or tabs. Accept 1+ SP/HTAB.
+
+    Extra characters after version → "HTTP/1.1 junk" should be 400 (ignore optional CR only).
+
+    Target validation → request-target cannot contain spaces or tabs. If it does → 400 (or 414 if too long). Reject non-ASCII control bytes (0x00–0x1F, 0x7F).
+
+    Special methods
+
+    OPTIONS * (asterisk-form) is valid.
+
+    CONNECT accepts authority-form (host:port), validation can be deferred.
+
+    Locale/ASCII → maintain ASCII-only isTokenChar (no locale dependence).
+
+bool parseHeadersBlock(const std::string& block, HTTP_Request& request, int& outStatus, std::string& outReason)
+
+    Essential validations (fix 400/413/501 misclassifications or invalid acceptances):
+
+    Validate header name as ASCII token
+    Currently any characters before : are accepted. Reject names with spaces, /, :, or non-ASCII chars.
+
+    for (std::size_t j = 0; j < k.size(); ++j) {
+        if (!isTokenChar(static_cast<unsigned char>(k[j]))) {
+            outStatus = 400; outReason = "Bad Request"; return false;
+        }
+    }
+    obs-fold without previous header → 400
+
+    if (current[0] == ' ' || current[0] == '\t') {
+        if (lastKey.empty()) { outStatus = 400; outReason = "Bad Request"; return false; }
+    }
+    Content-Length: avoid locale, validate numeric and duplicates
+
+    Replace std::isdigit with ASCII test.
+
+    Verify endptr from strtoul.
+
+    If repeated, all values must be identical.
+
+    for (std::size_t i = 0; i < s.size(); ++i)
+        if (s[i] < '0' || s[i] > '9') BAD400;
+
+    char* endp = 0; errno = 0;
+    unsigned long v = std::strtoul(s.c_str(), &endp, 10);
+    if (errno == ERANGE || endp == s.c_str() || *endp != '\0') { /* 400 or 413 */ }
+
+    // Multiple identical values ("123, 123")
+    std::string raw = clit->second;
+    std::string first;
+    std::istringstream iss(raw);
+    std::string part;
+    while (std::getline(iss, part, ',')) {
+        part = trim(part);
+        if (part.empty()) BAD400;
+        if (first.empty()) first = part;
+        else if (part != first) BAD400;
+    }
+    Transfer-Encoding: tokenize, require “chunked” last, reject others
+
+    bool hasTE = (teit != request.headers.end());
+    bool hasCL = (clit != request.headers.end());
+
+    if (hasTE) {
+        std::vector<std::string> codings;
+        std::istringstream iss(toLowerCopy(teit->second));
+        std::string tok;
+        while (std::getline(iss, tok, ',')) {
+            tok = trim(tok);
+            if (!tok.empty()) codings.push_back(tok);
+        }
+        if (hasCL) BAD400; // anti-smuggling check (good)
+
+        bool seenChunked = false;
+        for (std::size_t i = 0; i < codings.size(); ++i) {
+            if (codings[i] == "chunked") {
+                if (i != codings.size() - 1) BAD400; // must be last
+                seenChunked = true;
+            } else {
+                outStatus = 501; outReason = "Not Implemented"; return false;
+            }
+        }
+        if (seenChunked) request.body_reader_state = BR_CHUNKED;
+        else { outStatus = 501; outReason = "Not Implemented"; return false; }
+    }
+
+    Connection: close — avoid false positives with find
+    Tokenize by commas/spaces. find("close") can match “disclose”.
+
+    request.keep_alive = true; // default 1.1
+    if (chit != request.headers.end()) {
+        std::istringstream iss(toLowerCopy(chit->second));
+        std::string tok;
+        while (std::getline(iss, tok, ',')) {
+            tok = trim(tok);
+            if (tok == "close") { request.keep_alive = false; break; }
+        }
+    }
+    Duplicate Host header with differing values → 400
+    Even though merging with commas handles it, better to detect differing duplicates before coalescing:
+
+    Quick fix: if k == "host" and already exists with a different value → 400.
+
+bool parse_head(const std::string& head, HTTP_Request& request, int& status, std::string& reason)
+
+    Size limits (DoS defense):
+
+    Limit total header size (8–16 KiB).
+
+    Limit request-line length (4–8 KiB).
+    If exceeded → 431 Request Header Fields Too Large (or 400/413 per project policy).
+
+bool extract_next_head(std::string& buffer, std::string& out_head)
+
+    Avoid infinite loop for malformed buffers
+    If buffer contains only \r or incomplete \r\n\r, it will loop returning false forever. Correct behaviour (wait for more data), but ensure caller has timeout/size limit.
+
+    Avoid extra copies
+    Use erase(0, drop) instead of substr + swap.
+
+    std::string build_simple_response(int status, const std::string& reason, const std::string& body)
+
+    Add Date header — RFC 7231 recommends including it.
+
+    Keep-Alive support — if sending a response under a keep-alive context, change "Connection: close" to "Connection: keep-alive".
+
+    if (request.keep_alive)
+        oss << "Connection: keep-alive\r\n";
+    else
+        oss << "Connection: close\r\n";

@@ -1,0 +1,175 @@
+
+Great questions — here’s the clear, practical breakdown.
+What are “error codes”?
+They’re the HTTP status codes your server returns (3 digits): e.g. 404 Not Found, 403 Forbidden, 500 Internal Server Error, 405 Method Not Allowed, etc.
+What does “set up default error pages” mean?
+Your server must always be able to send a human-readable HTML page for error responses, even when the config file doesn’t provide custom pages. In other words:
+
+
+If the config maps a code to a file (e.g. error_page 404 /errors/404.html;) → serve that file.
+
+
+Otherwise → serve a built-in default HTML page (you ship it or generate it on the fly).
+This requirement is explicit in the subject: “Your server must have default error pages if none are provided.” 
+
+
+Are you doing it right now?
+Partially. You already parse and store error_page directives into srv.error_pages[code] = uri (good) .
+But when you actually send errors (e.g., header parse fails, body errors), you always serialize a tiny plain-text body via build_simple_response(...) and don’t consult srv.error_pages nor supply an HTML default. So you’re not meeting the “default error pages” requirement yet. See where you build errors in ServerRunner.cpp (e.g. on parse failure/body error) — it calls build_simple_response(...) with strings like “Bad Request\r\n”. 
+
+Minimal, concrete fix
+1) Add an error-response builder that:
+
+
+Looks up a configured error_page file for the status.
+
+
+If found & readable → serve that file (HTML).
+
+
+Else → return a built-in default HTML page.
+
+
+Put this in your HTTP serializer (names adjusted to your style).
+// HttpSerializer.hpp
+#ifndef HTTP_SERIALIZER_HPP
+#define HTTP_SERIALIZER_HPP
+
+#include "Headers.hpp"
+#include "Structs.hpp"
+#include <string>
+
+namespace http {
+
+// Existing (keep if you want)
+std::string build_simple_response(int status, const std::string& reason, const std::string& body);
+
+// New: builds an error response using config fallback to default HTML
+std::string build_error_response(const Server& srv, int status, const std::string& reason);
+
+} // namespace http
+#endif
+
+// HttpSerializer.cpp
+#include "HttpSerializer.hpp"
+#include <sstream>
+#include <fstream>
+
+namespace {
+
+// read whole file into string (C++98)
+bool read_file(const std::string& path, std::string& out) {
+    std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
+    if (!in) return false;
+    std::string s;
+    char buf[4096];
+    while (in.read(buf, sizeof(buf)) || in.gcount() > 0)
+        s.append(buf, static_cast<std::size_t>(in.gcount()));
+    out.swap(s);
+    return true;
+}
+
+std::string default_error_html(int status, const std::string& reason) {
+    std::ostringstream html;
+    html << "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+         << "<title>" << status << " " << reason << "</title>"
+         << "<style>body{font-family:sans-serif;margin:2rem;}h1{font-size:1.6rem}</style>"
+         << "</head><body><h1>" << status << " " << reason << "</h1>"
+         << "<p>The request could not be fulfilled.</p>"
+         << "<hr><p>webserv</p></body></html>";
+    return html.str();
+}
+
+} // anonymous
+
+namespace http {
+
+// Keep if you use it elsewhere (note: fix header typos if you have them)
+std::string build_simple_response(int status, const std::string& reason, const std::string& body) {
+    std::ostringstream oss;
+    oss << "HTTP/1.1 " << status << ' ' << reason << "\r\n";
+    oss << "Server: webserv\r\n";
+    oss << "Content-Length: " << body.size() << "\r\n";
+    oss << "Content-Type: text/plain\r\n";
+    oss << "Connection: close\r\n\r\n";
+    oss << body;
+    return oss.str();
+}
+
+std::string build_error_response(const Server& srv, int status, const std::string& reason) {
+    // 1) check configured mapping
+    std::ostringstream code; code << status;
+    std::map<std::string, std::string>::const_iterator it = srv.error_pages.find(code.str());
+
+    std::string body;
+    std::string contentType = "text/html";
+
+    if (it != srv.error_pages.end()) {
+        // Note: path resolution is up to your routing (absolute vs rooted on doc root)
+        // For a simple start, try opening the URI as a path relative to cwd:
+        if (!read_file(it->second, body)) {
+            // fall back to default HTML if file missing/unreadable
+            body = default_error_html(status, reason);
+        }
+    } else {
+        // no configured page → built-in default
+        body = default_error_html(status, reason);
+    }
+
+    std::ostringstream resp;
+    resp << "HTTP/1.1 " << status << ' ' << reason << "\r\n";
+    resp << "Server: webserv\r\n";
+    resp << "Content-Length: " << body.size() << "\r\n";
+    resp << "Content-Type: " << contentType << "\r\n";
+    resp << "Connection: close\r\n\r\n";
+    resp << body;
+    return resp.str();
+}
+
+} // namespace http
+
+
+Note: in your current HttpSerializer.cpp there’s a typo (Constent-Length) and a header include name mismatch. Fix those when you paste (I used Content-Length and HttpSerializer.hpp). 
+
+2) Use it where you send errors
+In ServerRunner.cpp, when you generate an error (parse failure, body error), call build_error_response(...) with the active Server for this connection instead of build_simple_response(...). For now, if you don’t store per-connection server, you can pick a default (e.g., first server). Later, wire the matched server correctly.
+Example patch (only the changed lines shown):
+// inside the header-parse failure path:
+if (!http::parse_head(head, connection.request, status, reason)) {
+    const Server& active = _servers[0]; // TODO: replace with the matched server
+    connection.writeBuffer = http::build_error_response(active, status, reason);
+    // ... flip to POLLOUT as you already do ...
+    connection.state = S_WRITE;
+    return;
+}
+
+// inside BODY_ERROR path:
+if (br == http::BODY_ERROR) {
+    const Server& active = _servers[0]; // TODO: replace with the matched server
+    connection.writeBuffer = http::build_error_response(active, st, rsn);
+    // ... flip to POLLOUT and set state as you already do ...
+    connection.state = S_WRITE;
+    return;
+}
+
+That’s it: now you fulfill “default error pages if none are provided” and also honor custom error_page mappings from the config.  
+
+Quick test plan
+
+
+No config error_page → request a missing file → expect a nice HTML error (your default page).
+
+
+With config
+error_page 404 www/errors/404.html;
+
+Request a missing file → expect contents of www/errors/404.html.
+
+
+Configured but missing file → still get your default HTML (fallback works).
+
+
+Trigger 413/400/405 in your code paths and verify you see HTML, not plaintext.
+
+
+If you want, we can wire a simple path resolver so URIs like /errors/404.html map under your doc root. For the project, the above is enough to satisfy the requirement and behave correctly.

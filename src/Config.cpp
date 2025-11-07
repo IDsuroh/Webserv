@@ -226,14 +226,14 @@ static void handleServerName(Server& srv, const std::vector<std::string>& tokens
 	bool	hadAny = false;
 
 	for (; i < tokens.size() && tokens[i] != ";"; ++i)	{
-		const std::string& name = tokens[i];
-
+		const std::string&	name = tokens[i];
 		if (name == "{" || name == "}")
 			throw	std::runtime_error("Server_Name: Unexpected token '" + name + "'");
 	
 		srv.server_name.push_back(name);
 		hadAny = true;
 	}
+
 	if (!hadAny)
 		throw	std::runtime_error("Server_Name: Need at least one name");
 
@@ -248,12 +248,28 @@ static void handleServerName(Server& srv, const std::vector<std::string>& tokens
 // Handle the "error_page" directive
 static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens, std::size_t& i)  {
 
-	std::string	error_code = tokens[i++];
-	std::string	uri = tokens[i++];
-	if (tokens[i++] != ";")
-		throw std::runtime_error("Missing ';' after error_page");
-	srv.error_pages[error_code] = uri;
+	if (i >= tokens.size())
+		throw	std::runtime_error("Error_Page: Missing arguments");
 
+	// Gather args until ';'
+	std::vector<std::string>	args;
+	for (; i < tokens.size() && tokens[i] != ";"; ++i)	{
+		const std::string&	tok = tokens[i];
+		if (tok == "{" || tok == "}")
+			throw	std::runtime_error("Error_page: Unexpected token '" + tok + "'");
+		args.push_back(tok);
+	}
+
+	if (args.size() < 2)
+		throw	std::runtime_error("Error_Page: Need <code...> <uri>");
+	if (i >= tokens.size() || tokens[i] != ";")
+		throw	std::runtime_error("Error_Page: Missing ';' after error_page");
+	++i;
+
+	// Last arg is URI; all previous are status codes
+	const std::string&	uri = args.back();
+	for (std::size_t k = 0; k + 1 < args.size(); ++k)
+		srv.error_pages[args[k]] = uri;
 }
 
 
@@ -261,13 +277,19 @@ static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens,
 // Handle the "location" directive
 static void handleLocation(Server& srv, const std::vector<std::string>& tokens, std::size_t& i)  {
     
+	if (i >= tokens.size() || tokens[i] == "{" || tokens[i] == "}")
+		throw	std::runtime_error("Location: Missing path");
+
     Location    loc;
-    loc.path = tokens[i++];
-    if (tokens[i++] != "{")
-        throw   std::runtime_error("Expected '{' after location");
+    loc.path = tokens[i];
+	++i;
+
+    if (i >= tokens.size() || tokens[i] != "{")
+        throw   std::runtime_error("Location: Expected '{' after location");
+	++i;
+
     parseLocationBlock(tokens, i, loc);
     srv.locations.push_back(loc);
-
 }
 
 
@@ -275,31 +297,135 @@ static void handleLocation(Server& srv, const std::vector<std::string>& tokens, 
 // Parse the location block
 static void parseLocationBlock(const std::vector<std::string>& tokens, std::size_t& i, Location& loc)  {
 
-    while (i < tokens.size() && tokens[i] != "}")   {
-        
-        std::string                 key = tokens[i++];
-        std::vector<std::string>    args;
-        
-        while (i < tokens.size() && tokens[i] != ";")
-            args.push_back(tokens[i++]);
-        if (i >= tokens.size() || tokens[i] != ";")
-            throw   std::runtime_error("Missing ';' after " + key);
-        i++;
+	for (;;)	{
+		// 1) EOF guard
+		if (i >= tokens.size())
+			throw	std::runtime_error("Location: Unexpected EOF inside block");
+		
+		// 2) Is it the block end?
+		if (tokens[i] == "}")	{
+			++i;
+			break;	// done with this location block.
+		}
 
-        std::string                 joined;
-        for (std::size_t j = 0; j < args.size(); ++j)    {
-            if (j)
-                joined += ' ';
-            joined += args[j];
-        }
-        
-        loc.directives[key] = joined;
-    }
+		// 3) Read directive key
+		const std::string&	key = tokens[i];
+		++i;
+		
+		// Prevent accidental nested block starts like: "root /x {" (missing ';')
+		if (key == "{")
+			throw	std::runtime_error("Location: Unexpected '{' (did you forget a ';' above?)");
 
-    if (i >= tokens.size() || tokens[i] != "}")
-        throw   std::runtime_error("Missing '}' at the end of the location block");
-    ++i;
+		// ------- Known directives with specific arity/validation -------
 
+		if (key == "root")	{
+			if (i >= tokens.size() || tokens[i] == ";" || tokens[i] == "}" || tokens[i] == "{")
+				throw	std::runtime_error("Location: root: Missing value");
+			const std::string&	value = tokens[i];
+			++i;
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Location: root: Missing ';'");
+			++i;
+			loc.directives["root"] = value;
+		}
+		else if (key == "autoindex")	{
+			if (i >= tokens.size() || (tokens[i] != "on" && tokens[i] != "off"))
+				throw	std::runtime_error("Location: autoindex: expected 'on' or 'off'");
+			const std::string&	value = tokens[i];
+			++i;
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Location: autoindex: Missing ';'");
+			++i;
+			loc.directives["autoindex"] = value;
+		}
+		else if (key == "methods")	{
+			// multi-value until ';'
+			std::vector<std::string>	vals;
+			for (; i < tokens.size() && tokens[i] != ";"; ++i)	{
+				if (tokens[i] == "{" || tokens[i] == "}")
+					throw	std::runtime_error("Location: methods: Unexpected token '" + tokens[i] + "'");
+				vals.push_back(tokens[i]);
+			}
+			if (vals.empty())
+				throw	std::runtime_error("Location: methods: Needs at least one method");
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Location: methods: Missing ';'");
+			++i;
+			std::string	joined;
+			for (std::size_t k = 0; k < vals.size(); ++k)	{
+				if (k)
+					joined += ",";
+				joined += vals[k];
+			}
+			loc.directives["methods"] = joined;
+		}
+		else if (key == "index")	{
+			std::vector<std::string>	vals;
+			for (; i < tokens.size() && tokens[i] != ";"; ++i)	{
+				if (tokens[i] == "{" || tokens[i] == "}")
+					throw	std::runtime_error("Location: index: Unexpected token '" + tokens[i] + "'");
+				vals.push_back(tokens[i]);
+			}
+			if (vals.empty())
+				throw	std::runtime_error("Location: index: Needs at least one filename");
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Location: index: Missing ';'");
+			++i;
+			std::string	joined;
+			for (std::size_t k = 0; k < vals.size(); ++k)	{
+				if (k)
+					joined += ",";
+				joined += vals[k];
+			}
+			loc.directives["index"] = joined;
+		}
+		else if (key == "client_max_body_size")	{
+			if (i >= tokens.size() || tokens[i] == ";" || tokens[i] == "}" || tokens[i] == "{")
+				throw	std::runtime_error("Location: client_max_body_size: Missing value");
+			const std::string&	value = tokens[i];
+			++i;
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Location: client_max_body_size: Missing ';'");
+			++i;
+			loc.directives["client_max_body_size"] = value;
+		}
+		else if (key == "return")	{
+			// simple 2-arg form: return <status> <uri>;
+			if (i + 2 >= tokens.size() || tokens[i] == ";" || tokens[i] == "{" || tokens[i] == "}")
+				throw	std::runtime_error("Location: return: Missing <status> <uri>");
+			const std::string&	status = tokens[i];
+			++i;
+			const std::string&	uri = tokens[i];
+			++i;
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Location: return: Missing ';'");
+			++i;
+			loc.directives["return"] = status + " " + uri;
+		}
+
+		// ------- Fallback: generic directive "key arg1 arg2 ... ;" -------
+		else	{
+			std::vector<std::string>	vals;
+			for (; i < tokens.size() && tokens[i] != ";"; ++i)	{
+				if (tokens[i] == "{" || tokens[i] == "}")
+					throw	std::runtime_error("Location: " + key + ": unexpected token '" + tokens[i] + "'");
+				vals.push_back(tokens[i]);
+			}
+			if (vals.empty())
+				throw	std::runtime_error("Location: " + key + ": requires value(s)");
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Location: " + key + ": missing ';'");
+			++i;
+
+			std::string	joined;
+			for (std::size_t k = 0; k < vals.size(); ++k)	{
+				if (k)
+					joined += " ";
+				joined += vals[k];
+			}
+			loc.directives[key] = joined;
+		}
+	}
 }
 
 
@@ -307,24 +433,56 @@ static void parseLocationBlock(const std::vector<std::string>& tokens, std::size
 // Handle generic directives in the server block
 static void handleGenericDirective(Server& srv, const std::string& key, const std::vector<std::string>& tokens, std::size_t& i)  {
 
-	if (i >= tokens.size())
-		throw	std::runtime_error("Unexpected EOF after " + key);
-
-	std::vector<std::string>	args;
-	while (i < tokens.size() && tokens[i] != ";")
-		args.push_back(tokens[i++]);
-
-	if (i >= tokens.size() || tokens[i] != ";")
-		throw	std::runtime_error("Missing ';' after " + key);
-	
-	++i;
-
-	std::string	joined;
-	for (std::size_t j = 0; j < args.size(); ++j)	{
-		if (j)
-			joined += ' ';
-		joined += args[j];
-	}
-	srv.directives[key] = joined;
-
+	if (key == "root")	{
+			if (i >= tokens.size() || tokens[i] == ";" || tokens[i] == "}" || tokens[i] == "{")
+				throw	std::runtime_error("Server: root: Missing value");
+			const std::string&	value = tokens[i];
+			++i;
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Server: root: Missing ';'");
+			++i;
+			srv.directives["root"] = value;
+		}
+		else if (key == "autoindex")	{
+			if (i >= tokens.size() || (tokens[i] != "on" && tokens[i] != "off"))
+				throw	std::runtime_error("Server: autoindex: expected 'on' or 'off'");
+			const std::string&	value = tokens[i];
+			++i;
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Server: autoindex: Missing ';'");
+			++i;
+			srv.directives["autoindex"] = value;
+		}
+		else if (key == "index")	{
+			std::vector<std::string>	vals;
+			for (; i < tokens.size() && tokens[i] != ";"; ++i)	{
+				if (tokens[i] == "{" || tokens[i] == "}")
+					throw	std::runtime_error("Server: index: Unexpected token '" + tokens[i] + "'");
+				vals.push_back(tokens[i]);
+			}
+			if (vals.empty())
+				throw	std::runtime_error("Server: index: Needs at least one filename");
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Server: index: Missing ';'");
+			++i;
+			std::string	joined;
+			for (std::size_t k = 0; k < vals.size(); ++k)	{
+				if (k)
+					joined += ",";
+				joined += vals[k];
+			}
+			srv.directives["index"] = joined;
+		}
+		else if (key == "client_max_body_size")	{
+			if (i >= tokens.size() || tokens[i] == ";" || tokens[i] == "}" || tokens[i] == "{")
+				throw	std::runtime_error("Server: client_max_body_size: Missing value");
+			const std::string&	value = tokens[i];
+			++i;
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Server: client_max_body_size: Missing ';'");
+			++i;
+			srv.directives["client_max_body_size"] = value;
+		}
+		else
+			throw	std::runtime_error("Server: Unknown directive '" + key + "'");
 }
