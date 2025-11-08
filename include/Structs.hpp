@@ -104,6 +104,7 @@ struct Connection   {
 	HTTP_Response	response;
 	std::size_t		writeOffset;
 	std::size_t		clientMaxBodySize;
+	long			lastActiveMs;
 
 	Connection()
 	:	fd(-1)
@@ -118,6 +119,7 @@ struct Connection   {
 	,	response()
 	,	writeOffset(0)
 	,	clientMaxBodySize(1048576)	// default 1 MiB; override from config
+	,	lastActiveMs()
 	{}
 };
 

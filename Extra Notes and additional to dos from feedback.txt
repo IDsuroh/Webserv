@@ -173,3 +173,12 @@ Trigger 413/400/405 in your code paths and verify you see HTML, not plaintext.
 
 
 If you want, we can wire a simple path resolver so URIs like /errors/404.html map under your doc root. For the project, the above is enough to satisfy the requirement and behave correctly.
+
+
+void ServerRunner::acceptNewClient(int listenFd, const Server* srv)
+
+    FD_CLOEXEC on the client fd (good practice) — closes the fd in execve:
+
+        fcntl(clientFd, F_SETFD, fcntl(clientFd, F_GETFD) | FD_CLOEXEC);
+
+******************************** NOTES TO CHECK*******************How about for Mac_OS?

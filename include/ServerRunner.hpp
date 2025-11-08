@@ -17,6 +17,7 @@ class   ServerRunner  {
         std::vector<struct pollfd> 	_fds;
         std::map<int, Connection>   _connections;
 
+        void    housekeeping();
         void    setupPollFds();
         void    handleEvents(); 
         void    acceptNewClient(int listenFd, const Server* srv);

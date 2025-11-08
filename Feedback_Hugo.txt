@@ -63,7 +63,7 @@ static void handleGenericDirective(Server& srv, const std::string& key, const st
     No validation of number/type of arguments: client_max_body_size without a value, or autoindex foo bar, are accepted until they blow up later.
 
     Empty args: key ; is accepted (will be "") — probably unwanted for most directives.
--------------------------------------------- done -----------------------------------------------------------
+
 ServerRunner.cpp
 
 ServerRunner::ServerRunner(const std::vector<Server>& servers)
@@ -105,6 +105,9 @@ void ServerRunner::setupPollFds() {
     }
 }
 
+int openAndListen(const std::string& spec)
+	// What if the evaluator sets an IP with only the host and without the port? In that case, what can we do?
+
 void ServerRunner::handleEvents()
 
     Curiosity: you have for (std::size_t i = _fds.size(); i-- > 0; ). ChatGPT pointed me to a different way: swap the current pfd with the last before deleting it (the new last), avoiding index shifts and skipping items.
@@ -114,6 +117,8 @@ void ServerRunner::acceptNewClient(int listenFd, const Server* srv)
     FD_CLOEXEC on the client fd (good practice) — closes the fd in execve:
 
         fcntl(clientFd, F_SETFD, fcntl(clientFd, F_GETFD) | FD_CLOEXEC);
+-------------------------------------------- done -----------------------------------------------------------
+******************************** NOTES TO CHECK*******************How about for Mac_OS?
 
 
 ServerRunner (continuation).cpp

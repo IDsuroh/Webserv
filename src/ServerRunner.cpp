@@ -18,6 +18,52 @@ static void	printSocketError(const char* msg)	{
 
 //**************************************************************************************************
 
+static long	now_ms()	{
+	struct timeval	tv;
+	gettimeofday(&tv, 0);
+	return tv.tv_sec * 1000L + tv.tv_usec / 1000L;
+}
+
+void	ServerRunner::housekeeping()	{
+	const long	NOW =  now_ms();
+
+	const long	HEADER_TIMEOUT_MS	= 15000;	// 15s to receive headers
+	const long	BODY_TIMEOUT_MS		= 30000;	// 30s to receive body
+	const long	KA_IDLE_MS			= 5000;		// 5s idle on keep-alive
+
+	// Sweep connections (close stale ones)
+	for (std::map<int, Connection>:: iterator	it = _connections.begin(); it != _connections.end();)	{
+
+		int			fd = it->first;
+		Connection& connection = it->second;
+		bool		closeIt = false;
+	
+		switch (connection.state)	{
+			case	S_HEADERS:
+				if (NOW - connection.lastActiveMs > HEADER_TIMEOUT_MS)
+					closeIt = true;
+				break;
+			case	S_BODY:
+				if (NOW - connection.lastActiveMs > BODY_TIMEOUT_MS)
+					closeIt = true;
+				break;
+			case	S_READY:
+				if (connection.request.keep_alive && (NOW - connection.lastActiveMs > KA_IDLE_MS))
+					closeIt = true;
+				break;
+			default:
+				break;
+		}
+
+		if (closeIt)	{
+			++it;
+			closeConnection(fd);
+		}
+		else
+			++it;
+	}
+}
+
 void    ServerRunner::run() {
     
 	setupListeners(_servers, _listeners);
@@ -29,29 +75,100 @@ void    ServerRunner::run() {
 		return;
 	}
     
+	const int	POLL_TICK_MS = 250;
+
 	while (true)    {
-        int n = poll(&_fds[0], _fds.size(), -1); // points to the first entry of _fds.size() entries and blocks indefinitely.
+        int n = poll(_fds.empty() ? 0 : &_fds[0], static_cast<nfds_t>(_fds.size()), POLL_TICK_MS);
+		// points to the first entry of _fds.size() entries and blocks for up to POLL_TICK_MS (or until an event arrives).
         if (n < 0)  {
-            printSocketError("poll");
+			if (errno == EINTR)
+				continue;
+			printSocketError("poll");
             break;
         }
-        handleEvents();
+		if (n > 0)
+        	handleEvents();
+		// Run periodic maintenance once per tick (timeout or after events):
+		housekeeping();	// close slow headers/body, idle keep-alive, etc.
     }
-	// setupListeners(): opens the actual listening sockets (via openAndListen), and builds _listeners entries that map each listening fd to a particular Server config (virtual host).
-	//		It also dedupes so the same IP:port is opened once and shared by multiple servers. Deduplicate => having no duplicates of the same fd.
-	// setupPollFds(): registers each unique listening fd in the _fds array with events = POLLIN. That array is the subscription list passed to poll().
-	//		In other words: this function tells poll() what to watch (listeners) and for which events (readable → “there’s a connection to accept”).
-	// poll() is a system call to the kernel so it waits and watches over the fds.
-	// Then the loop:
-	//		poll() sleeps until any registered fd is ready.
-	//		If a listener is ready (POLLIN), call acceptNewClient(), which is in handleEvents() -> that adds a client fd to _fds with POLLIN.
-	//		When a response is ready, flip that client’s events to POLLOUT so poll() wakes the kernel when there is something to write.
+	// setupListeners(): opens listening sockets (via openAndListen) and fills _listeners.
+	//                   It deduplicates equivalent specs so the same IP:port is opened once.
+	// setupPollFds(): registers ONE pollfd per unique listening fd in _fds (events=POLLIN).
+	// Event loop:
+	//   - poll() sleeps up to POLL_TICK_MS, or wakes sooner on I/O.
+	//   - if a listener fd is readable, handleEvents() accepts and adds the client fd to _fds.
+	//   - if a client needs to write, handleEvents() flips its poll events to POLLOUT.
+	//   - housekeeping() runs once per tick to enforce header/body/keep-alive timeouts and
+	//     close stale connections (requires lastActiveMs to be updated on activity).
+
 }
 
 //**************************************************************************************************
 
+static bool	parseListenToken(const std::string& spec, std::string& host, int& port)	{
+	
+	const int	DEFAULT_PORT = 80;
+
+	std::string	pstr;	// candidate port string (maybe empty)
+	std::size_t	colon = spec.find(':');
+
+	if (colon == std::string::npos)	{
+		// No colon -> either "8080" (all digits) or "host"
+		bool	allDigits = !spec.empty();
+		for (std::size_t i = 0; i < spec.size(); ++i)	{
+			unsigned char	uc = static_cast<unsigned char>(spec[i]);
+			if (!std::isdigit(uc))	{
+				allDigits = false;
+				break;
+			}
+		}
+
+		if (allDigits)	{
+			host = "";
+			pstr = spec;
+		}	// port-only "8080"
+		else	{
+			host = spec;
+			pstr.clear();
+		} // host-only → default port
+	}
+	else	{
+		// Has colon -> split into host + (maybe-empty) port
+		host = (colon = 0) ? "" : spec.substr(0, colon);
+		pstr = (colon + 1 < spec.size()) ? spec.substr(colon + 1) : "";
+	}
+
+	if (pstr.empty())
+		port = DEFAULT_PORT;
+	else	{
+		char*	endptr = 0;
+		long	v = std::strtol(pstr.c_str(), &endptr, 10);
+		if (endptr == pstr.c_str() || *endptr != '\0' || v < 1 || v > 65535)
+			return false;	// invalid port, no junk values, no alphabets, within port values
+		port = static_cast<int>(v);
+	}
+
+	// Normalize wildcard/empty host
+	if (host.empty() || host == "*")
+		host = "0.0.0.0";
+
+	return true;
+}
+
+static std::string	normalizeListenKey(const std::string& spec)	{
+	std::string	host;
+	int			port;
+	if (!parseListenToken(spec, host, port))
+		return spec;
+	std::ostringstream	oss;
+	oss << host << ":" << port;
+	return oss.str();
+}
+
 // Setting up Listeners functions
 void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& outListeners)	{
+
+	outListeners.clear();
 
 	std::map<std::string, int> specToFd;
 	// To prevent opening the same IP:port more than once because Servers can share the same IP:ports.
@@ -60,27 +177,30 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 		const Server&	srv = servers[s];
 		
 		for (std::size_t i = 0; i < srv.listen.size(); ++i)	{ // each server's listen entries (server can listen on multiple specifications).
-			const std::string& spec = srv.listen[i];
+			const std::string&	spec = srv.listen[i];
+			const std::string	key = normalizeListenKey(spec);
 			
-			int	fd;
-            std::map<std::string, int>::iterator it = specToFd.find(spec);
-			if (it != specToFd.end())
-				fd = it->second;
-			else {
-				fd = openAndListen(spec);
-				if (fd < 0) // ignore the current listen IP:port and try the next one.
-					continue;
-				specToFd[spec] = fd;
+            std::map<std::string, int>::iterator it = specToFd.find(key);
+			if (it != specToFd.end())	{
+				// Duplicate listen in another server{} — reuse the same socket, do NOT add another Listener row
+				std::cerr << " Note: Duplicate listen \"" << spec << "\" in server #" << s << " - reusing " << key << std::endl;
+				continue;
 			}
+
+			int	fd = openAndListen(spec); // use the original spec for getaddrinfo
+            if (fd < 0) {
+				std::cerr << "Warning: Failed to open listen \"" << spec << "\"\n";
+				continue;
+			}
+
+			specToFd[key] = fd;
 
 			//	_listeners array populated
 			Listener	L;
 			L.fd = fd;
 			L.config = &srv;
 			outListeners.push_back(L);	// Adds to _listeners array
-            std::cout	<< "Listening on " << srv.listen[i] << " for server #"
-						<< s << std::endl << std::endl;
-		
+            std::cout	<< "Listening on " << srv.listen[i] << " for server #" << s << "\n\n";
 		}
 
 	}
@@ -100,7 +220,7 @@ int openAndListen(const std::string& spec)  {
 	else	{
 		host = (colon == 0) ? "" : spec.substr(0, colon);
 		port = (colon + 1 >= spec.size()) ? "" : spec.substr(colon + 1);
-	}	// What if the evaluator sets an IP with only the host and without the port? In that case, what can we do?
+	}
 
 	struct	addrinfo	hints;	// recipe for what type of addresses we want
 	hints.ai_flags		= 0;	// Behavioral Flags (hints.ai_flags = 0; initially no special behavior)
@@ -131,6 +251,13 @@ int openAndListen(const std::string& spec)  {
 		if (fd < 0)	{
 			printSocketError("socket");
 			continue;
+		}
+
+		// close-on-exec for the listening socket as well
+		int fdflags = fcntl(fd, F_GETFD);
+		if (fdflags != -1)	{
+		    if (fcntl(fd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
+		        printSocketError("fcntl F_SETFD FD_CLOEXEC");
 		}
 
 		const int	enable = 1;
@@ -201,8 +328,13 @@ bool	makeNonBlocking(int fd)	{
 
 //**************************************************************************************************
 
-// Setting up Pollfds before running poll() => important process! registering each listening socket.
+// Register one pollfd per unique listening socket (startup only).
+// NOTE: _fds.clear() assumes there are no client pollfds yet.
+// Can never call this after clients have been added to _fds.
 void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPollFds() = listeners only (startup). Clients get added as they connect.
+
+    _fds.clear();                        // to have a clean list on multiple calls
+    _fds.reserve(_listeners.size());
 
 	std::set<int> added;
 	// We can have multiple Listener records pointing to the same underlying fd (e.g., two server {} blocks both listening on 127.0.0.1:8080).
@@ -211,18 +343,16 @@ void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPo
 	// (virtual hosts on the same ip:port), but poll() needs exactly ONE pollfd per unique fd.
     for (std::size_t i = 0; i < _listeners.size(); i++)  {
         int fd = _listeners[i].fd;
-		if (added.find(fd) != added.end())
+		if (!added.insert(fd).second)
 			continue;
 
 		struct pollfd   p; // tells the kernel which fd and what events we want
-
         p.fd = _listeners[i].fd;
         p.events = POLLIN; // "What to expect"
         p.revents = 0; // the poll() is the function that fills in the revents to tell what exactly happened.
         _fds.push_back(p);
-		added.insert(fd);
 
-		std::cout << "on position " << i << " => " <<_listeners[i].fd << " <- pollfd structure constructed\n";
+		std::cout << "listener[" << i << "] fd=" << fd << " registered in poll()\n";
 
 	}
 	// this process is important after opening the listening socket because this is the part where we are telling the poll()
@@ -320,6 +450,14 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 			printSocketError("accept");
 			break;
 		}
+
+		// close-on-exec for the listening socket as well
+		int fdflags = fcntl(clientFd, F_GETFD);
+		if (fdflags != -1)	{
+		    if (fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
+		        printSocketError("fcntl F_SETFD FD_CLOEXEC");
+		}
+
 		if (!makeNonBlocking(clientFd)) {
 			close(clientFd);
 			continue;
@@ -338,6 +476,7 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		connection.request.chunk_state = CS_SIZE;
 		connection.request.chunk_bytes_left = 0;
 		connection.clientMaxBodySize = (1u << 20);
+		connection.lastActiveMs = now_ms();
 			// Bit shift: 1u (unsigned 1) shifted 20 bits → 1,048,576 bytes (1 MiB) default.
 		_connections[clientFd] = connection;
 
