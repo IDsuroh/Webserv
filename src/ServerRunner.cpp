@@ -4,7 +4,7 @@
 #include "../include/HttpBody.hpp"
 
 ServerRunner::ServerRunner(const std::vector<Server>& servers)
-    :   _servers(servers)
+    :   _servers(servers), _nowMs(0)
 {}
 
 //**************************************************************************************************
@@ -18,14 +18,8 @@ static void	printSocketError(const char* msg)	{
 
 //**************************************************************************************************
 
-static long	now_ms()	{
-	struct timeval	tv;
-	gettimeofday(&tv, 0);
-	return tv.tv_sec * 1000L + tv.tv_usec / 1000L;
-}
-
 void	ServerRunner::housekeeping()	{
-	const long	NOW =  now_ms();
+	const long	NOW =  _nowMs;
 
 	const long	HEADER_TIMEOUT_MS	= 15000;	// 15s to receive headers
 	const long	BODY_TIMEOUT_MS		= 30000;	// 30s to receive body
@@ -86,8 +80,15 @@ void    ServerRunner::run() {
 			printSocketError("poll");
             break;
         }
-		if (n > 0)
-        	handleEvents();
+		if (n == 0)	{
+			// No events for a full tick
+			_nowMs += POLL_TICK_MS;
+			housekeeping();
+			continue;
+		}
+        
+		// Handle events first
+		handleEvents();
 		// Run periodic maintenance once per tick (timeout or after events):
 		housekeeping();	// close slow headers/body, idle keep-alive, etc.
     }
@@ -253,12 +254,39 @@ int openAndListen(const std::string& spec)  {
 			continue;
 		}
 
-		// close-on-exec for the listening socket as well
-		int fdflags = fcntl(fd, F_GETFD);
-		if (fdflags != -1)	{
-		    if (fcntl(fd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
-		        printSocketError("fcntl F_SETFD FD_CLOEXEC");
+		#ifdef __APPLE__
+		{
+		/*
+		    macOS (42 rules): DO NOT set FD_CLOEXEC here.
+		    Allowed fcntl flags are limited to F_SETFL + O_NONBLOCK, so we skip F_SETFD.
+
+		    Consequence:
+		      - Accepted sockets (clientFd) will inherit across execve() on macOS.
+
+		    TODO(CGI child, before execve):
+		      - In the forked CHILD path of the CGI launcher:
+		          * Keep only 0,1,2 and the CGI pipe ends (stdin/stdout as dup2 targets).
+		          * Close EVERYTHING else: all listener fds, all other client fds,
+		            any extra poll/kqueue/pipe fds that were opened.
+		      - This prevents fd leaks and ensures CGI doesn’t keep sockets alive.
+
+		    Where to implement:
+		      - In launchCgi(...) right after fork(), inside the CHILD branch,
+		        under #ifdef __APPLE__.
+
+		    Rationale:
+		      - On Linux we use FD_CLOEXEC so execve() auto-closes unrelated fds.
+		      - On macOS we can’t set FD_CLOEXEC per subject; we must close manually in the child.
+		*/
 		}
+		#else
+		{
+			// close-on-exec for the listening socket as well
+			int fdflags = fcntl(fd, F_GETFD);
+			if (fdflags != -1 || fcntl(fd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
+			        printSocketError("fcntl F_SETFD FD_CLOEXEC");
+		}
+		#endif
 
 		const int	enable = 1;
 		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) < 0)
@@ -451,12 +479,41 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 			break;
 		}
 
-		// close-on-exec for the listening socket as well
-		int fdflags = fcntl(clientFd, F_GETFD);
-		if (fdflags != -1)	{
-		    if (fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
-		        printSocketError("fcntl F_SETFD FD_CLOEXEC");
+		#ifdef __APPLE__
+		{
+		/*
+		    macOS (42 rules): DO NOT set FD_CLOEXEC here.
+		    Allowed fcntl flags are limited to F_SETFL + O_NONBLOCK, so we skip F_SETFD.
+
+		    Consequence:
+		      - Accepted sockets (clientFd) will inherit across execve() on macOS.
+
+		    TODO(CGI child, before execve):
+		      - In the forked CHILD path of the CGI launcher:
+		          * Keep only 0,1,2 and the CGI pipe ends (stdin/stdout as dup2 targets).
+		          * Close EVERYTHING else: all listener fds, all other client fds,
+		            any extra poll/kqueue/pipe fds that were opened.
+		      - This prevents fd leaks and ensures CGI doesn’t keep sockets alive.
+
+		    Where to implement:
+		      - In launchCgi(...) right after fork(), inside the CHILD branch,
+		        under #ifdef __APPLE__.
+
+		    Rationale:
+		      - On Linux we use FD_CLOEXEC so execve() auto-closes unrelated fds.
+		      - On macOS we can’t set FD_CLOEXEC per subject; we must close manually in the child.
+		*/
 		}
+		#else
+		{
+			// close-on-exec for the listening socket as well
+			int fdflags = fcntl(clientFd, F_GETFD);
+			if (fdflags != -1)	{
+			    if (fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
+			        printSocketError("fcntl F_SETFD FD_CLOEXEC");
+			}
+		}
+		#endif
 
 		if (!makeNonBlocking(clientFd)) {
 			close(clientFd);
@@ -476,7 +533,7 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		connection.request.chunk_state = CS_SIZE;
 		connection.request.chunk_bytes_left = 0;
 		connection.clientMaxBodySize = (1u << 20);
-		connection.lastActiveMs = now_ms();
+		connection.lastActiveMs = _nowMs;
 			// Bit shift: 1u (unsigned 1) shifted 20 bits → 1,048,576 bytes (1 MiB) default.
 		_connections[clientFd] = connection;
 
@@ -503,31 +560,38 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 	// 1) Drain readable bytes into readBuffer (non-blocking)
 	char	buffer[4096];
-	while (true)	{
-		ssize_t	n = read(clientFd, buffer, sizeof(buffer));
-		if (n > 0)	{	// number of bytes read
-			connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
-			continue; // keep draining readiness
-		}
-		if (n == 0)	{ // peer closed - EOF (no more bytes)
-			closeConnection(clientFd);
-			return ;
-		}
-		if (n < 0)	{
-			if (errno == EINTR)	// interrupted by a signal
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)	// non-blocking socket with no more data available
-				break; // done for now
-			closeConnection(clientFd); // fatal error
-			return ;
-		}
+	ssize_t	n = read(clientFd, buffer, sizeof(buffer));
+	if (n > 0)	{	// number of bytes read
+		connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
+		connection.lastActiveMs = _nowMs;	// refresh activity on data
+	}
+	if (n == 0)	{ // peer closed - EOF (no more bytes)
+		closeConnection(clientFd);
+		return ;
 	}
 
 	// 2) If we are in HEADERS state, try to parse the head block
 	if (connection.state == S_HEADERS)	{
 		
-		std::string	head;
+		// Header-size cap while waiting for terminator
+		static const std::size_t	MAX_HEADER_BYTES = 16 * 1024;	// 16 KiB
+		if (connection.readBuffer.size() > MAX_HEADER_BYTES
+			&& connection.readBuffer.find("\r\n\r\n") == std::string::npos)	{
+				//	Too large without CRLFCRLF -> reject
+				int			st = 431;
+				std::string	reason = "Request Header Fields Too Large";
+				connection.writeBuffer = http::build_simple_response(st, reason, reason + "\r\n");
+				for (std::size_t i = 0; i < _fds.size(); ++i)	{
+					if (_fds[i].fd == clientFd)	{
+						_fds[i].events = POLLOUT;
+						break;
+					}
+				}
+				connection.state = S_WRITE;
+				return ;
+		}
 
+		std::string	head;
 		if (!http::extract_next_head(connection.readBuffer, head))
 			return ;
 		// Not enough for a real head yet: either no CRLFCRLF at all, or only empty heads seen so far so need to read more.
@@ -555,6 +619,15 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		// Transition depending on body presence
 		if (connection.request.body_reader_state == BR_NONE)	{ // has no body to read
 			connection.state = S_READY; // app-ready
+			// minimal dispatcher -> build something and write
+			connection.writeBuffer = http::build_simple_response(200, "OK", "Hello\r\n");	// to complete later
+			for (std::size_t i = 0; i < _fds.size(); ++i)	{
+				if (_fds[i].fd == clientFd)	{
+					_fds[i].events = POLLOUT;
+					break;
+				}
+			}
+			connection.state = S_WRITE;	// ready to send
 			return ;
 		}
 		else	{
@@ -586,7 +659,16 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		// BR_NONE should never happen since headers phase puts S_READY for BR_NONE
 
 		if (br == http::BODY_COMPLETE)	{
+			// Same fix as headers: don't leave the fd in POLLIN
 			connection.state = S_READY;
+			connection.writeBuffer = http::build_simple_response(200, "OK", "Hello\r\n");	// to complete later
+			for (std::size_t i = 0; i < _fds.size(); ++i)	{
+				if (_fds[i].fd == clientFd)	{
+					_fds[i].events = POLLOUT;
+					break;
+				}
+			}
+			connection.state = S_WRITE;
 			return ;
 		}
 		if (br == http::BODY_ERROR)	{
@@ -608,7 +690,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			return ;
 		}
 
-		return ;
+		return ;	// still incomplete, wait for more POLLIN
 	}
 
 }

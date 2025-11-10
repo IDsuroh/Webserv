@@ -174,11 +174,17 @@ Trigger 413/400/405 in your code paths and verify you see HTML, not plaintext.
 
 If you want, we can wire a simple path resolver so URIs like /errors/404.html map under your doc root. For the project, the above is enough to satisfy the requirement and behave correctly.
 
+// Somewhere you will later fork/exec CGI:
+/*
+pid_t pid = fork();
+if (pid == 0) {
+    // Child: set up stdio (dup2) to pipes or client fd first...
 
-void ServerRunner::acceptNewClient(int listenFd, const Server* srv)
+    // TODO(macOS): Before execve, close all fds except the ones dup2’d to 0/1/2
+    // and the required pipe ends. Iterate _listeners and _connections and close the rest.
+    // We avoid F_SETFD on macOS per subject rules.
 
-    FD_CLOEXEC on the client fd (good practice) — closes the fd in execve:
-
-        fcntl(clientFd, F_SETFD, fcntl(clientFd, F_GETFD) | FD_CLOEXEC);
-
-******************************** NOTES TO CHECK*******************How about for Mac_OS?
+    execve(path, argv, envp);
+    _exit(127);
+}
+*/

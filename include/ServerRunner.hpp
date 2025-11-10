@@ -17,6 +17,8 @@ class   ServerRunner  {
         std::vector<struct pollfd> 	_fds;
         std::map<int, Connection>   _connections;
 
+        long                        _nowMs;
+
         void    housekeeping();
         void    setupPollFds();
         void    handleEvents(); 

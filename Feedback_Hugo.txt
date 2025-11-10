@@ -117,7 +117,7 @@ void ServerRunner::acceptNewClient(int listenFd, const Server* srv)
     FD_CLOEXEC on the client fd (good practice) — closes the fd in execve:
 
         fcntl(clientFd, F_SETFD, fcntl(clientFd, F_GETFD) | FD_CLOEXEC);
--------------------------------------------- done -----------------------------------------------------------
+
 ******************************** NOTES TO CHECK*******************How about for Mac_OS?
 
 
@@ -149,7 +149,7 @@ void ServerRunner::readFromClient(int clientFd)
         (no extra string allocation).
 
     Be careful with errno usage in both read and write (must capture immediately before other calls).
-
+-------------------------------------------- done -----------------------------------------------------------
 void ServerRunner::writeToClient(int clientFd)
 
     Doesn’t handle EAGAIN / EWOULDBLOCK
