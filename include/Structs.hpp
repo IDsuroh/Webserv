@@ -21,7 +21,6 @@ struct Server   {
 enum ConnectionState	{
 	S_HEADERS,
 	S_BODY,
-	S_READY,
 	S_WRITE,
 	S_CLOSED
 };	// Per-connection state for the HTTP parser
@@ -104,6 +103,7 @@ struct Connection   {
 	HTTP_Response	response;
 	std::size_t		writeOffset;
 	std::size_t		clientMaxBodySize;
+	long			kaIdleStartMs;
 	long			lastActiveMs;
 
 	Connection()
@@ -119,6 +119,7 @@ struct Connection   {
 	,	response()
 	,	writeOffset(0)
 	,	clientMaxBodySize(1048576)	// default 1 MiB; override from config
+	,	kaIdleStartMs()
 	,	lastActiveMs()
 	{}
 };

@@ -15,6 +15,7 @@ class   ServerRunner  {
         std::vector<Server>         _servers;
         std::vector<Listener>       _listeners;
         std::vector<struct pollfd> 	_fds;
+        std::map<int, std::size_t>  _fdIndex;
         std::map<int, Connection>   _connections;
 
         long                        _nowMs;

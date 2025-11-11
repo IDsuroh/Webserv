@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
@@ -24,6 +25,5 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <vector>
-
 
 #endif

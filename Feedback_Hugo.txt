@@ -149,7 +149,7 @@ void ServerRunner::readFromClient(int clientFd)
         (no extra string allocation).
 
     Be careful with errno usage in both read and write (must capture immediately before other calls).
--------------------------------------------- done -----------------------------------------------------------
+
 void ServerRunner::writeToClient(int clientFd)
 
     Doesn’t handle EAGAIN / EWOULDBLOCK
@@ -225,7 +225,7 @@ void ServerRunner::closeConnection(int clientFd)
     fdIndex[_fds[idx].fd] = idx;
     _fds.pop_back();
     fdIndex.erase(fd);
-
+-------------------------------------------- done -----------------------------------------------------------
 HttpBody.cpp
 
 BodyResult consume_body_content_length(Connection& connection, std::size_t max_body, int& status, std::string& reason)

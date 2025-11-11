@@ -6,6 +6,7 @@
 
 namespace http  {
     std::string build_simple_response(int status, const std::string& reason, const std::string& body);
+    std::string build_simple_response(int status, const std::string& reason, const std::string& body, bool keep_alive);
 } // namespace http
 
 #endif

@@ -34,15 +34,15 @@ void	ServerRunner::housekeeping()	{
 	
 		switch (connection.state)	{
 			case	S_HEADERS:
-				if (NOW - connection.lastActiveMs > HEADER_TIMEOUT_MS)
-					closeIt = true;
-				break;
+					// 15s to deliver (next) headers
+					const bool	headerTimeOut = (NOW - connection.lastActiveMs > HEADER_TIMEOUT_MS);
+					// 5s only when we *already* finished a KA response and are waiting for the next request
+					const bool	kaIdleTooLong = (connection.kaIdleStartMs != 0) && (NOW - connection.kaIdleStartMs > KA_IDLE_MS);
+					if (headerTimeOut || kaIdleTooLong)
+						closeIt = true;
+					break;
 			case	S_BODY:
 				if (NOW - connection.lastActiveMs > BODY_TIMEOUT_MS)
-					closeIt = true;
-				break;
-			case	S_READY:
-				if (connection.request.keep_alive && (NOW - connection.lastActiveMs > KA_IDLE_MS))
 					closeIt = true;
 				break;
 			default:
@@ -135,7 +135,7 @@ static bool	parseListenToken(const std::string& spec, std::string& host, int& po
 	}
 	else	{
 		// Has colon -> split into host + (maybe-empty) port
-		host = (colon = 0) ? "" : spec.substr(0, colon);
+		host = (colon == 0) ? "" : spec.substr(0, colon);
 		pstr = (colon + 1 < spec.size()) ? spec.substr(colon + 1) : "";
 	}
 
@@ -362,6 +362,7 @@ bool	makeNonBlocking(int fd)	{
 void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPollFds() = listeners only (startup). Clients get added as they connect.
 
     _fds.clear();                        // to have a clean list on multiple calls
+	_fdIndex.clear();
     _fds.reserve(_listeners.size());
 
 	std::set<int> added;
@@ -379,6 +380,7 @@ void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPo
         p.events = POLLIN; // "What to expect"
         p.revents = 0; // the poll() is the function that fills in the revents to tell what exactly happened.
         _fds.push_back(p);
+		_fdIndex[p.fd] = _fds.size() - 1;
 
 		std::cout << "listener[" << i << "] fd=" << fd << " registered in poll()\n";
 
@@ -528,11 +530,14 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		connection.writeBuffer.clear();
 		connection.headersComplete = false;
 		connection.requestParsed = false;
+		connection.state = S_HEADERS;
 		connection.request.body.clear();
 		connection.request.body_received = 0;
 		connection.request.chunk_state = CS_SIZE;
 		connection.request.chunk_bytes_left = 0;
+		connection.writeOffset = 0;
 		connection.clientMaxBodySize = (1u << 20);
+		connection.kaIdleStartMs = 0;
 		connection.lastActiveMs = _nowMs;
 			// Bit shift: 1u (unsigned 1) shifted 20 bits → 1,048,576 bytes (1 MiB) default.
 		_connections[clientFd] = connection;
@@ -542,12 +547,44 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		p.events = POLLIN;
 		p.revents = 0;
 		_fds.push_back(p);
+		_fdIndex[p.fd] = _fds.size() - 1;
 		// Add the new client fd to the poll() std::vector,
 		// initially watching for readability (request bytes).
 		// This is what lets poll() wake again when the client sends the HTTP request.
 
 	}
 
+}
+
+static size_t	parseSize(const std::string& string)	{
+	unsigned long long	n = 0;
+	char				suf = 0;
+	std::istringstream	iss(string);
+	iss >> n;
+	if (iss && !iss.eof())
+		iss >> suf;
+	
+	unsigned long long	mult = 1;
+	if (suf == 'k' || suf == 'K')
+		mult = 1024ULL;
+	else if (suf == 'm' || suf == 'M')
+		mult = 1024ULL * 1024ULL;
+	else if (suf == 'g' || suf == 'G')
+		mult = 1024ULL * 1024ULL * 1024ULL;
+	return static_cast<size_t>(n * mult);
+}
+
+static const Location*	longestPrefixMatch(const Server& srv, const std::string& path)	{
+	const Location*	best = NULL;
+	size_t			bestLen = 0;
+	for (size_t i = 0; i < srv.locations.size(); ++i)	{
+		const Location&	L = srv.locations[i];
+		if (path.compare(0, L.path.size(), L.path) == 0 && L.path.size() > bestLen)	{
+			best = &L;
+			bestLen = L.path.size();
+		}
+	}
+	return best;
 }
 
 void	ServerRunner::readFromClient(int clientFd)	{
@@ -564,6 +601,8 @@ void	ServerRunner::readFromClient(int clientFd)	{
 	if (n > 0)	{	// number of bytes read
 		connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
 		connection.lastActiveMs = _nowMs;	// refresh activity on data
+		if (connection.state == S_HEADERS && connection.kaIdleStartMs != 0)
+			connection.kaIdleStartMs = 0;
 	}
 	if (n == 0)	{ // peer closed - EOF (no more bytes)
 		closeConnection(clientFd);
@@ -580,13 +619,13 @@ void	ServerRunner::readFromClient(int clientFd)	{
 				//	Too large without CRLFCRLF -> reject
 				int			st = 431;
 				std::string	reason = "Request Header Fields Too Large";
-				connection.writeBuffer = http::build_simple_response(st, reason, reason + "\r\n");
-				for (std::size_t i = 0; i < _fds.size(); ++i)	{
-					if (_fds[i].fd == clientFd)	{
-						_fds[i].events = POLLOUT;
-						break;
-					}
-				}
+				connection.writeBuffer = http::build_simple_response(st, reason, reason + "\r\n", connection.request.keep_alive);
+				connection.writeOffset = 0;
+
+    			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+    			if (pit != _fdIndex.end())
+					_fds[pit->second].events = POLLOUT;
+
 				connection.state = S_WRITE;
 				return ;
 		}
@@ -603,30 +642,40 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			std::string	body =	(status == 505) ? "HTTP Version Not Supported\r\n"
 							  : (status == 501) ? "Transfer-Encoding not implemented\r\n" : "Bad Request\r\n";
 			
-			connection.writeBuffer = http::build_simple_response(status, reason, body);
-			for (std::size_t i = 0; i < _fds.size(); ++i)	{	// stop waiting for reads and change to writing mode
-				if (_fds[i].fd == clientFd)	{
-					_fds[i].events = POLLOUT;	// need to send error back so it is flipped to POLLOUT
-					break;
-				}
-			}
+			connection.writeBuffer = http::build_simple_response(status, reason, body, connection.request.keep_alive);
+			connection.writeOffset = 0;
+    	
+			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+    		if (pit != _fdIndex.end())
+				_fds[pit->second].events = POLLOUT;
+		
 			connection.state = S_WRITE;	// set connection to write mode.
 			return ;
 		}
 
 		connection.headersComplete = true;
 
+		size_t	limit = 1048576;	// default 1 MiB
+		if (connection.srv)	{
+			if (const Location*	loc = longestPrefixMatch(*connection.srv, connection.request.target))	{
+				if (loc->directives.count("client_max_body_size"))
+					limit = parseSize(loc->directives.find("client_max_body_size")->second);
+			}
+			if (limit == 1048576 && connection.srv->directives.count("client_max_body_size"))
+				limit = parseSize(connection.srv->directives.find("client_max_body_size")->second);
+		}
+		connection.clientMaxBodySize = limit;
+
 		// Transition depending on body presence
 		if (connection.request.body_reader_state == BR_NONE)	{ // has no body to read
-			connection.state = S_READY; // app-ready
 			// minimal dispatcher -> build something and write
-			connection.writeBuffer = http::build_simple_response(200, "OK", "Hello\r\n");	// to complete later
-			for (std::size_t i = 0; i < _fds.size(); ++i)	{
-				if (_fds[i].fd == clientFd)	{
-					_fds[i].events = POLLOUT;
-					break;
-				}
-			}
+			connection.writeBuffer = http::build_simple_response(200, "OK", "Hello\r\n", connection.request.keep_alive);	// to complete later
+			connection.writeOffset = 0;
+
+			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+    		if (pit != _fdIndex.end())
+				_fds[pit->second].events = POLLOUT;
+			
 			connection.state = S_WRITE;	// ready to send
 			return ;
 		}
@@ -656,18 +705,17 @@ void	ServerRunner::readFromClient(int clientFd)	{
 				rsn = "Bad Request";
 				br = http::BODY_ERROR;
 		}
-		// BR_NONE should never happen since headers phase puts S_READY for BR_NONE
+		// BR_NONE shouldn't happen; no body was expected
 
 		if (br == http::BODY_COMPLETE)	{
 			// Same fix as headers: don't leave the fd in POLLIN
-			connection.state = S_READY;
-			connection.writeBuffer = http::build_simple_response(200, "OK", "Hello\r\n");	// to complete later
-			for (std::size_t i = 0; i < _fds.size(); ++i)	{
-				if (_fds[i].fd == clientFd)	{
-					_fds[i].events = POLLOUT;
-					break;
-				}
-			}
+			connection.writeBuffer = http::build_simple_response(200, "OK", "Hello\r\n", connection.request.keep_alive);	// to complete later
+			connection.writeOffset = 0;
+    		
+			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+    		if (pit != _fdIndex.end())
+				_fds[pit->second].events = POLLOUT;
+
 			connection.state = S_WRITE;
 			return ;
 		}
@@ -677,14 +725,12 @@ void	ServerRunner::readFromClient(int clientFd)	{
 				body = "Payload Too Large\r\n";
 			else
 				body = "Bad Request\r\n";
-			connection.writeBuffer = http::build_simple_response(st, rsn, body);
-
-			for (std::size_t i = 0; i < _fds.size(); ++i)	{
-				if (_fds[i].fd == clientFd)	{
-					_fds[i].events = POLLOUT;
-					break;
-				}
-			}
+			connection.writeBuffer = http::build_simple_response(st, rsn, body, connection.request.keep_alive);
+			connection.writeOffset = 0;
+			
+			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+    		if (pit != _fdIndex.end())
+				_fds[pit->second].events = POLLOUT;
 
 			connection.state = S_WRITE;
 			return ;
@@ -703,18 +749,54 @@ void	ServerRunner::writeToClient(int clientFd)	{
 
 	Connection& connection = it->second;
 
-	while (!connection.writeBuffer.empty())	{
-
-		ssize_t	n = write(clientFd, connection.writeBuffer.c_str(), connection.writeBuffer.size());
-		if (n > 0)	{
-			connection.writeBuffer.erase(0, static_cast<std::size_t>(n)); // remove the previous bytes then loop to send more.
-			continue;
-		}
+	if (connection.writeOffset >= connection.writeBuffer.size())	{
+		// if there is nothing left to send, remove POLLOUT interest
+		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+    	if (pit != _fdIndex.end())
+			_fds[pit->second].events = POLLOUT;
 
 		return ;
+	}
+
+	const char*	base = connection.writeBuffer.data();
+	while (connection.writeOffset < connection.writeBuffer.size())	{
+		const char*	buf = base + connection.writeOffset;
+		std::size_t	remaining = connection.writeBuffer.size() - connection.writeOffset;
+		ssize_t	n = write(clientFd, buf, remaining);
+		if (n > 0)	{
+			connection.writeOffset += static_cast<std::size_t>(n);
+			connection.lastActiveMs = _nowMs;
+			continue;	// try to flush more
+		}
+		// Ensure we stay interested in POLLOUT so we'll retry when writable.
+		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+    	if (pit != _fdIndex.end())
+			_fds[pit->second].events = POLLOUT;
+
+		return ;
+	}
+
+	// Finished sending the full response
+	const bool	keep = connection.request.keep_alive;
+	if (keep)	{
+		connection.writeBuffer.clear();
+		connection.writeOffset = 0;
+		connection.readBuffer.clear();
+		connection.headersComplete = false;
+		connection.requestParsed = false;
+		connection.request = HTTP_Request();
+		connection.state = S_HEADERS;
+		connection.kaIdleStartMs = _nowMs;
+		connection.lastActiveMs = _nowMs;
+
+		// Back to read-only interest
+		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+    	if (pit != _fdIndex.end())
+			_fds[pit->second].events = POLLOUT;
 
 	}
-	closeConnection(clientFd);
+	else
+		closeConnection(clientFd);
 }
 
 void	ServerRunner::closeConnection(int clientFd)	{
@@ -722,13 +804,22 @@ void	ServerRunner::closeConnection(int clientFd)	{
 	close(clientFd);
 	_connections.erase(clientFd);
 
-	for (std::size_t i = 0; i < _fds.size(); ++i)	{
-		if (_fds[i].fd == clientFd)	{
-			_fds.erase(_fds.begin() + i);
-			break;
-		}
+	std::map<int, std::size_t>::iterator it = _fdIndex.find(clientFd);
+    if (it != _fdIndex.end())
+		return ;	// Not present in _fds (already removed or was never added)
+
+	std::size_t	idx = it->second;
+	std::size_t	last = _fds.size() - 1;
+
+	if (idx != last)	{
+		// Move last entry into the removed slot
+		std::swap(_fds[idx], _fds[last]);
+		// Update its index in the map
+		_fdIndex[_fds[idx].fd] = idx;
 	}
 
+	_fds.pop_back();
+	_fdIndex.erase(it);
 }
 
 /* Big Logic Flow of this pile of functions
