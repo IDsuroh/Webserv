@@ -225,7 +225,7 @@ void ServerRunner::closeConnection(int clientFd)
     fdIndex[_fds[idx].fd] = idx;
     _fds.pop_back();
     fdIndex.erase(fd);
--------------------------------------------- done -----------------------------------------------------------
+
 HttpBody.cpp
 
 BodyResult consume_body_content_length(Connection& connection, std::size_t max_body, int& status, std::string& reason)
@@ -247,7 +247,7 @@ BodyResult consume_body_chunked(Connection& connection, std::size_t max_body, in
     Buffer management (same as previous)
     substr + swap works but allocates/copies.
     erase(0, n) is simpler; for optimized performance, you can keep a read offset and compact occasionally.
-
+-------------------------------------------- done -----------------------------------------------------------
 HttpParser.cpp
 
 bool isTokenChar(unsigned char c)

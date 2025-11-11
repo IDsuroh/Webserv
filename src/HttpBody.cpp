@@ -36,11 +36,15 @@ namespace   {
                 return false;
         }
 
-        char*   endp = 0;   // null pointer value saying that this pointer doesn't point anywhere yet.
-        unsigned long   v = std::strtoul(hex.c_str(), &endp, 16);
+        errno = 0;
+        unsigned long   v = std::strtoul(hex.c_str(), NULL, 16);
         // unsigned long strtoul(const char* str, char** endptr, int base);
-        if (*endp != '\0')
+        if (errno == ERANGE)
             return false;
+
+        if (v > static_cast<unsigned long>(std::numeric_limits<std::size_t>::max()))
+            return false;
+            
         out = static_cast<std::size_t>(v);
         return true;
     }
@@ -80,31 +84,36 @@ namespace http  {
         r.body.append(connection.readBuffer.data(), take);
         r.body_received += take;
 
-        if (take == avail)
-            connection.readBuffer.clear();
-        else    {
-            std::string after = connection.readBuffer.substr(take);
-            connection.readBuffer.swap(after);
-        }
+        connection.readBuffer.erase(0, take);
 
-        if (r.body_received == r.content_length)
-            return BODY_COMPLETE;
-        return BODY_INCOMPLETE;
+        return (r.body_received == r.content_length) ? BODY_COMPLETE : BODY_INCOMPLETE;
     }
 
     BodyResult  consume_body_chunked(Connection& connection, std::size_t max_body, int& status, std::string& reason)    {
         HTTP_Request&   r = connection.request;
 
+        static const std::size_t    MAX_LINE = 16 * 1024;
+
         for (;;)    {
             switch (r.chunk_state)  {
                 case CS_SIZE:   {
                     std::size_t  pos = connection.readBuffer.find("\r\n");
-                    if (pos == std::string::npos)
+                    if (pos == std::string::npos)   {
+                        if (connection.readBuffer.size() > MAX_LINE)    {
+                            status = 413;
+                            reason = "Payload Too Large";
+                            return BODY_ERROR;
+                        }
                         return BODY_INCOMPLETE;
+                    }
+                    if (pos > MAX_LINE) {
+                        status = 413;
+                        reason = "Payload Too Large";
+                        return BODY_ERROR;
+                    }
                     
                     std::string line = connection.readBuffer.substr(0, pos);
-                    std::string after = connection.readBuffer.substr(pos + 2);
-                    connection.readBuffer.swap(after);
+                    connection.readBuffer.erase(0, pos + 2);
 
                     std::size_t sz = 0;
                     if (!parse_hex_size(line, sz))   { // Chunked transfer encoding (RFC 7230 §4.1) sends each chunk size in hexadecimal
@@ -113,12 +122,16 @@ namespace http  {
                         return BODY_ERROR;
                     }
 
+                    if (sz > 0 && sz > max_body - r.body_received)  {
+                        status = 413;
+                        reason = "Payload Too Large";
+                        return BODY_ERROR;
+                    }
+
                     r.chunk_bytes_left = sz;
 
-                    if (sz == 0)
-                        r.chunk_state = CS_TRAILERS;
-                    else
-                        r.chunk_state = CS_DATA;
+                    r.chunk_state = (sz == 0) ? CS_TRAILERS : CS_DATA;
+
                     break;
                 }
 
@@ -129,7 +142,7 @@ namespace http  {
                     std::size_t avail = connection.readBuffer.size();
                     std::size_t take = (avail < r.chunk_bytes_left) ? avail : r.chunk_bytes_left;
 
-                    if (r.body_received + take > max_body)  {
+                    if (take > max_body - r.body_received)  {
                         status = 413;
                         reason = "Payload Too Large";
                         return BODY_ERROR;
@@ -139,12 +152,7 @@ namespace http  {
                     r.body_received += take;
                     r.chunk_bytes_left -= take;
 
-                    if (take == avail)
-                        connection.readBuffer.clear();
-                    else    {
-                        std::string after = connection.readBuffer.substr(take);
-                        connection.readBuffer.swap(after);
-                    }
+                    connection.readBuffer.erase(0, take);
 
                     if (r.chunk_bytes_left == 0)
                         r.chunk_state = CS_DATA_CRLF;
@@ -159,19 +167,16 @@ namespace http  {
                         reason = "Bad Request";
                         return BODY_ERROR;
                     }
-                    if (connection.readBuffer.size() == 2)
-                        connection.readBuffer.clear();
-                    else    {
-                        std::string after = connection.readBuffer.substr(2);
-                        connection.readBuffer.swap(after);
-                    }
+                    connection.readBuffer.erase(0, 2);
                     r.chunk_state = CS_SIZE;
                     break;
                 }
 
                 case CS_TRAILERS:   {
-					if (!http::consume_all_trailers(connection.readBuffer))
-						return BODY_INCOMPLETE;
+                    BodyResult  tr = http::consume_all_trailers(connection.readBuffer, MAX_LINE, status, reason);
+
+                    if (tr != BODY_COMPLETE)
+                        return tr;  // BODY_INCOMPLETE or BODY_ERROR (propagate)
 
 					r.chunk_state = CS_DONE;
 					return BODY_COMPLETE;
@@ -184,31 +189,31 @@ namespace http  {
     }
 
 
-	bool	consume_all_trailers(std::string& buffer)	{
+	BodyResult	consume_all_trailers(std::string& buffer, std::size_t max_line, int& status, std::string& reason)	{
 		for (;;)	{
 			std::size_t	pos = buffer.find("\r\n");
-			if (pos == std::string::npos)
-				return false;
+			if (pos == std::string::npos)   {
+                if (buffer.size() > max_line)   {
+                    status = 413;
+                    reason = "Payload Too Large";
+                    return BODY_ERROR;
+                }
+                return BODY_INCOMPLETE;
+            }
+            if (pos > max_line) {
+                status = 413;
+                reason = "Payload Too Large";
+                return BODY_ERROR;
+            }
 
 			if (pos == 0)	{
-				// Terminating blank line of trailers: remove the first CRLF
-				if (buffer.size() <= 2)
-					buffer.clear();
-				else	{
-					std::string	after = buffer.substr(2);
-					buffer.swap(after);
-				}
-				return true;
+				// blank line -> end of trailers
+                buffer.erase(0, 2);
+                return BODY_COMPLETE;
 			}
 			
 			// Drop one trailer line (line + CRLF)
-			std::size_t	drop = pos + 2;
-			if (buffer.size() <= drop)
-				buffer.clear();
-			else	{
-				std::string	after = buffer.substr(drop);
-				buffer.swap(after);
-			}
+            buffer.erase(0, pos + 2);
 		}
 	}
 

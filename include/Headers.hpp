@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <netdb.h>
 #include <poll.h>
