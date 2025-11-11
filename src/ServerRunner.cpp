@@ -80,15 +80,13 @@ void    ServerRunner::run() {
 			printSocketError("poll");
             break;
         }
-		if (n == 0)	{
-			// No events for a full tick
-			_nowMs += POLL_TICK_MS;
-			housekeeping();
-			continue;
-		}
+
+		_nowMs += POLL_TICK_MS;
         
 		// Handle events first
-		handleEvents();
+		if (n > 0)
+			handleEvents();
+
 		// Run periodic maintenance once per tick (timeout or after events):
 		housekeeping();	// close slow headers/body, idle keep-alive, etc.
     }
@@ -283,7 +281,7 @@ int openAndListen(const std::string& spec)  {
 		{
 			// close-on-exec for the listening socket as well
 			int fdflags = fcntl(fd, F_GETFD);
-			if (fdflags != -1 || fcntl(fd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
+			if (fdflags == -1 || fcntl(fd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
 			        printSocketError("fcntl F_SETFD FD_CLOEXEC");
 		}
 		#endif
@@ -508,7 +506,7 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		}
 		#else
 		{
-			// close-on-exec for the listening socket as well
+			// set close-on-exec for the accepted client socket
 			int fdflags = fcntl(clientFd, F_GETFD);
 			if (fdflags != -1)	{
 			    if (fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
@@ -750,10 +748,10 @@ void	ServerRunner::writeToClient(int clientFd)	{
 	Connection& connection = it->second;
 
 	if (connection.writeOffset >= connection.writeBuffer.size())	{
-		// if there is nothing left to send, remove POLLOUT interest
+		// nothing left to send → back to POLLIN
 		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
     	if (pit != _fdIndex.end())
-			_fds[pit->second].events = POLLOUT;
+			_fds[pit->second].events = POLLIN;
 
 		return ;
 	}
@@ -771,7 +769,7 @@ void	ServerRunner::writeToClient(int clientFd)	{
 		// Ensure we stay interested in POLLOUT so we'll retry when writable.
 		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
     	if (pit != _fdIndex.end())
-			_fds[pit->second].events = POLLOUT;
+			_fds[pit->second].events |= POLLOUT;
 
 		return ;
 	}
@@ -792,7 +790,7 @@ void	ServerRunner::writeToClient(int clientFd)	{
 		// Back to read-only interest
 		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
     	if (pit != _fdIndex.end())
-			_fds[pit->second].events = POLLOUT;
+			_fds[pit->second].events = POLLIN;
 
 	}
 	else
@@ -805,7 +803,7 @@ void	ServerRunner::closeConnection(int clientFd)	{
 	_connections.erase(clientFd);
 
 	std::map<int, std::size_t>::iterator it = _fdIndex.find(clientFd);
-    if (it != _fdIndex.end())
+    if (it == _fdIndex.end())
 		return ;	// Not present in _fds (already removed or was never added)
 
 	std::size_t	idx = it->second;
