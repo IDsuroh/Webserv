@@ -38,13 +38,13 @@ namespace   {
 
         errno = 0;
         unsigned long   v = std::strtoul(hex.c_str(), NULL, 16);
-        // unsigned long strtoul(const char* str, char** endptr, int base);
         if (errno == ERANGE)
             return false;
+        // For strtoul the C standard guarantees -> On overflow (value would exceed ULONG_MAX): it returns ULONG_MAX and sets errno = ERANGE
 
         if (v > static_cast<unsigned long>(std::numeric_limits<std::size_t>::max()))
             return false;
-            
+
         out = static_cast<std::size_t>(v);
         return true;
     }
