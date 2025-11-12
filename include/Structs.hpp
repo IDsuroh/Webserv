@@ -64,10 +64,10 @@ struct HTTP_Request	{
 	,	body()
 	,	headers()
 	,	content_length(0)
-	,	body_reader_state(BR_NONE)
 	,	body_received(0)
-	,	chunk_state(CS_SIZE)
 	,	chunk_bytes_left(0)
+	,	body_reader_state(BR_NONE)
+	,	chunk_state(CS_SIZE)
 	{}
 };
 
@@ -79,7 +79,11 @@ struct HTTP_Response	{
 	std::map<std::string, std::string>	headers;
 
 	HTTP_Response()
-	: status(200), reason("OK"), close(false)
+	:	status(200)
+	,	close(false)
+	,	reason("OK")
+	,	body()
+	,	headers()
 	{}
 };
 
