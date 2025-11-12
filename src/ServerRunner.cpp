@@ -617,7 +617,9 @@ void	ServerRunner::readFromClient(int clientFd)	{
 				//	Too large without CRLFCRLF -> reject
 				int			st = 431;
 				std::string	reason = "Request Header Fields Too Large";
-				connection.writeBuffer = http::build_simple_response(st, reason, reason + "\r\n", connection.request.keep_alive);
+				const Server&	active = connection.srv ? *connection.srv : _servers[0];
+				
+				connection.writeBuffer = http::build_error_response(active, st, reason, connection.request.keep_alive);
 				connection.writeOffset = 0;
 
     			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
@@ -636,11 +638,9 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		int			status = 0;
 		std::string	reason;
 		if (!http::parse_head(head, connection.request, status, reason))	{
-			// Build a simple error response and switch to write
-			std::string	body =	(status == 505) ? "HTTP Version Not Supported\r\n"
-							  : (status == 501) ? "Transfer-Encoding not implemented\r\n" : "Bad Request\r\n";
+			const Server&	active = connection.srv ? *connection.srv : _servers[0];
 			
-			connection.writeBuffer = http::build_simple_response(status, reason, body, connection.request.keep_alive);
+			connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
 			connection.writeOffset = 0;
     	
 			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
@@ -718,12 +718,9 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			return ;
 		}
 		if (br == http::BODY_ERROR)	{
-			std::string	body;
-			if (st == 413)
-				body = "Payload Too Large\r\n";
-			else
-				body = "Bad Request\r\n";
-			connection.writeBuffer = http::build_simple_response(st, rsn, body, connection.request.keep_alive);
+			const Server&	active = connection.srv ? *connection.srv : _servers[0];
+
+			connection.writeBuffer = http::build_error_response(active, st, rsn, connection.request.keep_alive);
 			connection.writeOffset = 0;
 			
 			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
