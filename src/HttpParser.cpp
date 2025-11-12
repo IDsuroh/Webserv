@@ -57,8 +57,8 @@ namespace   {
     bool    parseRequestLine(const std::string& line, HTTP_Request& request, int& outStatus, std::string& outReason) {
         // Work on a local copy so we can trim a trailing CR
         std::string s = line;
-        if (!s.empty() && s.back() == '\r')
-            s.pop_back();
+        if (!s.empty() && s[s.size() - 1] == '\r')
+            s.resize(s.size() - 1);
 
         const std::size_t   n = s.size();
         std::size_t         i = 0;
@@ -127,9 +127,9 @@ namespace   {
 
         // Special cases:
         // OPTIONS * is valid (asterisk-form)
-        if (request.method == "OPTIONS" && request.target == "*")   {
+        //if (request.method == "OPTIONS" && request.target == "*")   {
             //ok
-        }
+        //}
         // CONNECT authority-form allowed; don't enforce strict host:port here
         // ensure no spaces/tabs/controls already done above
 
@@ -263,19 +263,6 @@ namespace   {
                 ++i;
         }
 
-        // Host (required in 1.1)
-        std::map<std::string, std::string>::const_iterator hit = request.headers.find("host");
-        if (hit == request.headers.end() || trim(hit->second).empty())  {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        }
-        request.host = trim(hit->second);
-        if (request.host.find(',') != std::string::npos)    {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        } // multiple Host values not allowed
 
         // Connection: default keep-alive in HTTP/1.1
         std::map<std::string, std::string>::const_iterator chit = request.headers.find("connection");
@@ -291,6 +278,20 @@ namespace   {
                 }
             }
         }
+
+        // Host (required in 1.1)
+        std::map<std::string, std::string>::const_iterator hit = request.headers.find("host");
+        if (hit == request.headers.end() || trim(hit->second).empty())  {
+            outStatus = 400;
+            outReason = "Bad Request";
+            return false;
+        }
+        request.host = trim(hit->second);
+        if (request.host.find(',') != std::string::npos)    {
+            outStatus = 400;
+            outReason = "Bad Request";
+            return false;
+        } // multiple Host values not allowed
 
         // Content-Length
         request.content_length = 0;

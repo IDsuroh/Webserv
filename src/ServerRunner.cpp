@@ -33,7 +33,7 @@ void	ServerRunner::housekeeping()	{
 		bool		closeIt = false;
 	
 		switch (connection.state)	{
-			case	S_HEADERS:
+			case	S_HEADERS:	{
 					// 15s to deliver (next) headers
 					const bool	headerTimeOut = (NOW - connection.lastActiveMs > HEADER_TIMEOUT_MS);
 					// 5s only when we *already* finished a KA response and are waiting for the next request
@@ -41,10 +41,20 @@ void	ServerRunner::housekeeping()	{
 					if (headerTimeOut || kaIdleTooLong)
 						closeIt = true;
 					break;
-			case	S_BODY:
+			}
+			case	S_BODY:	{
 				if (NOW - connection.lastActiveMs > BODY_TIMEOUT_MS)
 					closeIt = true;
 				break;
+			}
+			case	S_WRITE:	{
+				// Nothing to do here; write timeouts handled separately.
+				break;
+			}
+			case	S_CLOSED:	{
+				closeIt = true;
+				break;
+			}
 			default:
 				break;
 		}
@@ -679,7 +689,6 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		}
 		else	{
 			connection.state = S_BODY; // still need to read the body
-			return ;
 		}
 	}
 

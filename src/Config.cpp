@@ -126,11 +126,13 @@ void    Config::tokenize(const std::string& contents, std::vector<std::string>& 
 		current.push_back(c);
     }
 
-    if (!current.empty())
+    if (!current.empty())	{
         tokens.push_back(current);
+	}
 
-	if (inSingle || inDouble)
+	if (inSingle || inDouble)	{
 		throw	std::runtime_error("Unterminated quoted string in config");
+	}
 }
 
 // Parse the tokens into server configurations
@@ -209,8 +211,9 @@ static void handleListen(Server& srv, const std::vector<std::string>& tokens, st
 	if (!hadAny)
 		throw	std::runtime_error("Listen: Need at least one address/port");
 
-    if (i >= tokens.size() || tokens[i] != ";")
+    if (i >= tokens.size() || tokens[i] != ";")	{
         throw   std::runtime_error("Listen: Missing ';' after listen");
+	}
 
 	++i;
 }
@@ -284,8 +287,9 @@ static void handleLocation(Server& srv, const std::vector<std::string>& tokens, 
     loc.path = tokens[i];
 	++i;
 
-    if (i >= tokens.size() || tokens[i] != "{")
+    if (i >= tokens.size() || tokens[i] != "{")	{
         throw   std::runtime_error("Location: Expected '{' after location");
+	}
 	++i;
 
     parseLocationBlock(tokens, i, loc);
