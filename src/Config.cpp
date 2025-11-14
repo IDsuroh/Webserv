@@ -42,15 +42,16 @@ const std::vector<Server>& Config::getServers() const  {
 // Parse the configuration file
 void    Config::parse() {
     
-    std::ifstream   in(_filename.c_str());
+    std::ifstream   in(_filename.c_str());	// pipe connected to a file, can pull characters out
     if (!in)
         throw std::runtime_error("Cannot open config file: " + _filename);
 
-    std::ostringstream  contents;
+    std::ostringstream  contents;	// dynamic string builder -> to write text into a buffer
     std::string         line;
-    while (std::getline(in, line))
+    while (std::getline(in, line))	// getline pulls one line at a time and strips the \n
         contents << line << '\n';
-
+	// one giant string containing the entire file
+	
     std::vector<std::string>    tokens;
     tokenize(contents.str(), tokens);
 	testTokens(tokens);
