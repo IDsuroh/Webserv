@@ -27,48 +27,233 @@ namespace {
 		return true;
 	}
 
-    // --- 2.2. Escolha do Server (vhost) ---
+	// --- 2.2. Server selection (vhost) ---
 
-    // Escolhe o Server com base no Host header / server_name.
-    // Garante sempre um Server (ex: default).
-    const Server& selectServer(
-        const std::vector<Server>& servers,
-        const HTTP_Request& req
-    );
+	// Selects the Server based on the Host header / server_name.
+	// Always returns a valid Server (e.g. the default one if no match is found).
+	const Server& selectServer(const std::vector<Server>& servers, const HTTP_Request& request) {
 
-    // --- 2.3. Escolha do Location (longest prefix) ---
+		for (size_t i = 0; i < servers.size(); ++i) {
+			std::vector<std::string>::const_iterator it;
+			it = std::find(servers[i].server_name.begin(), servers[i].server_name.end(), request.host);
+			if (it != servers[i].server_name.end())
+				return servers[i];
+		}
 
-    // Longest prefix match sobre o path.
-    // Devolve ponteiro para Location ou NULL se nenhuma fizer match.
-    const Location* matchLocation(
-        const Server& server,
-        const std::string& path
-    );
+		return servers[0];
+	}
 
-    // --- 2.4. Config efetiva (merge Server + Location) ---
+	// --- 2.3. Location selection (longest prefix) ---
 
-    struct EffectiveConfig {
-        const Server*                 server;        // nunca NULL na prática
-        const Location*               location;      // pode ser NULL
+	// Performs a longest prefix match against the path.
+	// Returns a pointer to the matching Location, or NULL if none matches.
+	const Location* matchLocation(const Server& server, const std::string& requestPath) {
 
-        std::string                   root;
-        bool                          autoindex;
-        std::vector<std::string>      index_files;
-        std::vector<std::string>      allowed_methods;
-        std::map<int, std::string>    error_pages;
+		const Location*	bestMatchLocation = NULL;
+		
+		for (std::vector<Location>::const_iterator it = server.locations.begin(); it != server.locations.end(); ++ it) {
 
-        // Campos adicionais típicos:
-        std::size_t                   client_max_body_size;
-        std::string                   upload_store;
-        // Mapa/extensões CGI, etc.
-        // std::map<std::string, std::string> cgi_pass;
-    };
+			const std::string& locationPath = it->path;
+			bool match = (requestPath.compare(0, locationPath.size(), locationPath) == 0);
+			bool boundary = (requestPath.size() == locationPath.size() ||
+							(requestPath.size() > locationPath.size() && requestPath[locationPath.size()] == '/'));
 
-    // Constrói uma visão unificada da config (root, métodos, error_pages, etc.)
-    EffectiveConfig buildEffectiveConfig(
-        const Server& srv,
-        const Location* loc
-    );
+			if (match && boundary && (bestMatchLocation == NULL || bestMatchLocation->path.size() < locationPath.size()))
+				bestMatchLocation = &(*it);
+		}
+
+		return bestMatchLocation;
+	}
+
+	// --- 2.4. Effective config (merge Server + Location) ---
+
+	// Effective configuration for a request, produced by merging Server- and Location-level directives.
+	const std::size_t	kDefaultClientMaxBodySize =	1024 * 1024;	// 1 MiB - use MiB for an exact binary body-size limit
+	const std::size_t	kDefaultCgiTimeout = 		30;				// 30 seconds
+
+	struct EffectiveConfig {
+		const Server*						server;			// never NULL
+		const Location*						location;		// may be NULL
+
+		std::string							root;
+		bool								autoindex;
+		std::vector<std::string>			index_files;
+		std::vector<std::string>			allowed_methods;
+		std::map<int, std::string>			error_pages;
+
+		std::size_t							client_max_body_size;
+		std::string							upload_store;
+		std::map<std::string, std::string>	cgi_pass;
+		std::size_t							cgi_timeout;
+		std::vector<std::string>			cgi_allowed_methods;
+
+		EffectiveConfig()
+			: server(NULL)
+			, location(NULL)
+			, root(".")
+			, autoindex(false)
+			, index_files()
+			, allowed_methods()
+			, error_pages()
+			, client_max_body_size(kDefaultClientMaxBodySize)
+			, upload_store()
+			, cgi_pass()
+			, cgi_timeout(kDefaultCgiTimeout)
+			, cgi_allowed_methods()
+			{}
+	};
+
+	std::vector<std::string> splitWords(const std::string& input) {
+
+		std::vector<std::string>	words;
+		std::istringstream			iss(input);
+		std::string					currentWord;
+
+		while (iss >> currentWord)
+			words.push_back(currentWord);
+
+		return words;
+	}
+
+	int parseHttpStatus(const std::string& str) {
+
+		if (str.empty())
+			throw std::runtime_error("Empty HTTP status code");
+
+		for (size_t i = 0; i < str.size(); ++i) {
+			if (!(std::isdigit(static_cast<unsigned char>(str[i]))))					// static_cast for protection against UB if signed (locale dependent)
+				throw std::runtime_error("Invalid HTTP status code: " + str);
+		}
+
+		errno = 0;
+		unsigned long long value = std::strtoull(str.c_str(), NULL, 10);				// Parse into ULL first to avoid overflow: ULL is guaranteed to hold any value we may receive.
+
+		if ((value == ULLONG_MAX && errno == ERANGE))
+			throw std::runtime_error("HTTP status code overflow: " + str);
+
+		if (value < 100 || value > 599)
+			throw std::runtime_error("HTTP status code out of range: " + str);
+
+		return static_cast<int>(value);
+	}
+
+	size_t parseSizeT(const std::string& str) {
+
+		if (str.empty())
+			throw std::runtime_error("Empty numeric value");
+
+		for (size_t i = 0; i < str.size(); ++i) {
+			if (!(std::isdigit(static_cast<unsigned char>(str[i]))))
+				throw std::runtime_error("Invalid numeric value: " + str);
+		}
+
+		errno = 0;
+		unsigned long long value = std::strtoull(str.c_str(), NULL, 10);
+
+		if (value == ULLONG_MAX && errno == ERANGE)
+			throw std::runtime_error("Numeric value exceeds size_t range: " + str);
+		
+		if (value > std::numeric_limits<std::size_t>::max())							// size_t depends on platform; on 64-bit systems this check is effectively redundant
+			throw std::runtime_error("Value exceeds size_t range: " + str);
+
+		return static_cast<size_t>(value);
+	}
+
+	bool getDirectiveValue(const Location* loc, const Server& srv, const std::string& key, std::string& value) {
+		
+		std::map<std::string, std::string>::const_iterator	it;
+	
+		if (loc) {
+			it = loc->directives.find(key);
+			if (it != loc->directives.end()) {
+				value = it->second;
+				return true;
+			}
+		}
+
+		it = srv.directives.find(key);
+		if (it != srv.directives.end()) {
+			value = it->second;
+			return true;
+		}
+
+		return false;
+	}
+
+	void resolveErrorPages(EffectiveConfig& cfg, const Server& srv, const Location* loc) {
+
+		std::map<std::string, std::string>::const_iterator it;
+		
+		for (it = srv.error_pages.begin(); it != srv.error_pages.end(); ++it)
+			cfg.error_pages[parseHttpStatus(it->first)] = it->second;
+		
+		if (!loc)
+			return;
+
+		it = loc->directives.find("error_page");
+		if (it == loc->directives.end())
+			return;
+
+		std::vector<std::string> tokens = splitWords(it->second);
+		if (tokens.size() < 2)
+			throw std::runtime_error("Bad error_page configuration");
+
+		const std::string& uri = tokens.back();							// URI - Uniform Resource Identifier - identifies a resource (e.g. page, file, image, etc.)
+
+		for (std::size_t i = 0; i + 1 < tokens.size(); ++i)
+			cfg.error_pages[parseHttpStatus(tokens[i])] = uri;
+	}
+
+	// Builds a unified view of the config (root, methods, error_pages, etc.)
+	EffectiveConfig buildEffectiveConfig(const Server& srv, const Location* loc) {
+
+		EffectiveConfig	cfg;
+
+		cfg.server = &srv;
+		cfg.location = loc;
+
+		std::string	value;
+
+		if (getDirectiveValue(loc, srv, "root", value))
+			cfg.root = value;
+
+		if (getDirectiveValue(loc, srv, "autoindex", value))
+			cfg.autoindex = (value == "on");
+
+		if (getDirectiveValue(loc, srv, "index", value))
+			cfg.index_files = splitWords(value);
+
+		if (getDirectiveValue(loc, srv, "methods", value))
+			cfg.allowed_methods = splitWords(value);
+		else {
+			cfg.allowed_methods.push_back("GET");
+			cfg.allowed_methods.push_back("POST");
+		}
+
+		resolveErrorPages(cfg, srv, loc);
+
+		if (getDirectiveValue(loc, srv, "client_max_body_size", value))
+			cfg.client_max_body_size = parseSizeT(value);
+
+		if (getDirectiveValue(loc, srv, "upload_store", value))
+			cfg.upload_store = value;
+
+		if (getDirectiveValue(loc, srv, "cgi_pass", value)) {
+			std::vector<std::string> tokens = splitWords(value);
+			if (tokens.size() == 2)
+				cfg.cgi_pass[tokens[0]] = tokens[1];
+		}
+
+		if (getDirectiveValue(loc, srv, "cgi_timeout", value))
+			cfg.cgi_timeout = parseSizeT(value);
+
+		if (getDirectiveValue(loc, srv, "cgi_allowed_methods", value))
+			cfg.cgi_allowed_methods = splitWords(value);
+		else
+			cfg.cgi_allowed_methods = cfg.allowed_methods;
+
+		return cfg;
+	}
 
     // --- 2.5. Métodos permitidos / 405 ---
 
