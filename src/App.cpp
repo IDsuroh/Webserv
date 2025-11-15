@@ -255,49 +255,112 @@ namespace {
 		return cfg;
 	}
 
-    // --- 2.5. Métodos permitidos / 405 ---
+	// --- 2.5. Allowed methods / 405 ---
 
-    // Verifica se o método é permitido pela config efetiva.
-    bool isMethodAllowed(
-        const EffectiveConfig& conf,
-        const std::string& method
-    );
+	// Checks whether the method is allowed by the effective configuration.
+	bool isMethodAllowed(const EffectiveConfig& cfg, const std::string& method) {
+		
+		for (std::vector<std::string>::const_iterator it = cfg.allowed_methods.begin(); it != cfg.allowed_methods.end(); ++it)
+		if (*it == method)
+		return true;
+		
+		return false;
+	}
 
-    // Constrói uma resposta 405 com header Allow e (se configurado) error_page.
-    HTTP_Response make405(
-        const EffectiveConfig& conf
-    );
+	// Builds a 405 response with the Allow header and (if configured) an error_page.
+	HTTP_Response make405(const EffectiveConfig& cfg) {
 
-    // --- 2.6. Validação de body (tamanho, política) ---
+		HTTP_Response response = makeErrorResponse(405, &cfg);
 
-    // Verifica se o body é aceitável (tamanho, método, etc.).
-    // Em caso de erro, escreve o status em status_out (ex: 413, 400) e retorna false.
-    bool checkRequestBodyAllowed(
-        const EffectiveConfig& conf,
-        const HTTP_Request& req,
-        int& status_out
-    );
+		std::string allowed;
+		for (std::vector<std::string>::const_iterator it = cfg.allowed_methods.begin(); it != cfg.allowed_methods.end(); ++it) {
+			if (!allowed.empty())
+				allowed += ", ";
+			allowed += *it;
+		}
 
-    // --- 2.7. Root + path → filesystem seguro ---
+		if (!allowed.empty())
+			response.headers["Allow"] = allowed;
 
-    // Constrói o caminho base no filesystem a partir do root + path lógico.
-    std::string makeFilesystemPath(
-        const EffectiveConfig& conf,
-        const std::string& path
-    );
+		return response;
+	}
 
-    // Normaliza o caminho (., .., //) e garante forma canónica.
-    // Se a normalização falhar (ex: path inválido), retorna false.
-    bool normalizePath(
-        std::string& fsPath,
-        const std::string& root
-    );
+	// --- 2.6. Body validation (size, policy) ---
 
-    // Verifica se fsPath, já normalizado, permanece dentro de root.
-    bool isWithinRoot(
-        const std::string& fsPath,
-        const std::string& root
-    );
+	// Checks whether the request body is acceptable (size, transfer-encoding, etc.).
+	// On error, writes the status into statusCode (e.g. 413, 400, 501) and returns false.
+	bool checkRequestBodyAllowed(const EffectiveConfig& cfg, const HTTP_Request& req, int& statusCode) {
+
+		if (cfg.client_max_body_size != 0 && req.content_length > cfg.client_max_body_size) {					// client_max_body_size == 0, means no limit
+			statusCode = 413;
+			return false;
+		}
+
+		if (req.transfer_encoding.empty() || req.transfer_encoding == "chunked")
+			return true;
+
+		statusCode = 501;
+		return false;
+	}
+
+	// --- 2.7. Root + path → secure filesystem path ---
+
+	// Builds the base filesystem path from the root + logical path.
+	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
+
+		std::string			locationPath = cfg.location ? cfg.location->path : "/";		// location may be NULL
+		std::string			subPath;
+
+		if (path.compare(0, locationPath.size(), locationPath) == 0)
+			subPath = path.substr(locationPath.size());
+		else
+			subPath = path;
+
+		if (!subPath.empty() && subPath[0] == '/')
+			return cfg.root + subPath;
+		else
+			return cfg.root + '/' + subPath;
+	}
+
+	// Normalises the path (., .., //) and ensures canonical form.
+	// If normalisation fails (e.g. invalid path), returns false.
+	bool normalizePath(std::string& fsPath, const std::string& root) {
+
+		if (fsPath.compare(0, root.size(), root) != 0)
+			return false;
+
+		std::string relative = fsPath.substr(root.size());
+
+		if (!relative.empty() && relative[0] == '/')
+			relative.erase(0, 1);
+
+		std::vector<std::string> stack;
+		std::string token;
+
+		for (size_t i = 0; i <= relative.size(); ++i) {
+			char c = (i < relative.size()) ? relative[i] : '/';
+			if (c == '/') {
+				if (token == "..") {
+					if (stack.empty())
+						return false;
+					else
+						stack.pop_back();
+				} else if (!token.empty() && token != ".")
+					stack.push_back(token);
+				token.clear();
+			} else
+				token += c;
+		}
+
+		fsPath = root;
+
+		if (!stack.empty()) {
+			for (size_t i = 0; i < stack.size(); ++i)
+				fsPath += '/' + stack[i]; 
+		}
+	
+		return true;
+	}
 
     // --- 2.8. Classificação do pedido ---
 
@@ -545,7 +608,14 @@ HTTP_Response	handleRequest(const HTTP_Request& request, const std::vector<Serve
 	// 4) Build effective configuration (merge Server + Location)
 	EffectiveConfig config = buildEffectiveConfig(server, location);
 
-	// 5) Check if the method is allowed (405)
+	// 5.1) Check if method is implemented at all
+	if (request.method != "GET"	&& request.method != "POST"	&& request.method != "DELETE") {
+		HTTP_Response response = makeErrorResponse(501, &config);
+		applyConnectionHeader(request, response);
+		return response;
+	}
+
+	// 5.2) Check if the method is allowed (405)
 	if (!isMethodAllowed(config, request.method)) {
 		HTTP_Response response = make405(config);
 		applyConnectionHeader(request, response);
@@ -570,7 +640,7 @@ HTTP_Response	handleRequest(const HTTP_Request& request, const std::vector<Serve
 	}
 
 	// 8) Normalizar e garantir que está dentro do root (anti-traversal)
-	if (!normalizePath(fsPath, config.root) || !isWithinRoot(fsPath, config.root)) {
+	if (!normalizePath(fsPath, config.root)) {
 		// You may choose between 403 (forbidden) or 404 (to avoid exposing structure).
 		HTTP_Response response = makeErrorResponse(403, &config);
 		applyConnectionHeader(request, response);
