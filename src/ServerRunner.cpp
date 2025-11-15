@@ -18,7 +18,7 @@ static void	printSocketError(const char* msg)	{
 
 //**************************************************************************************************
 
-void	ServerRunner::housekeeping()	{
+void	ServerRunner::housekeeping()	{	// kill the zombies
 	const long	NOW =  _nowMs;
 
 	const long	HEADER_TIMEOUT_MS	= 15000;	// 15s to receive headers
@@ -30,7 +30,7 @@ void	ServerRunner::housekeeping()	{
 
 		int			fd = it->first;
 		Connection& connection = it->second;
-		bool		closeIt = false;
+		bool		closeIt = false;	// Should we close this connection at the end of this iteration?
 	
 		switch (connection.state)	{
 			case	S_HEADERS:	{
