@@ -199,7 +199,7 @@ static void handleListen(Server& srv, const std::vector<std::string>& tokens, st
 
 	bool	hadAny = false;
 
-	// Coolect one or more args until ';' (e.g. "8080", "127.0.0.1:8080", etc.)
+	// Collect one or more args until ';' (e.g. "8080", "127.0.0.1:8080", etc.)
 	for (; i < tokens.size() && tokens[i] != ";"; ++i)	{
 		const std::string&	arg = tokens[i];	// avoid unnecessary temp
 		if (arg == "{" || arg == "}")
@@ -224,7 +224,7 @@ static void handleListen(Server& srv, const std::vector<std::string>& tokens, st
 // Handle the "server_name" directive
 static void handleServerName(Server& srv, const std::vector<std::string>& tokens, std::size_t& i)	{
 
-	if (i >= tokens.size())
+	if (i >= tokens.size())	// If there are no tokens after
 		throw	std::runtime_error("Server_Name: Unexpected EOF after server_name");
 
 	bool	hadAny = false;
@@ -252,7 +252,7 @@ static void handleServerName(Server& srv, const std::vector<std::string>& tokens
 // Handle the "error_page" directive
 static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens, std::size_t& i)  {
 
-	if (i >= tokens.size())
+	if (i >= tokens.size())	// If there are no tokens after
 		throw	std::runtime_error("Error_Page: Missing arguments");
 
 	// Gather args until ';'
@@ -272,6 +272,16 @@ static void handleErrorPage(Server& srv, const std::vector<std::string>& tokens,
 
 	// Last arg is URI; all previous are status codes
 	const std::string&	uri = args.back();
+	bool				uriAllDigits = !uri.empty();	// if uri is not empty, it's true (as of right now)
+	for (std::size_t j = 0; j < uri.size() && uriAllDigits; ++j)	{
+		unsigned char	c = static_cast<unsigned char>(uri[j]);
+		if (!std::isdigit(c))
+			uriAllDigits = false;
+	}
+
+	if (uriAllDigits)
+		return ;	// if the last digit is not uri, return and handle by default error code later on.
+
 	for (std::size_t k = 0; k + 1 < args.size(); ++k)
 		srv.error_pages[args[k]] = uri;
 }
@@ -317,9 +327,9 @@ static void parseLocationBlock(const std::vector<std::string>& tokens, std::size
 		const std::string&	key = tokens[i];
 		++i;
 		
-		// Prevent accidental nested block starts like: "root /x {" (missing ';')
+		// If we see '{' here, it means a stray brace or broken syntax inside the location block.
 		if (key == "{")
-			throw	std::runtime_error("Location: Unexpected '{' (did you forget a ';' above?)");
+			throw	std::runtime_error("Location: Unexpected '{' where directive name was expected");
 
 		// ------- Known directives with specific arity/validation -------
 
