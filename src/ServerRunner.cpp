@@ -30,7 +30,7 @@ void	ServerRunner::housekeeping()	{	// kill the zombies
 
 		int			fd = it->first;
 		Connection& connection = it->second;
-		bool		closeIt = false;	// Should we close this connection at the end of this iteration?
+		bool		closeIt = false;	// To close or not switch
 	
 		switch (connection.state)	{
 			case	S_HEADERS:	{
@@ -82,8 +82,8 @@ void    ServerRunner::run() {
 	const int	POLL_TICK_MS = 250;
 
 	while (true)    {
-        int n = poll(_fds.empty() ? 0 : &_fds[0], static_cast<nfds_t>(_fds.size()), POLL_TICK_MS);
-		// points to the first entry of _fds.size() entries and blocks for up to POLL_TICK_MS (or until an event arrives).
+        int n = poll(_fds.empty() ? 0 : &_fds[0], static_cast<nfds_t>(_fds.size()), POLL_TICK_MS);	// runs every 0.25s
+		// points to the first entry of _fds.size() entries and blocks for up to POLL_TICK_MS (0.25s) (or until an event arrives).
         if (n < 0)  {
 			if (errno == EINTR)
 				continue;
@@ -91,7 +91,7 @@ void    ServerRunner::run() {
             break;
         }
 
-		_nowMs += POLL_TICK_MS;
+		_nowMs += POLL_TICK_MS;	// value increases every loop -> 250, 500, 750, 1000, ...
         
 		// Handle events first
 		if (n > 0)
@@ -153,7 +153,7 @@ static bool	parseListenToken(const std::string& spec, std::string& host, int& po
 		char*	endptr = 0;
 		long	v = std::strtol(pstr.c_str(), &endptr, 10);
 		if (endptr == pstr.c_str() || *endptr != '\0' || v < 1 || v > 65535)
-			return false;	// invalid port, no junk values, no alphabets, within port values
+			return false;	// invalid port, no junk values, no alphabets, within port values / pstr.c_str() means the first char
 		port = static_cast<int>(v);
 	}
 
@@ -245,8 +245,11 @@ int openAndListen(const std::string& spec)  {
 		hints.ai_flags |= AI_PASSIVE; // Listening on all available network interfaces
 
 	struct	addrinfo*	res	= NULL;
-	int	rc = getaddrinfo((host.empty() || host == "*") ? NULL : host.c_str(), // make it socket-compatible
-						port.c_str(), &hints, &res); // this function instanciates/builds a linked list of addresses -> addrinfo nodes which represent candidate local address to bind.
+	int	rc = getaddrinfo((host.empty() || host == "*") ? NULL : host.c_str(), port.c_str(), &hints, &res);
+	// make it socket-compatible
+	// this function instanciates/builds a linked list of addresses
+	// -> addrinfo nodes which represent candidate local address to bind.
+	
 	if (rc != 0)	{
 		std::cerr << "getaddrinfo(" << spec << "): " << gai_strerror(rc) << std::endl;
 		return -1; // get address info str error converts errors into human readable message
@@ -371,16 +374,17 @@ void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPo
 
     _fds.clear();                        // to have a clean list on multiple calls
 	_fdIndex.clear();
-    _fds.reserve(_listeners.size());
+    _fds.reserve(_listeners.size());	// save memory before populating _fds
 
 	std::set<int> added;
-	// We can have multiple Listener records pointing to the same underlying fd (e.g., two server {} blocks both listening on 127.0.0.1:8080).
+	// We can have multiple Listener records pointing to the same underlying fd
+	// (e.g., two server {} blocks both listening on 127.0.0.1:8080).
 	// make sure only deduplicates happen. Deduplicate => having no duplicates of the same fd.
 	// Deduplicate by FD: many _listeners can share the same fd which was populated by setupListeners().
 	// (virtual hosts on the same ip:port), but poll() needs exactly ONE pollfd per unique fd.
     for (std::size_t i = 0; i < _listeners.size(); i++)  {
         int fd = _listeners[i].fd;
-		if (!added.insert(fd).second)
+		if (!added.insert(fd).second)	// .second = true if the element was successfully inserted, false when it cannot be inserted
 			continue;
 
 		struct pollfd   p; // tells the kernel which fd and what events we want
@@ -388,7 +392,7 @@ void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPo
         p.events = POLLIN; // "What to expect"
         p.revents = 0; // the poll() is the function that fills in the revents to tell what exactly happened.
         _fds.push_back(p);
-		_fdIndex[p.fd] = _fds.size() - 1;
+		_fdIndex[p.fd] = _fds.size() - 1;	// - 1 because we should check the index number
 
 		std::cout << "listener[" << i << "] fd=" << fd << " registered in poll()\n";
 
@@ -546,7 +550,7 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		connection.writeOffset = 0;
 		connection.clientMaxBodySize = (1u << 20);
 		connection.kaIdleStartMs = 0;
-		connection.lastActiveMs = _nowMs;
+		connection.lastActiveMs = _nowMs;	// The last time there was activity on this connection.
 			// Bit shift: 1u (unsigned 1) shifted 20 bits → 1,048,576 bytes (1 MiB) default.
 		_connections[clientFd] = connection;
 
