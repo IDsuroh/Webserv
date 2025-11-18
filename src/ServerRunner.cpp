@@ -83,6 +83,7 @@ void    ServerRunner::run() {
 
 	while (true)    {
         int n = poll(_fds.empty() ? 0 : &_fds[0], static_cast<nfds_t>(_fds.size()), POLL_TICK_MS);	// runs every 0.25s
+		// int poll(struct pollfd *fds, nfds_t nfds, int timeout);
 		// points to the first entry of _fds.size() entries and blocks for up to POLL_TICK_MS (0.25s) (or until an event arrives).
         if (n < 0)  {
 			if (errno == EINTR)
@@ -265,8 +266,8 @@ int openAndListen(const std::string& spec)  {
 			continue;
 		}
 
-		#ifdef __APPLE__
-		{
+		#ifdef __APPLE__	// for CGI settings for the listening socket
+	{
 		/*
 		    macOS (42 rules): DO NOT set FD_CLOEXEC here.
 		    Allowed fcntl flags are limited to F_SETFL + O_NONBLOCK, so we skip F_SETFD.
@@ -493,7 +494,7 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 			break;
 		}
 
-		#ifdef __APPLE__
+		#ifdef __APPLE__	// for CGI settings for each accepted client socket
 		{
 		/*
 		    macOS (42 rules): DO NOT set FD_CLOEXEC here.
@@ -534,23 +535,22 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 			continue;
 		}
 
-		Connection	connection;
-		connection.fd = clientFd;
-		connection.srv = srv;
-		connection.listenFd = listenFd;
-		connection.readBuffer.clear();
-		connection.writeBuffer.clear();
-		connection.headersComplete = false;
-		connection.requestParsed = false;
-		connection.state = S_HEADERS;
-		connection.request.body.clear();
-		connection.request.body_received = 0;
+		Connection	connection;						// initiation of Connection
+		connection.fd = clientFd;					// fd for this client socket
+		connection.srv = srv;						// which Server config this connection uses
+		connection.listenFd = listenFd;				// which listening socket it came from
+		connection.readBuffer.clear();				// incoming data buffer is resetted
+		connection.writeBuffer.clear();				// outgoing data buffer as well
+		connection.headersComplete = false;			// haven't finished reading headers
+		connection.state = S_HEADERS;				// where to start
+		connection.request.body.clear();			// no body yet
+		connection.request.body_received = 0;		// 0 bytes of body read
 		connection.request.chunk_state = CS_SIZE;
 		connection.request.chunk_bytes_left = 0;
-		connection.writeOffset = 0;
-		connection.clientMaxBodySize = (1u << 20);
-		connection.kaIdleStartMs = 0;
-		connection.lastActiveMs = _nowMs;	// The last time there was activity on this connection.
+		connection.writeOffset = 0;					// nothing written yet
+		connection.clientMaxBodySize = (1u << 20);	// 1Mib limit for body
+		connection.kaIdleStartMs = 0;				// not in idle keep-alive
+		connection.lastActiveMs = _nowMs;			// The last time there was activity on this connection.
 			// Bit shift: 1u (unsigned 1) shifted 20 bits → 1,048,576 bytes (1 MiB) default.
 		_connections[clientFd] = connection;
 
@@ -571,10 +571,10 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 static size_t	parseSize(const std::string& string)	{
 	unsigned long long	n = 0;
 	char				suf = 0;
-	std::istringstream	iss(string);
-	iss >> n;
-	if (iss && !iss.eof())
-		iss >> suf;
+	std::istringstream	iss(string);	// e.g. string = "10k"
+	iss >> n;	// reads number from a string. e.g. "10k" -> n = 10 and iss is now just before 'k'
+	if (iss && !iss.eof())	// means if the reading worked and we haven't reached the end of the string
+		iss >> suf;	// add the last whatever to suf. e.g. suf = "k"
 	
 	unsigned long long	mult = 1;
 	if (suf == 'k' || suf == 'K')
@@ -586,12 +586,13 @@ static size_t	parseSize(const std::string& string)	{
 	return static_cast<size_t>(n * mult);
 }
 
-static const Location*	longestPrefixMatch(const Server& srv, const std::string& path)	{
+static const Location*	longestPrefixMatch(const Server& srv, const std::string& path)	{	// finds the most specific location
 	const Location*	best = NULL;
 	size_t			bestLen = 0;
 	for (size_t i = 0; i < srv.locations.size(); ++i)	{
 		const Location&	L = srv.locations[i];
 		if (path.compare(0, L.path.size(), L.path) == 0 && L.path.size() > bestLen)	{
+			// Compare path starting at index 0, length L.path.size() with L.path if result is 0, the substrings are equal
 			best = &L;
 			bestLen = L.path.size();
 		}
@@ -626,8 +627,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		
 		// Header-size cap while waiting for terminator
 		static const std::size_t	MAX_HEADER_BYTES = 16 * 1024;	// 16 KiB
-		if (connection.readBuffer.size() > MAX_HEADER_BYTES
-			&& connection.readBuffer.find("\r\n\r\n") == std::string::npos)	{
+		if (connection.readBuffer.size() > MAX_HEADER_BYTES && connection.readBuffer.find("\r\n\r\n") == std::string::npos)	{
 				//	Too large without CRLFCRLF -> reject
 				int			st = 431;
 				std::string	reason = "Request Header Fields Too Large";
@@ -667,16 +667,19 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 		connection.headersComplete = true;
 
-		size_t	limit = 1048576;	// default 1 MiB
+		size_t	limit = 1048576;	// default 1 MiB	priority of the limit goes as:
+		bool	fromLoc = false;
 		if (connection.srv)	{
 			if (const Location*	loc = longestPrefixMatch(*connection.srv, connection.request.target))	{
-				if (loc->directives.count("client_max_body_size"))
+				if (loc->directives.count("client_max_body_size"))	{	// #1
 					limit = parseSize(loc->directives.find("client_max_body_size")->second);
+					fromLoc = true;
+				}
 			}
-			if (limit == 1048576 && connection.srv->directives.count("client_max_body_size"))
+			if (!fromLoc && connection.srv->directives.count("client_max_body_size"))	// #2
 				limit = parseSize(connection.srv->directives.find("client_max_body_size")->second);
 		}
-		connection.clientMaxBodySize = limit;
+		connection.clientMaxBodySize = limit;	// #3
 
 		// Transition depending on body presence
 		if (connection.request.body_reader_state == BR_NONE)	{ // has no body to read
@@ -791,7 +794,6 @@ void	ServerRunner::writeToClient(int clientFd)	{
 		connection.writeOffset = 0;
 		connection.readBuffer.clear();
 		connection.headersComplete = false;
-		connection.requestParsed = false;
 		connection.request = HTTP_Request();
 		connection.state = S_HEADERS;
 		connection.kaIdleStartMs = _nowMs;

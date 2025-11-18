@@ -101,7 +101,6 @@ struct Connection   {
     std::string     readBuffer;
     std::string     writeBuffer;
     bool            headersComplete;
-    bool            requestParsed;
 	ConnectionState	state;
 	HTTP_Request	request;
 	HTTP_Response	response;
@@ -117,7 +116,6 @@ struct Connection   {
 	,	readBuffer()
 	,	writeBuffer()
 	,	headersComplete(false)
-	,	requestParsed(false)
 	,	state(S_HEADERS)
 	,	request()
 	,	response()
