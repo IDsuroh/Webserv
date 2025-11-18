@@ -652,7 +652,10 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		int			status = 0;
 		std::string	reason;
 		if (!http::parse_head(head, connection.request, status, reason))	{
-			const Server&	active = connection.srv ? *connection.srv : _servers[0];
+			if (!connection.srv)	{
+				throw	std::runtime_error("Internal bug: connection.srv is NULL");
+			}
+			const Server&	active = *connection.srv;
 			
 			connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
 			connection.writeOffset = 0;

@@ -3,12 +3,12 @@
 namespace   {
 
     bool    read_file(const std::string& path, std::string& out)    {
-        std::ifstream   in(path.c_str(), std::ios::in | std::ios::binary);
+        std::ifstream   in(path.c_str());
         if (!in)
             return false;
         std::string s;
-        char        buf[4096];
-        while (in.read(buf, sizeof(buf)) || in.gcount() > 0)
+        char        buf[4096];  // 4KiB -> common page size
+        while (in.read(buf, sizeof(buf)) || in.gcount() > 0)    // in.gcount() tells how many bytes were actually read into buf, returns a std::streamsize
             s.append(buf, static_cast<std::size_t>(in.gcount()));
         out.swap(s);
         return true;
@@ -32,9 +32,9 @@ namespace http  {
 
     static std::string  http_date() {
         char        buf[128];
-        std::time_t t = std::time(NULL);
-        std::tm     g = *std::gmtime(&t);
-        std::strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &g);
+        std::time_t t = std::time(NULL);    // time_t is “seconds since 1 Jan 1970 UTC” (UNIX epoch)
+        std::tm*     g = std::gmtime(&t);   // std::gmtime(&t) converts t into a broken-down UTC time
+        std::strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", g);   // strftime formats a tm into a string according to a format string
         return std::string(buf);
     }
 
@@ -63,16 +63,16 @@ namespace http  {
     std::string build_error_response(const Server& srv, int status, const std::string& reason, bool keep_alive) {
         // 1) decide body (configured file -> fallback default)
         std::string body;
-        const char* content_type = "text/html";
 
         // status -> "404" etc.
         std::ostringstream  code_ss;
         code_ss << status;
         const std::string   code_str = code_ss.str();
+        // C++98 method of converting int to string
 
         std::map<std::string, std::string>::const_iterator  it = srv.error_pages.find(code_str);
         if (it != srv.error_pages.end())    {
-            if (!read_file(it->second, body))
+            if (!read_file(it->second, body))   // switch the body to designated error code message
                 body = default_error_html(status, reason);
         }
         else
@@ -84,7 +84,7 @@ namespace http  {
         oss << "Server: webserv\r\n";
         oss << "Date: " << http_date() << "\r\n";
         oss << "Content-Length: " << body.size() << "\r\n";
-        oss << "Content-Type: " << content_type << "\r\n";
+        oss << "Content-Type: text/html\r\n";
         if (keep_alive) {
             oss << "Connection: keep-alive\r\n";
             oss << "Keep-Alive: timeout=5\r\n";
