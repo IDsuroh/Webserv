@@ -1,5 +1,5 @@
-#ifndef HTTP_PARSER_HPP
-#define HTTP_PARSER_HPP
+#ifndef HTTP_HEADER_HPP
+#define HTTP_HEADER_HPP
 
 #include "Headers.hpp"
 #include "Structs.hpp"

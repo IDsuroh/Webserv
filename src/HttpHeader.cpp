@@ -1,4 +1,4 @@
-#include "HttpParser.hpp"
+#include "HttpHeader.hpp"
 
 namespace   {
 
@@ -56,20 +56,16 @@ namespace   {
     // Special-cases: OPTIONS * and CONNECT authority-form (light validation).
     bool    parseRequestLine(const std::string& line, HTTP_Request& request, int& outStatus, std::string& outReason) {
         // Work on a local copy so we can trim a trailing CR
-        std::string s = line;
-        if (!s.empty() && s[s.size() - 1] == '\r')
-            s.resize(s.size() - 1);
-
+        std::string         s = line;
         const std::size_t   n = s.size();
         std::size_t         i = 0;
 
         // --- METHOD ---------------------------------------------------------------------------
-        if (i >= n || isSpaceTab(static_cast<unsigned char>(s[i]))) {
+        if (n == 0 || isSpaceTab(static_cast<unsigned char>(s[i]))) {
             outStatus = 400;
             outReason = "Bad Request";
             return false;
         }
-        std::size_t mStart = i;
         while (i < n && !isSpaceTab(static_cast<unsigned char>(s[i])))  {
             unsigned char   c = static_cast<unsigned char>(s[i]);
             if (!isTokenChar(c))    {
@@ -79,12 +75,7 @@ namespace   {
             }
             ++i;
         }
-        if (i == mStart)    {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        }
-        request.method = s.substr(mStart, i - mStart);
+        request.method = s.substr(0, i);
 
         // 1+ SP/HTAB between fields
         if (i >= n || !isSpaceTab(static_cast<unsigned char>(s[i])))    {
@@ -94,28 +85,22 @@ namespace   {
         }
         while (i < n && isSpaceTab(static_cast<unsigned char>(s[i])))
             ++i;
-
-        // --- TARGET ---------------------------------------------------------------------------
-        if (i >= n || isSpaceTab(static_cast<unsigned char>(s[i]))) {
+        if (i >= n) {
             outStatus = 400;
             outReason = "Bad Request";
             return false;            
         }
+        // --- TARGET ---------------------------------------------------------------------------
         std::size_t tStart = i;
         while (i < n && !isSpaceTab(static_cast<unsigned char>(s[i])))  {
             unsigned char   c = static_cast<unsigned char>(s[i]);
             // no controls, ASCII only
-            if (c >= 0x7F || c < 0x20)  {
+            if (c >= 0x7F || c < 0x20)  {   // c >= (int)127 || c < (int)32
                 outStatus = 400;
                 outReason = "Bad Request";
                 return false;
             }
             ++i;
-        }
-        if (i == tStart)    {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
         }
         request.target = s.substr(tStart, i - tStart);
 
@@ -124,14 +109,6 @@ namespace   {
             outReason = "Bad Request";
             return false;
         }
-
-        // Special cases:
-        // OPTIONS * is valid (asterisk-form)
-        //if (request.method == "OPTIONS" && request.target == "*")   {
-            //ok
-        //}
-        // CONNECT authority-form allowed; don't enforce strict host:port here
-        // ensure no spaces/tabs/controls already done above
 
         // 1+ SP/HTAB between target and version
         if (i >= n || !isSpaceTab(static_cast<unsigned char>(s[i])))    {
@@ -152,11 +129,6 @@ namespace   {
         std::size_t vStart = i;
         while (i < n && !isSpaceTab(static_cast<unsigned char>(s[i])))
             ++i;
-        if (i == vStart) {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        }
         request.version = s.substr(vStart, i - vStart);
 
         if (i != n)  {

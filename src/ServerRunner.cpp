@@ -1,5 +1,5 @@
 #include "../include/ServerRunner.hpp"
-#include "../include/HttpParser.hpp"
+#include "../include/HttpHeader.hpp"
 #include "../include/HttpSerializer.hpp"
 #include "../include/HttpBody.hpp"
 
@@ -942,5 +942,137 @@ Time 3: accept() call
 │ [B_handshaking] │  ← B still in progress
 │ Accept Queue:[] │  ← A taken by app
 └─────────────────┘
+
+
+Error Codes
+
+200 -> Success
+
+400 - Bad Request
+	- Missing or malformed method
+	- Missing or malformed target (URI)
+	- Missing or malformed version
+	- Weird control characters in the the request target
+	- Malformed headers
+
+403 - Forbidden (no permission)
+
+404 - Not Found
+	- File or Location mapping doesn't exist or match
+
+405 - Method Not Allowed (methods directive)
+
+413 - Payload Too Large
+	- If the data trying to upload is too large 
+
+431 - Request Header Fields Too Large
+	- The head is too big
+
+500 - Internal Server Error (runtime errors)
+
+501 - Not Implemented
+	- Self explanatory
+
+502/503/504 (CGI failures - depending on subject scope)
+
+505 - HTTP Version Not Supported
+	- Self explanatory
+
+===================================================================================================================================
+
+HTTP Requests -> has 3 parts. {According to RFC = Request For Comments, official Internet Standards managed by IETF.}
+	1.1) Request Line
+		- METHOD SP REQUEST_TARGET SP HTTP_VERSION CRLF
+		- e.g. = GET /index.html HTTP/1.1\r\n
+
+		A) METHOD <= RFC says methods are case-sensitive
+			- What action the client wants
+			- GET, POST, DELETE, PUT, HEAD, OPTIONS, CONNECT, TRACE
+			
+			1. GET <- Give me this resource
+				- Browser loading a web page
+				- Fetching an image, script, style file, etc.
+				- Usually has no body and retrieves content
+				- GET /index.html HTTP/1.1
+
+			2. POST <- I am sending you some data
+				- HTML forms
+				- JSON uploads
+				- File uploads
+				- 	POST /upload HTTP/1.1
+					Content-Length: 20
+
+					{"name":"hello"}
+			
+			3. DELETE <- Please delete this resource
+				- In Webserv, we should delete files on disk
+
+
+		B) REQUEST_TARGET
+			- What the client wants (the "path")
+			- There are 4 forms (RFC 7230)
+				1. origin-form (most common)		=>	/path/to/resource?query=parameters <= /products/search?q=phone&page=2
+
+				2. absolute-form (proxies)			=>	http://example.com/path
+				3. authority-form (CONNECT method)	=>	CONNECT example.com:443 HTTP/1.1
+				4. asterisk-form					=>	OPTIONS * HTTP/1.1
+
+		C) HTTP_VERSION
+			- HTTP/1.1
+
+	1.2) Header Section
+		- field-name ":" [optional whitespace] field-value
+		- Field-name is case-insensitive
+		- Can appear multiple times.
+
+		A) Host
+			- Host: example.com
+			- For Virtual host selection
+
+		B) Content-Length
+			- Content-Length: 1234
+			- Means that the Body is exactly 1234 bytes long.
+
+		C) Transfer-Encoding: chunked
+
+		D) Connection: keep-alive or close
+			- Whether to close TCP after response or keep it open for next request
+
+	2) Blank Line -> A single empty line. Marks the end of the headers
+
+	3) Optional Body
+		- There could be 3 situations.
+			1. No body (common for GET method)
+			2. A fixed-length body
+			3. A chunked-encoded body
+
+			1. Request with NO body
+				- 	GET / HTTP/1.1
+					Host: example.com
+				- No Content-Length
+				- No Transfer-Encoding
+
+			2. Fixed-length body (Content-Length)
+				- 	POST /upload HTTP/1.1
+					Host: example.com
+					Content-Length: 12
+
+					Hello World!
+				- Stop reading after exactly 12 bytes
+				- Store those as request.body
+				- if it exceeds client_max_body_size -> 413
+			
+			3. Chunked transfer-encoding
+				- 	POST /submit HTTP/1.1
+					Transfer-Encoding: chunked
+
+					7\r\n
+					Mozilla\r\n
+					9\r\n
+					Developer\r\n
+					7\r\n
+					Network\r\n
+					0\r\n
+					\r\n
 
 */
