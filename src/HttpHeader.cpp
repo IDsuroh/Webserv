@@ -159,7 +159,7 @@ namespace   {
 
         for (std::size_t i = 0, start = 0; ; )  {
             bool    at_crlf = (i + 1 < block.size() && block[i] == '\r' && block[i + 1] == '\n');
-            bool    at_end  = (i >= block.size());
+            bool    at_end  = (i == block.size());
             if (at_end || at_crlf)  {
                 std::string current = (at_end ? block.substr(start) : block.substr(start, i - start));
 
@@ -171,11 +171,11 @@ namespace   {
                             return false;
                         }
                         // Continuation (obs-fold) of splitted sentence
-                        std::string v = trim(current);
-                        if (!v.empty()) {
-                            if (!request.headers[lastKey].empty())
+                        std::string value = trim(current);
+                        if (!value.empty()) {
+                            if (!request.headers[lastKey].empty())  // if there was previous key value add space.
                                 request.headers[lastKey] += ' ';
-                            request.headers[lastKey] += v;
+                            request.headers[lastKey] += value;
                         }
                     }
                     else    {
@@ -185,17 +185,17 @@ namespace   {
                             outReason = "Bad Request";
                             return false;
                         }
-                        std::string k = toLowerCopy(trimRight(current.substr(0, colon)));
-                        std::string v = trim(current.substr(colon + 1));
-                        if (k.empty())  {
+                        std::string key = toLowerCopy(trimRight(current.substr(0, colon)));
+                        std::string value = trim(current.substr(colon + 1));
+                        if (key.empty())  {
                             outStatus = 400;
                             outReason = "Bad Request";
                             return false;
                         }
 
                         // Validate header-name as ASCII token
-                        for (std::size_t j = 0; j < k.size(); ++j)  {
-                            if (!isTokenChar(static_cast<unsigned char>(k[j]))) {
+                        for (std::size_t j = 0; j < key.size(); ++j)  {
+                            if (!isTokenChar(static_cast<unsigned char>(key[j]))) { // keys should be characters.
                                 outStatus = 400;
                                 outReason = "Bad Request";
                                 return false;
@@ -203,26 +203,28 @@ namespace   {
                         }
 
                         // Duplicate Host must have identical values
-                        if (k == "host")    {
-                            std::string vtrim = trim(v);
+                        if (key == "host")    {
                             std::map<std::string, std::string>::const_iterator  hprev = request.headers.find("host");
                             if (hprev != request.headers.end()) {
-                                if (toLowerCopy(trim(hprev->second)) != toLowerCopy(vtrim)) {
+                                if (toLowerCopy(trim(hprev->second)) != toLowerCopy(value)) {
                                     outStatus = 400;
                                     outReason = "Bad Request";
                                     return false;
                                 }
                             }
-                        }
+                        }   // If Host appears more than once, all values must be identical (case-insensitive)
+                            // Host: example.com                Host: example.com
+                            // Host: EXAMPLE.COM <- allowed.    Host: other.com     <- 400 error
 
-                        if (request.headers.find(k) != request.headers.end())   {
-                            if (!request.headers[k].empty())
-                                request.headers[k] += ", ";
-                            request.headers[k] += v; // coalesce duplicates
+                        std::map<std::string, std::string>::iterator    it = request.headers.find(key);
+                        if (it != request.headers.end())   {
+                            if (!it->second.empty())
+                                it->second += ", ";
+                            it->second += value; // coalesce duplicates
                         }
                         else
-                            request.headers[k] = v;
-                        lastKey = k;
+                            request.headers[key] = value;
+                        lastKey = key;
                     }
                 }
 
@@ -282,15 +284,6 @@ namespace   {
                     outReason = "Bad Request";
                     return false;
                 }
-                // ASCII digit check only
-                for (std::size_t i = 0; i < part.size(); ++i)   {
-                    char    c = part[i];
-                    if (c < '0' || c > '9') {
-                        outStatus = 400;
-                        outReason = "Bad Request";
-                        return false;
-                    }
-                }
                 if (first.empty())
                     first = part;
                 else if (part != first) {
@@ -303,7 +296,7 @@ namespace   {
             // Parse agreed value
             char*   endp = 0;
             errno = 0;
-            unsigned long   v = std::strtoul(first.c_str(), &endp, 10);
+            unsigned long   v = std::strtoul(first.c_str(), &endp, 10); // function strtoul gives out errno == ERANGE if overflow
             if (errno == ERANGE || endp == first.c_str() || *endp != '\0')  {
                 outStatus = (errno == ERANGE) ? 413 : 400;
                 outReason = (errno == ERANGE) ? "Payload Too Large" : "Bad Request";
@@ -321,7 +314,7 @@ namespace   {
         request.transfer_encoding.clear();
         std::map<std::string, std::string>::const_iterator teit = request.headers.find("transfer-encoding");
         if (teit != request.headers.end())  {
-            if (clit != request.headers.end())  {   // TE + CL → 400
+            if (clit != request.headers.end())  {   // TE + CL → 400 Cannot have both Content-Length and Transfer-Encoding
                 outStatus = 400;
                 outReason = "Bad Request";
                 return false;
