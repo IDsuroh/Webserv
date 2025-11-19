@@ -27,5 +27,6 @@
 #include <algorithm>
 #include <climits>
 #include <limits>
+#include <dirent.h>
 
 #endif
