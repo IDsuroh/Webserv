@@ -1010,30 +1010,81 @@ HTTP Requests -> has 3 parts. {According to RFC = Request For Comments, official
 
 		B) REQUEST_TARGET
 			- What the client wants (the "path")
+			- The Path and Query -> http://example.com/products/search?q=phone&page=2#top
+				- Path -> /products/search
+					- the “directory/file path” on the website
+					- usually maps to a file or route on the server
+				- Query -> q=phone&page=2
+					- Parameters the client send to refine the request
+					- q=phone -> search text
+					- page=2 -> which page of results
+
 			- There are 4 forms (RFC 7230)
 				1. origin-form (most common)		=>	/path/to/resource?query=parameters <= /products/search?q=phone&page=2
+					- give me this resource on the server, at this path, optionally with those query params
+					- Examples:
+            			GET / HTTP/1.1
+            			GET /index.html HTTP/1.1
+            			GET /products/search?q=phone&page=2 HTTP/1.1
+					- Path = "/products/search"
+        			- Query = "q=phone&page=2"
+        			- Used by normal browsers talking directly to a server.
 
-				2. absolute-form (proxies)			=>	http://example.com/path
-				3. authority-form (CONNECT method)	=>	CONNECT example.com:443 HTTP/1.1
+				2. absolute-form (proxies)			=>	http://example.com/path -> "Proxy, please fetch this URL for me."
+					- The full URL in the request line, which includes "http://host/..." -> when talking to a proxy (a middleman)
+					- Example:
+            			GET http://example.com/products/search?q=phone HTTP/1.1
+        			- Client sends full URL in the request line to a proxy.
+						*What is proxy?
+							A proxy server sits between an client and a real server
+							like an enforcer which FILTERS websites, LOGs traffic for auditing, ENFORCE authentication, INJECT security systems,
+							and to CACHE responses. Also HIDES the real client.
+
+				3. authority-form (CONNECT method)	=>	CONNECT example.com:443 HTTP/1.1 -> only for proxies
+					- Example:
+            			CONNECT example.com:443 HTTP/1.1
+        			- Target is "example.com:443".
+        			- Used to create a TCP tunnel via a proxy for HTTPS.
+        			- Not needed for normal Webserv mandatory part.
+
 				4. asterisk-form					=>	OPTIONS * HTTP/1.1
+					- Example:
+            			OPTIONS * HTTP/1.1
+        			- Asks about the server's general capabilities, not a single resource.
+        			- "What methods/features do you support overall?"
+					- can respond with:
+						200 or 204
+						an Allow header listing what is supported (at least GET, POST, DELETE, OPTIONS).
+					e.g.
+						HTTP/1.1 204 No Content
+						Allow: GET, POST, DELETE, OPTIONS
+
 
 		C) HTTP_VERSION
-			- HTTP/1.1
 
 	1.2) Header Section
 		- field-name ":" [optional whitespace] field-value
 		- Field-name is case-insensitive
 		- Can appear multiple times.
 
-		A) Host
+		A) Host = Tells the server which hostname the client is trying to reach
 			- Host: example.com
 			- For Virtual host selection
+			- Can appear multiple times; duplicates may be combined with ", "
 
 		B) Content-Length
 			- Content-Length: 1234
 			- Means that the Body is exactly 1234 bytes long.
+			- Used for virtual hosts (one IP → many domains).
+      		- HTTP/1.1: required. Missing Host → 400 Bad Request.
+      		- HTTP/1.0: optional.
 
-		C) Transfer-Encoding: chunked
+		C) Transfer-Encoding: chunked = send the body in chunks (We are only implementing chunked in our project)
+			- when the server doesn't know the body size in advance
+			- must ignore Content-Length when chunked is present
+			- Server MUST read exactly that many bytes after the headers.
+      		- Used for POST/PUT requests with a fixed-size body.
+      		- If it's wrong → broken request or response handling.
 
 		D) Connection: keep-alive or close
 			- Whether to close TCP after response or keep it open for next request

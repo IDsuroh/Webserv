@@ -43,6 +43,8 @@ struct HTTP_Request	{
 	bool								keep_alive;
 	std::string							method;
 	std::string							target;
+	std::string							path;
+	std::string							query;
 	std::string							version;
 	std::string							host;
 	std::string							transfer_encoding;
@@ -58,6 +60,8 @@ struct HTTP_Request	{
 	:	keep_alive(true)
 	,	method()
 	,	target()
+	,	path()
+	,	query()
 	,	version()
 	,	host()
 	,	transfer_encoding()

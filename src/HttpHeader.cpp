@@ -31,8 +31,14 @@ namespace   {
         return trimRight(trimLeft(s));
     }
 
+    bool    fail(int status, const char* reason, int& outStatus, std::string& outReason)    {
+        outStatus = status;
+        outReason = reason;
+        return false;
+    }
+
     /* RFC7230 tchar (rough, ASCII) for METHOD token validation. */
-    bool    isTokenChar(unsigned char c)    {
+    bool    istokenChar(unsigned char c)    {
         if (c > 0x7F)
             return false;
 
@@ -51,99 +57,91 @@ namespace   {
         return c == ' ' || c == '\t';
     }
 
-    // Accepts: "METHOD  SP/HTAB+  target  SP/HTAB+  HTTP/1.1[optional-CR]"
-    // Rejects: extra junk after version; spaces/tabs inside target; control/non-ASCII in target.
-    // Special-cases: OPTIONS * and CONNECT authority-form (light validation).
     bool    parseRequestLine(const std::string& line, HTTP_Request& request, int& outStatus, std::string& outReason) {
-        // Work on a local copy so we can trim a trailing CR
-        std::string         s = line;
-        const std::size_t   n = s.size();
+        const std::string&  s = line;
+        std::size_t         n = s.size();
         std::size_t         i = 0;
 
         // --- METHOD ---------------------------------------------------------------------------
-        if (n == 0 || isSpaceTab(static_cast<unsigned char>(s[i]))) {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        }
+        if (n == 0 || isSpaceTab(static_cast<unsigned char>(s[0])))
+            return fail(400, "Bad Request", outStatus, outReason);
+
         while (i < n && !isSpaceTab(static_cast<unsigned char>(s[i])))  {
             unsigned char   c = static_cast<unsigned char>(s[i]);
-            if (!isTokenChar(c))    {
-                outStatus = 400;
-                outReason = "Bad Request";
-                return false;
-            }
+            if (!istokenChar(c))
+                return fail(400, "Bad Request", outStatus, outReason);
             ++i;
         }
+
         request.method = s.substr(0, i);
 
         // 1+ SP/HTAB between fields
-        if (i >= n || !isSpaceTab(static_cast<unsigned char>(s[i])))    {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        }
+        if (i >= n || !isSpaceTab(static_cast<unsigned char>(s[i])))
+            return fail(400, "Bad Request", outStatus, outReason);
         while (i < n && isSpaceTab(static_cast<unsigned char>(s[i])))
             ++i;
-        if (i >= n) {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;            
-        }
-        // --- TARGET ---------------------------------------------------------------------------
+        if (i >= n)
+            return fail(400, "Bad Request", outStatus, outReason);         
+
+        // --- REQEUST-TARGET ---------------------------------------------------------------------------
+        // We accept:
+        // - origin-form: "/path" or "/path?query"
+        // - absolute-form: "http://host/path" (we'll still store whole thing in target)
+        // - "*" only for OPTIONS
         std::size_t tStart = i;
         while (i < n && !isSpaceTab(static_cast<unsigned char>(s[i])))  {
             unsigned char   c = static_cast<unsigned char>(s[i]);
             // no controls, ASCII only
-            if (c >= 0x7F || c < 0x20)  {   // c >= (int)127 || c < (int)32
-                outStatus = 400;
-                outReason = "Bad Request";
-                return false;
-            }
+            if (c >= 0x7F || c < 0x20)   // c >= (int)127 || c < (int)32
+                return fail(400, "Bad Request", outStatus, outReason);
             ++i;
         }
+
         request.target = s.substr(tStart, i - tStart);
 
-        if (request.target == "*" && request.method != "OPTIONS")   {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
+        if (request.target == "*" && request.method != "OPTIONS")
+            return fail(400, "Bad Request", outStatus, outReason);
+
+        if (request.target != "*")  {
+            std::size_t qpos = request.target.find('?');
+            if (qpos == std::string::npos)
+                request.path = request.target;
+            else    {
+                request.path = request.target.substr(0, qpos);
+                request.query = request.target.substr(qpos + 1);
+            }
         }
 
         // 1+ SP/HTAB between target and version
-        if (i >= n || !isSpaceTab(static_cast<unsigned char>(s[i])))    {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        }
+        if (i >= n || !isSpaceTab(static_cast<unsigned char>(s[i])))
+            return fail(400, "Bad Request", outStatus, outReason);
         while (i < n && isSpaceTab(static_cast<unsigned char>(s[i])))
             ++i;
-        if (i >= n) {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        }
+        if (i >= n)
+            return fail(400, "Bad Request", outStatus, outReason);  
 
         // --- HTTP-Version ---------------------------------------------------------------------------
-        // Parse a single version token; no trailing bytes allowed after it.
+        // Accept "HTTP/1.0" and "HTTP/1.1"
+        // Allow optional trailing spaces, but no other junk.
         std::size_t vStart = i;
         while (i < n && !isSpaceTab(static_cast<unsigned char>(s[i])))
             ++i;
+
         request.version = s.substr(vStart, i - vStart);
 
-        if (i != n)  {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        }
+        // Allow trailing SP/HTAB only
+        while (i < n && isSpaceTab(static_cast<unsigned char>(s[i])))
+            ++i;
+        if (i != n)
+            return fail(400, "Bad Request", outStatus, outReason);
 
-        if (request.version != "HTTP/1.1")  {
-            outStatus = 505;
-            outReason = "HTTP Version Not Supported";
-            return false;
-        }
+        if (request.version == "HTTP/1.0")  // HTTP/1.0: RFC 1945 – Host header not required
+            return true;                    // Later can treat keep-alive differently based on version.
 
-        return true;
+        if (request.version == "HTTP/1.1")  // HTTP/1.1: RFC 7230 – Host header required
+            return true;
+
+        return fail(505, "HTTP Version Not Supported", outStatus, outReason);;
     }
 
     /*
@@ -165,11 +163,9 @@ namespace   {
 
                 if (!current.empty())   {
                     if (current[0] == ' ' || current[0] == '\t')    {
-                        if (lastKey.empty())    {   // obs-fold without previous header -> 400
-                            outStatus = 400;
-                            outReason = "Bad Request";
-                            return false;
-                        }
+                        if (lastKey.empty()) // obs-fold without previous header -> 400
+                            return fail(400, "Bad Request", outStatus, outReason);
+
                         // Continuation (obs-fold) of splitted sentence
                         std::string value = trim(current);
                         if (!value.empty()) {
@@ -180,37 +176,26 @@ namespace   {
                     }
                     else    {
                         std::size_t colon = current.find(':');
-                        if (colon == std::string::npos) {
-                            outStatus = 400;
-                            outReason = "Bad Request";
-                            return false;
-                        }
+                        if (colon == std::string::npos)
+                            return fail(400, "Bad Request", outStatus, outReason);
+
                         std::string key = toLowerCopy(trimRight(current.substr(0, colon)));
                         std::string value = trim(current.substr(colon + 1));
-                        if (key.empty())  {
-                            outStatus = 400;
-                            outReason = "Bad Request";
-                            return false;
-                        }
+                        if (key.empty())
+                            return fail(400, "Bad Request", outStatus, outReason);
 
                         // Validate header-name as ASCII token
                         for (std::size_t j = 0; j < key.size(); ++j)  {
-                            if (!isTokenChar(static_cast<unsigned char>(key[j]))) { // keys should be characters.
-                                outStatus = 400;
-                                outReason = "Bad Request";
-                                return false;
-                            }
+                            if (!istokenChar(static_cast<unsigned char>(key[j]))) // keys should be characters.
+                                return fail(400, "Bad Request", outStatus, outReason);
                         }
 
                         // Duplicate Host must have identical values
                         if (key == "host")    {
                             std::map<std::string, std::string>::const_iterator  hprev = request.headers.find("host");
                             if (hprev != request.headers.end()) {
-                                if (toLowerCopy(trim(hprev->second)) != toLowerCopy(value)) {
-                                    outStatus = 400;
-                                    outReason = "Bad Request";
-                                    return false;
-                                }
+                                if (toLowerCopy(trim(hprev->second)) != toLowerCopy(value))
+                                    return fail(400, "Bad Request", outStatus, outReason);
                             }
                         }   // If Host appears more than once, all values must be identical (case-insensitive)
                             // Host: example.com                Host: example.com
@@ -236,39 +221,46 @@ namespace   {
             else
                 ++i;
         }
-
+            // finished populating request.headers
+            // Now time for evaluating and dividing each token of the request.headers to their respective parts.
 
         // Connection: default keep-alive in HTTP/1.1
         std::map<std::string, std::string>::const_iterator chit = request.headers.find("connection");
-        request.keep_alive = true;  // default in HTTP/1.1
+        if (request.version == "HTTP/1.1")
+            request.keep_alive = true;   // default in HTTP/1.1
+        else if (request.version == "HTTP/1.0")
+            request.keep_alive = false; // default in HTTP/1.0
+
         if (chit != request.headers.end())  {
             std::istringstream  iss(toLowerCopy(chit->second));
-            std::string         tok;
-            while (std::getline(iss, tok, ',')) {
-                tok = trim(tok);
-                if (tok == "close") {
+            std::string         token;
+            while (std::getline(iss, token, ',')) {
+                token = trim(token);
+                if (token == "close") {
                     request.keep_alive = false;
                     break;
                 }
+                else if (token == "keep-alive")
+                    request.keep_alive = true;
             }
         }
 
         // Host (required in 1.1)
         std::map<std::string, std::string>::const_iterator hit = request.headers.find("host");
-        if (hit == request.headers.end() || trim(hit->second).empty())  {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
+        
+        if (request.version == "HTTP/1.1")  {
+            if (hit == request.headers.end() || trim(hit->second).empty())
+                return fail(400, "Bad Request", outStatus, outReason);
         }
-        request.host = trim(hit->second);
-        if (request.host.find(',') != std::string::npos)    {
-            outStatus = 400;
-            outReason = "Bad Request";
-            return false;
-        } // multiple Host values not allowed
+
+        if (hit != request.headers.end())   {
+            request.host = trim(hit->second);
+            if (request.host.find(',') != std::string::npos)
+                return fail(400, "Bad Request", outStatus, outReason);
+                // multiple Host values not allowed
+        }
 
         // Content-Length
-        request.content_length = 0;
         std::map<std::string, std::string>::const_iterator clit = request.headers.find("content-length");
         if (clit != request.headers.end())  {
             // Duplicates were coalesced as "v1, v2, ...": require all identical
@@ -279,83 +271,46 @@ namespace   {
 
             while (std::getline(iss, part, ','))    {
                 part = trim(part);
-                if (part.empty())   {
-                    outStatus = 400;
-                    outReason = "Bad Request";
-                    return false;
-                }
+                if (part.empty())
+                    return fail(400, "Bad Request", outStatus, outReason);
+
                 if (first.empty())
                     first = part;
-                else if (part != first) {
-                    outStatus = 400;
-                    outReason = "Bad Request";
-                    return false;                    
-                }
+                else if (part != first)
+                    return fail(400, "Bad Request", outStatus, outReason);
             }
 
             // Parse agreed value
             char*   endp = 0;
             errno = 0;
             unsigned long   v = std::strtoul(first.c_str(), &endp, 10); // function strtoul gives out errno == ERANGE if overflow
-            if (errno == ERANGE || endp == first.c_str() || *endp != '\0')  {
-                outStatus = (errno == ERANGE) ? 413 : 400;
-                outReason = (errno == ERANGE) ? "Payload Too Large" : "Bad Request";
-                return false;
-            }
-            if (v > static_cast<unsigned long>(std::numeric_limits<std::size_t>::max()))    {
-                outStatus = 413;
-                outReason = "Payload Too Large";
-                return false;
-            }
+            if (errno == ERANGE)
+                return fail(413, "Payload Too Large", outStatus, outReason);
+            if (endp == first.c_str() || *endp != '\0')
+                return fail(400, "Bad Request", outStatus, outReason);
+
             request.content_length = static_cast<std::size_t>(v);
         }
 
         // Transfer-Encoding
-        request.transfer_encoding.clear();
         std::map<std::string, std::string>::const_iterator teit = request.headers.find("transfer-encoding");
         if (teit != request.headers.end())  {
-            if (clit != request.headers.end())  {   // TE + CL → 400 Cannot have both Content-Length and Transfer-Encoding
-                outStatus = 400;
-                outReason = "Bad Request";
-                return false;
-            }
+            if (clit != request.headers.end())  // TE + CL → 400 Cannot have both Content-Length and Transfer-Encoding
+                return fail(400, "Bad Request", outStatus, outReason);
 
-            std::vector<std::string>    codings;
-            std::istringstream          iss(toLowerCopy(teit->second));
-            std::string                 tok;
-            while (std::getline(iss, tok, ',')) {
-                tok = trim(tok);
-                if (!tok.empty())
-                    codings.push_back(tok);
+            std::istringstream  iss(toLowerCopy(teit->second));
+            std::string         token;
+            bool                haveChunk = false;
+            while (std::getline(iss, token, ',')) {
+                token = trim(token);
+                if (token.empty())
+                    continue;
+                if (token != "chunked")
+                    return fail(501, "Not Implemented", outStatus, outReason);
+                haveChunk = true;
             }
-            if (codings.empty())    {
-                outStatus = 400;
-                outReason = "Bad Request";
-                return false;
-            }
-
-            bool    seenChunked = false;
-            for (std::size_t i = 0; i < codings.size(); ++i)    {
-                const std::string&  c = codings[i];
-                if (c == "chunked") {
-                    if (i != codings.size() - 1)    {
-                        outStatus = 400;
-                        outReason = "Bad Request";
-                        return false;
-                    }
-                    seenChunked = true;
-                }
-                else    {
-                    outStatus = 501;
-                    outReason = "Not Implemented";
-                    return false;
-                }
-            }
-            if (!seenChunked)   {
-                outStatus = 501;
-                outReason = "Not Implemented";
-                return false;
-            }
+            if (!haveChunk)
+                return fail(400, "Bad Request", outStatus, outReason);
 
             // Normalize to a canonical marker
             request.transfer_encoding = "chunked";
@@ -382,24 +337,15 @@ namespace http  {
         static const std::size_t    MAX_HEADER_BYTES = 16 * 1024;   // total head (request-line + headers)
         static const std::size_t    MAX_REQUEST_LINE = 8 * 1024;    // request-line only
 
-        if (head.size() > MAX_HEADER_BYTES) {
-            status = 431;
-            reason = "Request Header Fields Too Large";
-            return false;
-        }
+        if (head.size() > MAX_HEADER_BYTES)
+            return fail(431, "Request Header Fields Too Large", status, reason);
 
 		std::size_t eol = head.find("\r\n");
-        if (eol == std::string::npos)   {
-            status = 400;
-            reason = "Bad Request";
-            return false;
-        }
+        if (eol == std::string::npos)
+            return fail(400, "Bad Request", status, reason);
 
-        if (eol > MAX_REQUEST_LINE) {
-            status = 431;
-            reason = "Request Header Fields Too Large";
-            return false;
-        }
+        if (eol > MAX_REQUEST_LINE)
+            return fail(431, "Request Header Fields Too Large", status, reason);
 
         const std::string   requestLine     = head.substr(0, eol);
         const std::string   headersBlock    = head.substr(eol + 2);
