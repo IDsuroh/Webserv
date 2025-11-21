@@ -544,7 +544,6 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		connection.headersComplete = false;			// haven't finished reading headers
 		connection.state = S_HEADERS;				// where to start
 		connection.request.body.clear();			// no body yet
-		connection.request.body_received = 0;		// 0 bytes of body read
 		connection.request.chunk_state = CS_SIZE;
 		connection.request.chunk_bytes_left = 0;
 		connection.writeOffset = 0;					// nothing written yet
@@ -673,7 +672,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		size_t	limit = 1048576;	// default 1 MiB	priority of the limit goes as:
 		bool	fromLoc = false;
 		if (connection.srv)	{
-			if (const Location*	loc = longestPrefixMatch(*connection.srv, connection.request.target))	{
+			if (const Location*	loc = longestPrefixMatch(*connection.srv, connection.request.path))	{
 				if (loc->directives.count("client_max_body_size"))	{	// #1
 					limit = parseSize(loc->directives.find("client_max_body_size")->second);
 					fromLoc = true;
@@ -704,27 +703,27 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 	// 3) If we are in BODY state, consume body incrementally
 	if (connection.state == S_BODY)	{
-		int					st = 0;
-		std::string			rsn;
-		http::BodyResult	br = http::BODY_INCOMPLETE;
+		int					status = 0;
+		std::string			reason;
+		http::BodyResult	result = http::BODY_INCOMPLETE;
 
 		const std::size_t	maxBody = connection.clientMaxBodySize;
 
 		switch (connection.request.body_reader_state)	{
 			case BR_CONTENT_LENGTH:
-				br = http::consume_body_content_length(connection, maxBody, st, rsn);
+				result = http::consume_body_content_length(connection, maxBody, status, reason);
 				break;
 			case BR_CHUNKED:
-				br = http::consume_body_chunked(connection, maxBody, st, rsn);
+				result = http::consume_body_chunked(connection, maxBody, status, reason);
 				break;
 			default:
-				st = 400;
-				rsn = "Bad Request";
-				br = http::BODY_ERROR;
+				status = 400;
+				reason = "Bad Request";
+				result = http::BODY_ERROR;
 		}
 		// BR_NONE shouldn't happen; no body was expected
 
-		if (br == http::BODY_COMPLETE)	{
+		if (result == http::BODY_COMPLETE)	{
 			// Same fix as headers: don't leave the fd in POLLIN
 			connection.writeBuffer = http::build_simple_response(200, "OK", "Hello\r\n", connection.request.keep_alive);	// to complete later
 			connection.writeOffset = 0;
@@ -736,10 +735,10 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			connection.state = S_WRITE;
 			return ;
 		}
-		if (br == http::BODY_ERROR)	{
+		if (result == http::BODY_ERROR)	{
 			const Server&	active = connection.srv ? *connection.srv : _servers[0];
 
-			connection.writeBuffer = http::build_error_response(active, st, rsn, connection.request.keep_alive);
+			connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
 			connection.writeOffset = 0;
 			
 			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);

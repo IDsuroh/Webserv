@@ -253,12 +253,8 @@ namespace   {
                 return fail(400, "Bad Request", outStatus, outReason);
         }
 
-        if (hit != request.headers.end())   {
+        if (hit != request.headers.end())
             request.host = trim(hit->second);
-            if (request.host.find(',') != std::string::npos)
-                return fail(400, "Bad Request", outStatus, outReason);
-                // multiple Host values not allowed
-        }
 
         // Content-Length
         std::map<std::string, std::string>::const_iterator clit = request.headers.find("content-length");
@@ -317,7 +313,7 @@ namespace   {
         }
 
         // Decide body reader mode
-        if (!request.transfer_encoding.empty())
+        if (!request.transfer_encoding.empty() && request.transfer_encoding == "chunked")
             request.body_reader_state = BR_CHUNKED;
         else if (request.content_length > 0)
             request.body_reader_state = BR_CONTENT_LENGTH;
