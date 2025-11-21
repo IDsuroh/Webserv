@@ -489,19 +489,19 @@ namespace {
 	// - otherwise → returns an appropriate error.
 	// Precondition: dirFsPath is already a valid directory (classifyRequest ensures this).
 	// URL should already have been normalized (redirect /dir -> /dir/ done earlier, if needed).
-	HTTP_Response handleDirectoryRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& dirFsPath, const std::string& urlPath) {
+	HTTP_Response handleDirectoryRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath, const std::string& requestPath) {
 
-		std::string fixedUrlPath = urlPath;
-		if (!fixedUrlPath.empty() && fixedUrlPath.back() != '/')
-			fixedUrlPath += '/';
+		std::string fixedRequestPath = requestPath;
+		if (!fixedRequestPath.empty() && fixedRequestPath.back() != '/')
+			fixedRequestPath += '/';
 
 		for (size_t i = 0; i < cfg.index_files.size(); ++ i) {
 
 			std::string indexFsPath;
-			if (!dirFsPath.empty() && dirFsPath.back() == '/')
-				indexFsPath = dirFsPath + cfg.index_files[i];
+			if (!fsPath.empty() && fsPath.back() == '/')
+				indexFsPath = fsPath + cfg.index_files[i];
 			else
-				indexFsPath = dirFsPath + '/' + cfg.index_files[i];
+				indexFsPath = fsPath + '/' + cfg.index_files[i];
 
 			struct stat	st;
 
@@ -511,7 +511,7 @@ namespace {
 		
 		if (cfg.autoindex) {
 
-			DIR* currentDir = opendir(dirFsPath.c_str());
+			DIR* currentDir = opendir(fsPath.c_str());
 			if (!currentDir) {
 				if (errno == EACCES)
 					return makeErrorResponse(403, &cfg);
@@ -524,11 +524,11 @@ namespace {
 			std::ostringstream oss;
 			oss	<< "<!DOCTYPE html>\n"
 			<< "<html><head><meta charset=\"utf-8\">"
-			<< "<title>Index of " << htmlEscape(fixedUrlPath) << "</title>"
+			<< "<title>Index of " << htmlEscape(fixedRequestPath) << "</title>"
 			<< "</head><body>"
-			<< "<h1>Index of " << htmlEscape(fixedUrlPath) << "</h1>"
+			<< "<h1>Index of " << htmlEscape(fixedRequestPath) << "</h1>"
 			<< "<ul>";
-		    if (fixedUrlPath != "/")
+		    if (fixedRequestPath != "/")
 				oss << "<li><a href=\"../\">Parent directory</a></li>";
 						
 			struct dirent* entry;
@@ -538,10 +538,10 @@ namespace {
 					continue;
 				
 				std::string fullPath;
-				if (!dirFsPath.empty() && dirFsPath.back() == '/')
-					fullPath = dirFsPath + entry->d_name;
+				if (!fsPath.empty() && fsPath.back() == '/')
+					fullPath = fsPath + entry->d_name;
 				else
-					fullPath = dirFsPath + '/' + entry->d_name;
+					fullPath = fsPath + '/' + entry->d_name;
 
 				struct stat st;
 
@@ -600,19 +600,122 @@ namespace {
         const std::string& fsPath
     );
 
-    // --- 2.12. Uploads ---
+	// --- 2.12. Uploads ---
 
-    // Verifica se a config define esta location como destino de upload.
-    bool isUploadLocation(
-        const EffectiveConfig& conf
-    );
+	bool isSanitizedFilename(const std::string& filename) {
 
-    // Trata uploads (ex: POST para upload_store).
-    HTTP_Response handleUploadRequest(
-        const HTTP_Request& req,
-        const EffectiveConfig& conf,
-        const std::string& fsPathBase
-    );
+		if (filename.empty())
+			return false;
+
+		if (filename == "." || filename == "..")
+			return false;
+
+		for (std::string::const_iterator it = filename.begin(); it != filename.end(); ++it) {
+
+			unsigned char c = static_cast<unsigned char>(*it);
+
+			if (c < 32)
+				return false;
+
+			switch (c) {
+
+				case '/':
+				case '\\':
+					return false;
+
+				case ':':
+				case '*':
+				case '?':
+				case '"':
+				case '<':
+				case '>':
+				case '|':
+					return false;
+
+				default:
+					break;
+			}
+		}
+
+		return true;
+	}
+
+	// Handles uploads (e.g., POST to upload_store).
+	HTTP_Response handleUploadRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
+
+		if (req.method != "POST")										// Redundant (already checked in classifyRequest), but safe
+			return make405(cfg);
+
+		std::map<std::string, std::string>::const_iterator it = req.headers.find("content-type");	// Allow only simple uploads (reject multipart/form-data)
+		if (it != req.headers.end())
+			if (it->second.find("multipart/form-data") != std::string::npos)	// multipart must be rejected (requires boundary parsing)
+				return makeErrorResponse(501, &cfg);
+
+		if (cfg.upload_store.empty())									// Config coherence (redundant - already checked in classifyRequest - but safe)
+			return makeErrorResponse(500, &cfg);
+
+		std::string::size_type lastSlashPos = fsPath.rfind('/');		// Separate parent directory and filename
+		if (lastSlashPos == std::string::npos)
+			return makeErrorResponse(400, &cfg);
+
+		std::string filename = fsPath.substr(lastSlashPos + 1);
+			
+		if (filename.empty() || !isSanitizedFilename(filename))			// Filename validation
+			return makeErrorResponse(400, &cfg);
+			
+		std::string destinationDirectory = cfg.upload_store;
+		std::string destinationFilePath;
+
+		if (!destinationDirectory.empty() && destinationDirectory.back() == '/')
+			destinationFilePath = destinationDirectory + filename;
+		else
+			destinationFilePath = destinationDirectory + '/' + filename;
+
+		struct stat st;													// Validate parent directory (must exist and be a directory)
+		
+		if (stat(destinationDirectory.c_str(), &st) < 0)
+			return makeErrorResponse(500, &cfg);						// Parent directory missing or inaccessible
+
+		if (!S_ISDIR(st.st_mode))
+			return makeErrorResponse(500, &cfg);						// Parent path is not a directory
+
+		if (stat(destinationFilePath.c_str(), &st) == 0) {							// Destination path: check for existence and disallow overwrite
+			if (S_ISDIR(st.st_mode))
+				return makeErrorResponse(403, &cfg);					
+			return makeErrorResponse(409, &cfg);						// Overwrite not allowed
+		} else
+			if (errno != ENOENT)										// ENOENT = file does not exist - OK to create
+				return makeErrorResponse(500, &cfg);
+
+		std::ofstream uploadedFile(destinationFilePath.c_str(), std::ios::binary);	// Create file for writing
+
+		if (!uploadedFile) {
+			if (errno == EACCES)
+				return makeErrorResponse(403, &cfg);
+			return makeErrorResponse(500, &cfg);
+		}
+
+		uploadedFile.write(req.body.data(), req.body.size());			// Write file contents
+
+		if (uploadedFile.fail()) {
+			uploadedFile.close();
+			std::remove(destinationFilePath.c_str());								// Cleanup incomplete file
+			return makeErrorResponse(500, &cfg);
+		}
+
+		uploadedFile.close();
+
+		HTTP_Response response;											// It's a success!!
+
+		response.status = 201;
+		response.reason = getReasonPhrase(response.status);
+		response.headers["Location"] = req.target;						// Logical path
+		response.headers["Content-Type"] = "text/plain";
+		response.headers["Content-Length"] = "0";
+		response.body.clear();
+
+		return response;
+	}
 
     // --- 2.13. Error pages custom / genérico ---
 
@@ -779,7 +882,6 @@ namespace {
 		}
 	}
 }
-
 
 HTTP_Response	handleRequest(const HTTP_Request& request, const std::vector<Server>& servers) {
 	
