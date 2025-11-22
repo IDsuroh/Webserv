@@ -34,7 +34,7 @@ void	ServerRunner::housekeeping()	{	// kill the zombies
 	
 		switch (connection.state)	{
 			case	S_HEADERS:	{
-					// 15s to deliver (next) headers
+					// 15s to deliver (next) headers (current time in milliseconds - last activiy = how long has it been)
 					const bool	headerTimeOut = (NOW - connection.lastActiveMs > HEADER_TIMEOUT_MS);
 					// 5s only when we *already* finished a KA response and are waiting for the next request
 					const bool	kaIdleTooLong = (connection.kaIdleStartMs != 0) && (NOW - connection.kaIdleStartMs > KA_IDLE_MS);
@@ -756,37 +756,38 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 void	ServerRunner::writeToClient(int clientFd)	{
 
-	std::map<int, Connection>::iterator it = _connections.find(clientFd);
+	std::map<int, Connection>::iterator it = _connections.find(clientFd);	// make sure this clientFd exists
 	if (it == _connections.end())
 		return;
 
 	Connection& connection = it->second;
 
+	// writeOffset is the index of the first byte NOT YET sent
 	if (connection.writeOffset >= connection.writeBuffer.size())	{
 		// nothing left to send → back to POLLIN
 		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
     	if (pit != _fdIndex.end())
 			_fds[pit->second].events = POLLIN;
-
+			// only about read so overwrite everything.
 		return ;
 	}
 
-	const char*	base = connection.writeBuffer.data();
+	const char*	base = connection.writeBuffer.data();	// pointer to char. Need a raw pointer for pointer arithmetic
 	while (connection.writeOffset < connection.writeBuffer.size())	{
-		const char*	buf = base + connection.writeOffset;
-		std::size_t	remaining = connection.writeBuffer.size() - connection.writeOffset;
-		ssize_t	n = write(clientFd, buf, remaining);
+		const char*	buf = base + connection.writeOffset;	// pointer to the element that is (n) char after &writeBuffer[0] 
+		std::size_t	remaining = connection.writeBuffer.size() - connection.writeOffset;	// from the writeBuffer, subtract how much were written already.
+		ssize_t		n = write(clientFd, buf, remaining);
 		if (n > 0)	{
 			connection.writeOffset += static_cast<std::size_t>(n);
 			connection.lastActiveMs = _nowMs;
 			continue;	// try to flush more
 		}
-		// Ensure we stay interested in POLLOUT so we'll retry when writable.
+		// Ensure we stay interested in POLLOUT so we'll retry writing. Only when n <= 0.
 		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
     	if (pit != _fdIndex.end())
-			_fds[pit->second].events |= POLLOUT;
+			_fds[pit->second].events = POLLOUT;
 
-		return ;
+		return ;	// Stop if the socket cannot accept more
 	}
 
 	// Finished sending the full response
@@ -816,22 +817,23 @@ void	ServerRunner::closeConnection(int clientFd)	{
 	close(clientFd);
 	_connections.erase(clientFd);
 
+	// must clean up the poll structures so we dont keep polling a dead fd
 	std::map<int, std::size_t>::iterator it = _fdIndex.find(clientFd);
     if (it == _fdIndex.end())
 		return ;	// Not present in _fds (already removed or was never added)
 
-	std::size_t	idx = it->second;
+	std::size_t	index = it->second;
 	std::size_t	last = _fds.size() - 1;
 
-	if (idx != last)	{
+	if (index != last)	{
 		// Move last entry into the removed slot
-		std::swap(_fds[idx], _fds[last]);
+		std::swap(_fds[index], _fds[last]);
 		// Update its index in the map
-		_fdIndex[_fds[idx].fd] = idx;
-	}
+		_fdIndex[_fds[index].fd] = index;
+	}	// so that we dont shift all later elements
 
-	_fds.pop_back();
-	_fdIndex.erase(it);
+	_fds.pop_back();	// remove the last index
+	_fdIndex.erase(it);	// remove the index number of where _fds were
 }
 
 /* Big Logic Flow of this pile of functions

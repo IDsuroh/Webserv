@@ -140,3 +140,12 @@ Things to clear out
 1. What is a virtual host?
 
 2. What is the difference between this virtual host and the virtual host that we are refering to when it comes to IP:ports from different servers? 
+
+What is a virtual host?
+A logical website configuration (one Server in your config) that can share the same process, IP, or even the same port with others, and is picked using Host and listen info.
+
+Difference from IP:port “virtual host” idea?
+
+IP:port separation: different sites on different listener sockets (127.0.0.1:8080 vs 127.0.0.1:8081). The kernel already tells you which one you’re on.
+
+Name-based virtual host: multiple Server configs share the same listener, and the Host header (and server_name) decides which one handles the request.
