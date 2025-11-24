@@ -58,12 +58,24 @@ int	main(int argc, char** argv) {
 		// SIG_IGN means "Ignore the signal"
 		// EPIPE = the error code write() returns when SIGPIPE is ignored (or suppressed) and the peer is closed.
 
-	Config config(argv[1]);
-	const std::vector<Server>& servers = config.getServers();
-	printConfig(servers);
+	try	{
 
-	ServerRunner	runner(servers);
-	runner.run();
+		Config	config(argv[1]);
+		const std::vector<Server>&	servers = config.getServers();
 
+		printConfig(servers);
+
+		ServerRunner	runner(servers);
+		runner.run();
+	}
+	catch(const std::exception& e)	{
+		std::cerr << "Fatal error: " << e.what() << '\n';
+		return 1;
+	}
+	catch(...)	{
+		std::cerr << "Fatal error: unknown exception\n";
+		return 1;
+	}
+	
 	return 0;
 }

@@ -126,6 +126,19 @@ Partner — App/Routing/Resources (parallelizable now)
 
 1. Do I already implement virtual hosts?
 No. Not yet and we do not need to implement.
+if we are not implementing vhost, we are;
+	a) not going to have a different behavior based on the Host: header.
+	b) we are implmenting one website per running webserv process (or per config file).
+
+if we are not serving vhost, we are serving:
+a. one webserv process + one config file -> one logical website.
+b. which can still
+	a. have multiple locations (e.g. /, /images, /cgi-bin)
+	b. serve static files
+	c. run CGI
+	d. do autoindex
+	e. etc.
+	f. However, it will not switch between multiple independent server blocks
 
 2. Why copy the servers vector in ServerRunner ctor?
 ServerRunner::ServerRunner(const std::vector<Server>& servers)
