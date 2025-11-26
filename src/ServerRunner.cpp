@@ -24,6 +24,7 @@ void	ServerRunner::housekeeping()	{	// kill the zombies
 	const long	HEADER_TIMEOUT_MS	= 15000;	// 15s to receive headers
 	const long	BODY_TIMEOUT_MS		= 30000;	// 30s to receive body
 	const long	KA_IDLE_MS			= 5000;		// 5s idle on keep-alive
+	const long	WRITE_TIMEOUT_MS	= 30000;	// 30s to finish sending response
 
 	// Sweep connections (close stale ones)
 	for (std::map<int, Connection>:: iterator	it = _connections.begin(); it != _connections.end();)	{
@@ -48,7 +49,9 @@ void	ServerRunner::housekeeping()	{	// kill the zombies
 				break;
 			}
 			case	S_WRITE:	{
-				// Nothing to do here; write timeouts handled separately.
+				// If we have been trying to write for too long without progress, drop.
+				if (NOW - connection.lastActiveMs > WRITE_TIMEOUT_MS)
+					closeIt = true;
 				break;
 			}
 			case	S_CLOSED:	{
@@ -599,6 +602,16 @@ static const Location*	longestPrefixMatch(const Server& srv, const std::string& 
 	return best;
 }
 
+void	ServerRunner::handleRequest(Connection& connection)	{
+	// For now we have a very minimal function to handle Request.
+	// Meaning it is not yet fully complete. It is just to handle the simple response.
+
+	const Server&	active = _servers[0];
+
+	connection.writeBuffer = http::build_simple_response(200, "OK", "Hello from webserv\r\n", connection.request.keep_alive);
+	connection.writeOffset = 0;
+}
+
 void	ServerRunner::readFromClient(int clientFd)	{
 
 	std::map<int, Connection>::iterator it = _connections.find(clientFd);
@@ -685,9 +698,8 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 		// Transition depending on body presence
 		if (connection.request.body_reader_state == BR_NONE)	{ // has no body to read
-			// minimal dispatcher -> build something and write
-			connection.writeBuffer = http::build_simple_response(200, "OK", "Hello\r\n", connection.request.keep_alive);	// to complete later
-			connection.writeOffset = 0;
+			// minimal dispatcher -> handle Request
+			handleRequest(connection);
 
 			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
     		if (pit != _fdIndex.end())
@@ -724,9 +736,8 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		// BR_NONE shouldn't happen; no body was expected
 
 		if (result == http::BODY_COMPLETE)	{
-			// Same fix as headers: don't leave the fd in POLLIN
-			connection.writeBuffer = http::build_simple_response(200, "OK", "Hello\r\n", connection.request.keep_alive);	// to complete later
-			connection.writeOffset = 0;
+			// minimal dispatcher -> handle Request
+			handleRequest(connection);
     		
 			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
     		if (pit != _fdIndex.end())

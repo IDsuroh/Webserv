@@ -26,7 +26,8 @@ class   ServerRunner  {
         void    acceptNewClient(int listenFd, const Server* srv);
         void    readFromClient(int clientFd);
         void    writeToClient(int clientFd);
-        void    closeConnection(int clientFd);   
+        void    closeConnection(int clientFd);
+        void    handleRequest(Connection& connection);
 };
 
 // Listeners
