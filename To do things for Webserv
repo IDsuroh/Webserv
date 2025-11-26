@@ -162,3 +162,23 @@ Difference from IP:port “virtual host” idea?
 IP:port separation: different sites on different listener sockets (127.0.0.1:8080 vs 127.0.0.1:8081). The kernel already tells you which one you’re on.
 
 Name-based virtual host: multiple Server configs share the same listener, and the Host header (and server_name) decides which one handles the request.
+
+
+-----------------------------------------------------------------------------------------------
+
+After Merge:
+
+// Somewhere you will later fork/exec CGI:
+/*
+pid_t pid = fork();
+if (pid == 0) {
+    // Child: set up stdio (dup2) to pipes or client fd first...
+
+    // TODO(macOS): Before execve, close all fds except the ones dup2’d to 0/1/2
+    // and the required pipe ends. Iterate _listeners and _connections and close the rest.
+    // We avoid F_SETFD on macOS per subject rules.
+
+    execve(path, argv, envp);
+    _exit(127);
+}
+*/
