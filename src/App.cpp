@@ -593,12 +593,366 @@ namespace {
 		return true;
 	}
 
-    // Handler lógico de CGI (a implementar com fork/exec no futuro).
-    HTTP_Response handleCgiRequest(
-        const HTTP_Request& req,
-        const EffectiveConfig& conf,
-        const std::string& fsPath
-    );
+
+	// Returns true if the request's HTTP method is permitted for CGI.
+	bool isCgiMethodAllowed(const HTTP_Request& req, const EffectiveConfig& cfg) {
+
+		const std::vector<std::string>& methodList = !cfg.cgi_allowed_methods.empty() ? cfg.cgi_allowed_methods : cfg.allowed_methods;
+
+		for (std::vector<std::string>::const_iterator it = methodList.begin(); it != methodList.end(); ++it) {
+			if (*it == req.method)
+				return true;
+		}
+
+		return false;
+	}
+
+	// Returns the file's extension if valid, or an empty string.
+	std::string getFileExtension(const std::string& fsPath) {
+
+		std::string::size_type slashPos = fsPath.rfind('/');
+		std::string::size_type dotPos = fsPath.rfind('.');
+
+		if (dotPos == std::string::npos)
+			return "";
+
+		if (slashPos != std::string::npos && dotPos < slashPos)								// Dot before the last slash - it's in a directory name, not in the filename
+			return "";
+
+		if (dotPos == fsPath.size() - 1)													// File without extension
+			return "";
+
+		if (dotPos == 0 || (slashPos != std::string::npos && dotPos == slashPos + 1))		// It's a hidden file
+			return "";
+
+		return fsPath.substr(dotPos + 1);
+	}
+
+	bool prepareCgiExecutor(const EffectiveConfig& cfg, const std::string& fsPath, std::string& outInterpreter,	std::vector<std::string>& outArgv) {
+		
+		std::string ext = getFileExtension(fsPath);
+		
+		if (ext.empty())
+			return false;
+
+		ext = '.' + ext;
+		
+		std::map<std::string, std::string>::const_iterator it = cfg.cgi_pass.find(ext);
+		if (it == cfg.cgi_pass.end())
+			return false;
+		
+		if (it->second.empty())
+			return false;
+		
+		if (access(it->second.c_str(), X_OK) != 0)
+			return false;
+
+		outInterpreter = it->second;
+
+		outArgv.clear();
+		outArgv.push_back(outInterpreter);
+		outArgv.push_back(fsPath);
+
+		return true;
+	}
+
+	// Converts SizeT to String
+	std::string toStringSizeT(std::size_t n) {
+
+		std::ostringstream oss;
+		
+		oss << n;
+
+		return oss.str();
+	}
+
+	// Converts HTTP header names into uppercase CGI environment variable format.
+	// Returns empty string when header contains invalid or unsupported characters.
+	std::string formatCgiEnvHeader(const std::string& header) {
+
+		std::string cgiEnvHeader = "HTTP_";
+		cgiEnvHeader.reserve(header.size() + 5);		// "HTTP_" = 5
+
+		for (std::string::size_type i = 0; i < header.size(); ++i) {
+			if (header[i] == '-')
+				cgiEnvHeader += '_';
+			else if (header[i] >= 'a' && header[i] <= 'z')
+				cgiEnvHeader += header[i] - 32;
+			else if ((header[i] >= 'A' && header[i] <= 'Z') || (header[i] >= '0' && header[i] <= '9'))
+				cgiEnvHeader += header[i];
+			else
+				return "";								// Signals an invalid header
+		}
+
+		return cgiEnvHeader;
+	}
+
+	// Builds CGI environment variables from HTTP request and config.
+	std::vector<std::string> buildCgiEnv(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
+		
+		std::vector<std::string> env;
+
+		env.push_back("GATEWAY_INTERFACE=CGI/1.1");
+		env.push_back("REQUEST_METHOD=" + req.method);
+		env.push_back("SCRIPT_FILENAME=" + fsPath);
+		env.push_back("REQUEST_URI=" + req.target);
+		env.push_back("SERVER_PROTOCOL=" + req.version);
+
+		std::string::size_type qMarkPos = req.target.find('?');
+		env.push_back("QUERY_STRING=" + (qMarkPos == std::string::npos ? "" : req.target.substr(qMarkPos + 1)));
+		env.push_back("SCRIPT_NAME=" + (qMarkPos == std::string::npos ? req.target : req.target.substr(0, qMarkPos)));
+
+		env.push_back("PATH_INFO=");
+		env.push_back("PATH_TRANSLATED=");
+
+		if (req.content_length > 0)
+			env.push_back("CONTENT_LENGTH=" + toStringSizeT(req.content_length));
+
+		std::map<std::string, std::string>::const_iterator it = req.headers.find("content-type");
+		env.push_back("CONTENT_TYPE=" + (it != req.headers.end() ? it->second : ""));
+
+		std::string::size_type colonPos = req.host.find(':');
+		if (colonPos != std::string::npos)										// If Host header has port we use this
+			env.push_back("SERVER_PORT=" + req.host.substr(colonPos + 1));
+		else if (!cfg.server->listen.empty()) {									// Otherwise fall back to this server's first listen directive
+			const std::string& listenStr = cfg.server->listen[0];
+			std::string::size_type listenColonPos = listenStr.find(':');
+			if (listenColonPos != std::string::npos)
+				env.push_back("SERVER_PORT=" + listenStr.substr(listenColonPos + 1));
+			else
+				env.push_back("SERVER_PORT=" + listenStr);
+		} else
+			env.push_back("SERVER_PORT=80");
+
+		env.push_back("SERVER_NAME=" + (colonPos == std::string::npos ? req.host : req.host.substr(0, colonPos)));
+
+		env.push_back("REMOTE_ADDR=127.0.0.1"); // “If you don’t have a real IP, you can use 127.0.0.1 or something neutral. (For 42 webserver it's ok) In an ideal world you’d fetch the real IP from the Connection (which lives in the core), but that would mean exposing more information to the App. It’s not worth complicating things for the project.”
+
+		for (it = req.headers.begin(); it != req.headers.end(); ++ it) {
+			if (it->first != "content-type") {
+				std::string envHeader = formatCgiEnvHeader(it->first);
+				if (!envHeader.empty())
+					env.push_back(envHeader + '=' + it->second);
+			}
+		}
+
+		env.push_back("REDIRECT_STATUS=200");
+		
+		return env;
+	}
+
+	// Internal structure used to keep CGI process pipes.
+	struct CgiPipes {
+		int		stdinParent;		// parent writes here (child reads from STDIN)
+		int		stdoutParent;  		// parent reads here (child writes to STDOUT)
+		pid_t	pid;
+	};
+	
+		// Leitura + timeout:
+		struct CgiRawOutput {
+			bool timedOut;
+			int exitStatus;          // -1 se não foi possível obter
+			std::string data;         // tudo o que veio do STDOUT
+		};
+
+	// Spawns the CGI child process and sets up stdin/stdout pipes.
+	bool spawnCgiProcess(const std::vector<std::string>& argv, const std::vector<std::string>& env, CgiPipes& pipes) {
+
+		int pipeStdin[2];
+		int pipeStdout[2];
+
+		if (pipe(pipeStdin) == -1)
+			return false;
+
+		if (pipe(pipeStdout) == -1) {
+			close(pipeStdin[0]); close(pipeStdin[1]);
+			return false;
+		}
+
+		pid_t pid = fork();
+
+		if (pid == -1) {
+			close(pipeStdin[0]); close(pipeStdin[1]); close(pipeStdout[0]);	close(pipeStdout[1]);
+			return false;
+		}
+
+		if (pid == 0) {
+
+			if (dup2(pipeStdin[0], STDIN_FILENO) == -1 || dup2(pipeStdout[1], STDOUT_FILENO) == -1) {
+				std::cerr << "CGI: dup2() failed";
+				_exit(1);
+			}
+
+			close(pipeStdin[0]); close(pipeStdin[1]); close(pipeStdout[0]);	close(pipeStdout[1]);	// Close all original pipe fds in the child
+
+			std::vector<char*> cArgv;										// Prepare argv in execve-compatible (NULL-terminated) format
+			cArgv.reserve(argv.size() + 1);
+			for (size_t i = 0; i < argv.size(); ++i)
+				cArgv.push_back(const_cast<char*>(argv[i].c_str()));
+			cArgv.push_back(NULL);
+
+			std::vector<char*> cEnvp;										// The same for envp
+			cEnvp.reserve(env.size() + 1);
+			for (size_t i = 0; i < env.size(); ++i)
+				cEnvp.push_back(const_cast<char*>(env[i].c_str()));
+			cEnvp.push_back(NULL);
+
+			execve(cArgv[0], &cArgv[0], &cEnvp[0]);
+			_exit(1);
+		}
+
+		close(pipeStdin[0]); close(pipeStdout[1]);
+
+		pipes.stdinParent = pipeStdin[1];
+		pipes.stdoutParent = pipeStdout[0];
+		pipes.pid = pid;
+
+		return true;
+	}
+
+	CgiRawOutput readCgiOutput(const CgiPipes& pipes, std::size_t timeoutSeconds, const std::string& requestBody) {
+
+		if (!requestBody.empty()) {													// 1. Write the request body into the CGI's stdin
+
+			size_t		written = 0;
+			size_t		remaining = requestBody.size();
+			const char*	data = requestBody.data();
+
+			while (remaining > 0) {
+				ssize_t n = write(pipes.stdinParent, data + written, remaining);
+
+				if (n > 0) {
+					written += n;
+					remaining -= n;
+					continue;
+				}
+
+				break;																// (n <= 0) pipe closed or write error (we cannot inspect errno here) - stop writing immediately
+			}
+		}
+		close(pipes.stdinParent);													// Close stdin so the CGI knows the request body has ended
+
+		int flags = fcntl(pipes.stdoutParent, F_GETFL, 0);							// 2. Make the CGI stdout pipe non-blocking
+		if (flags != -1)
+			fcntl(pipes.stdoutParent, F_SETFL, flags | O_NONBLOCK);
+
+		struct timeval start;														// 3. Build a timeout deadline using gettimeofday
+		gettimeofday(&start, NULL);
+		long long deadlineMs = (static_cast<long long>(start.tv_sec) * 1000 ) + (static_cast<long long>(start.tv_usec) / 1000) + (static_cast<long long>(timeoutSeconds) * 1000);		// Cast to long long prevents overflow when multiplying by 1000
+
+		CgiRawOutput cgiOutput;														// Struct holding the final CGI result (timeout, exit code, data)
+		cgiOutput.timedOut = false;
+		cgiOutput.exitStatus = -1;
+
+		bool eof = false;															// Indicates whether end-of-output (EOF) has been reached
+		int childStatus = 0;														// Stores the child's exit status for waitpid()
+
+		while (!eof && !cgiOutput.timedOut) {										// Main loop: read CGI stdout until EOF or timeout
+
+			struct timeval now;														// Check the absolute timeout
+			gettimeofday(&now, NULL);
+			long long nowMs = (static_cast<long long>(now.tv_sec) * 1000) + (static_cast<long long>(now.tv_usec) / 1000);
+
+			long long remainingMs = deadlineMs - nowMs;
+			if (remainingMs <= 0) {
+				cgiOutput.timedOut = true;
+				break;
+			}
+
+			struct pollfd pfd;														// poll() avoids blocking and detects readable data or EOF
+			pfd.fd = pipes.stdoutParent;
+			pfd.events = POLLIN | POLLHUP | POLLERR;
+			pfd.revents = 0;
+
+			int res = poll(&pfd, 1, static_cast<int>(remainingMs));
+
+			if (res == 0) {															// poll timeout reached
+				cgiOutput.timedOut = true;
+				break;
+			}
+
+			if (res < 0) {
+				if (errno == EINTR)													// Interrupted by signal - retry poll
+					continue;
+				eof = true;															// Permanent poll error (EBADF, EINVAL, ...) - stop reading
+				break;
+			}
+
+			waitpid(pipes.pid, &childStatus, WNOHANG);								// Reap child if it finished (prevents zombies, enables POLLHUP timing)
+			
+			if (pfd.revents & POLLERR) {											// Fatal error on the file descriptor - no further reads are possible
+				eof = true;
+				continue;
+			}
+
+			if (pfd.revents & POLLIN) {												// There is data available to read
+
+				char buf[4096];														// 4096 = typical memory page size - efficient for pipe I/O
+
+				for (;;) {
+
+					ssize_t n = read(pfd.fd, buf, sizeof(buf));
+
+					if (n > 0) {
+						cgiOutput.data.append(buf, static_cast<std::size_t>(n));
+						continue;
+					}
+
+					if (n == 0) {													// EOF (pipe is fully drained)
+						eof = true;
+						break;
+					}
+					
+					break;															// n < 0: non-blocking read and nothing available right now (could be EAGAIN / EWOULDBLOCK / EINTR, but we cannot use errno after read)
+				}
+			}
+			else if (pfd.revents & POLLHUP) {										// HUP without POLLIN - Writer side (CGI) closed stdout - definitive EOF and no data signaled
+				eof = true;
+			}
+		} 
+
+		if (cgiOutput.timedOut) {													// 4. Timeout - kill the CGI process
+			kill(pipes.pid, SIGKILL);
+			waitpid(pipes.pid, NULL, 0);
+			close(pipes.stdoutParent);
+			return cgiOutput;
+		}
+
+		if (waitpid(pipes.pid, &childStatus, 0) > 0) {								// Retrieve the final exit status of the CGI
+			if (WIFEXITED(childStatus))
+				cgiOutput.exitStatus = WEXITSTATUS(childStatus);
+			else if (WIFSIGNALED(childStatus))
+				cgiOutput.exitStatus = 128 + WTERMSIG(childStatus);
+		}
+
+		close(pipes.stdoutParent);													// Close the reading end of the pipe
+
+		return cgiOutput;
+	}
+
+	// Parse do output CGI:
+	struct CgiParsedOutput {
+		int status;                             // 0 se ausência de Status:
+		std::string reason;
+		std::map<std::string, std::string> headers;
+		std::string body;
+		bool headers_ok;
+	};
+
+	CgiParsedOutput parseCgiOutput(const std::string& raw);
+
+	HTTP_Response buildCgiHttpResponse(const CgiParsedOutput& out,
+									const EffectiveConfig& cfg,
+									const HTTP_Request& req);
+
+
+
+	// Handler lógico de CGI (a implementar com fork/exec no futuro).
+	HTTP_Response handleCgiRequest(
+		const HTTP_Request& req,
+		const EffectiveConfig& conf,
+		const std::string& fsPath
+	);
 
 	// --- 2.12. Uploads ---
 

@@ -28,5 +28,6 @@
 #include <climits>
 #include <limits>
 #include <dirent.h>
+#include <sys/wait.h>
 
 #endif
