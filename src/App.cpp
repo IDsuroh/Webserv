@@ -593,7 +593,6 @@ namespace {
 		return true;
 	}
 
-
 	// Returns true if the request's HTTP method is permitted for CGI.
 	bool isCgiMethodAllowed(const HTTP_Request& req, const EffectiveConfig& cfg) {
 
@@ -628,6 +627,7 @@ namespace {
 		return fsPath.substr(dotPos + 1);
 	}
 
+	// Prepares interpreter and arguments for executing a CGI script.
 	bool prepareCgiExecutor(const EffectiveConfig& cfg, const std::string& fsPath, std::string& outInterpreter,	std::vector<std::string>& outArgv) {
 		
 		std::string ext = getFileExtension(fsPath);
@@ -810,6 +810,8 @@ namespace {
 		return true;
 	}
 
+	// Writes request body to CGI and reads its output with timeout.
+	// Handles non-blocking pipes, EOF detection, and child exit status.
 	CgiRawOutput readCgiOutput(const CgiPipes& pipes, std::size_t timeoutSeconds, const std::string& requestBody) {
 
 		if (!requestBody.empty()) {													// 1. Write the request body into the CGI's stdin
@@ -930,29 +932,210 @@ namespace {
 		return cgiOutput;
 	}
 
-	// Parse do output CGI:
+	// Parse CGI output:
 	struct CgiParsedOutput {
-		int status;                             // 0 se ausência de Status:
-		std::string reason;
-		std::map<std::string, std::string> headers;
-		std::string body;
-		bool headers_ok;
+		int									status;									// 0 in case of missing status:
+		std::string							reason;
+		std::map<std::string, std::string>	headers;
+		std::string							body;
+		bool								headersValid;
+
+		CgiParsedOutput()
+			: status(0)
+			, reason()
+			, headers()
+			, body()
+			, headersValid(false)
+		{}
 	};
 
-	CgiParsedOutput parseCgiOutput(const std::string& raw);
+	/* Trim helpers (ASCII space/tab/CR/LF). */
+	std::string trimLeft(const std::string& s)  {
+		std::size_t i = 0;
+		while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n'))
+			++i;
+		return s.substr(i);
+	}
 
-	HTTP_Response buildCgiHttpResponse(const CgiParsedOutput& out,
-									const EffectiveConfig& cfg,
-									const HTTP_Request& req);
+	std::string trimRight(const std::string& s) {
+		if (s.empty())
+			return s;
+		std::size_t i = s.size();
+		while (i > 0 && (s[i - 1] == ' ' || s[i - 1] == '\t' || s[i - 1] == '\r' || s[i - 1] == '\n'))
+			--i;
+		return s.substr(0, i);
+	}
 
+	std::string trim(const std::string& s)  {
+		return trimRight(trimLeft(s));
+	}
 
+	/* Lowercase a copy of a string (ASCII). */
+	std::string toLowerCopy(const std::string& s)   {
+		std::string out(s);	// copy constructor
+		for (std::size_t i = 0; i < out.size(); ++i)    {
+			unsigned char   c = static_cast<unsigned char>(out[i]);
+			out[i] = static_cast<char>(std::tolower(c));
+		}
+		return out;
+	}
 
-	// Handler lógico de CGI (a implementar com fork/exec no futuro).
-	HTTP_Response handleCgiRequest(
-		const HTTP_Request& req,
-		const EffectiveConfig& conf,
-		const std::string& fsPath
-	);
+	// Parses raw CGI response headers and body.
+	CgiParsedOutput parseCgiOutput(const std::string& raw) {
+
+		std::string 			remainingHeaders;
+		CgiParsedOutput			parsedOutput;
+		std::string::size_type	pos;
+
+		pos = raw.find("\r\n\r\n");
+		if (pos == std::string::npos) {					// Missing CRLFCRLF: breaks CGI header rules (RFC3875) and should trigger 502.
+			parsedOutput.headersValid = false;
+			parsedOutput.body = raw;
+			return parsedOutput;
+		}
+		
+		parsedOutput.headersValid = true;
+
+		remainingHeaders = raw.substr(0, pos);
+		parsedOutput.body = raw.substr(pos + 4);
+
+		for (;;) {
+
+			pos = remainingHeaders.find("\r\n");
+			if (pos == std::string::npos)
+				break;
+
+			std::string currentHeader = remainingHeaders.substr(0, pos);
+			remainingHeaders = remainingHeaders.substr(pos + 2);
+
+			pos = currentHeader.find(':');
+			if (pos == std::string::npos)
+				continue;
+			
+			std::string name  = trim(currentHeader.substr(0, pos));
+			std::string value = trim(currentHeader.substr(pos + 1));
+
+			if (!name.empty())
+				parsedOutput.headers[toLowerCopy(name)] = value;
+		}
+
+		std::map<std::string, std::string>::const_iterator it = parsedOutput.headers.find("status");
+		if (it != parsedOutput.headers.end()) {
+			pos = it->second.find(' ');
+			if (pos != std::string::npos) {
+				parsedOutput.status = std::atoi(it->second.substr(0, pos).c_str());
+				parsedOutput.reason = trim(it->second.substr(pos + 1));
+			} else {
+				parsedOutput.status = std::atoi(it->second.c_str());
+				parsedOutput.reason.clear();
+			}
+			parsedOutput.headers.erase(it);
+		}
+
+		return parsedOutput;
+	}
+
+	// std::string getReasonPhrase(int status);
+
+	// Builds a complete HTTP response from the parsed CGI output,
+	// applying CGI status fallback rules, copying all headers,
+	// recalculating Content-Length for safety, and returning the
+	// exact body produced by the CGI script.
+	HTTP_Response buildCgiHttpResponse(const CgiParsedOutput& out) {
+
+		HTTP_Response res;
+		std::map<std::string, std::string>::const_iterator it;
+
+		if (out.status != 0) {											// CGI provided an explicit "Status:" header - use it
+			res.status = out.status;
+			if (out.reason.empty())
+				res.reason = getReasonPhrase(out.status);
+			else
+				res.reason = out.reason;
+		} else {														// No "Status:" header - apply CGI fallback rules
+			it = out.headers.find("location");
+			if (it != out.headers.end()) {								// Classic CGI implicit redirect: a Location header without Status implies 302 Found (old CGI scripts)
+				res.status = 302;
+				res.reason = getReasonPhrase(res.status);
+			} else {													// Normal case: successful response without explicit status
+				res.status = 200;
+				res.reason = getReasonPhrase(res.status);
+			}
+		}
+
+		for (it = out.headers.begin(); it != out.headers.end(); ++it) {	// Copy CGI headers, skipping those managed by the core
+			if (it->first == "content-length" || it->first == "connection" || it->first == "transfer-encoding")
+				continue;
+			res.headers[it->first] = it->second;
+		}
+
+		std::ostringstream oss;											// Always recompute Content-Length - safer than trusting a value provided by the CGI script
+		oss << out.body.size();
+		res.headers["content-length"] = oss.str();
+
+		res.body = out.body;											// Copy the body exactly as produced by the CGI
+		res.close = false;												// Do not decide connection closing here - final keep-alive/close behaviour will be applied later
+
+		return res;
+	}
+	
+	/*
+		CGI logical handler
+		- It encapsulates the entire lifecycle of a CGI execution
+		- It validates, prepares, runs, gathers, and converts the external output into a correct HTTP response that complies with the protocol.
+	*/
+	HTTP_Response handleCgiRequest(const HTTP_Request& req,	const EffectiveConfig& cfg, const std::string& fsPath)	{
+
+		if (!isCgiMethodAllowed(req, cfg))
+			return makeErrorResponse(405, &cfg);
+
+		struct stat st;
+
+		if (stat(fsPath.c_str(), &st) != 0)			// Doesn't exist
+			return makeErrorResponse(404, &cfg);
+
+		if (!S_ISREG(st.st_mode))					// Not a regular file
+			return makeErrorResponse(403, &cfg);
+
+		if (access(fsPath.c_str(), R_OK) != 0)		// No read permissions
+			return makeErrorResponse(403, &cfg);
+
+		std::string	interpreter;
+		std::vector<std::string> argv;
+		if (!prepareCgiExecutor(cfg, fsPath, interpreter, argv))
+			return makeErrorResponse(502, &cfg);
+
+		std::vector<std::string> envp = buildCgiEnv(req, cfg, fsPath);
+
+		CgiPipes pipes;
+		if (!spawnCgiProcess(argv, envp, pipes))
+			return makeErrorResponse(502, &cfg);
+
+		CgiRawOutput raw = readCgiOutput(pipes, cfg.cgi_timeout, req.body);
+
+		if (raw.timedOut)
+			return makeErrorResponse(504, &cfg);
+
+		if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty()))
+			return makeErrorResponse(502, &cfg);
+
+		CgiParsedOutput parsedOutput = parseCgiOutput(raw.data);
+
+		if (!parsedOutput.headersValid)
+			return makeErrorResponse(502, &cfg);
+
+		std::map<std::string, std::string>::const_iterator itContentType = parsedOutput.headers.find("content-type");
+		std::map<std::string, std::string>::const_iterator itRedirection = parsedOutput.headers.find("location");
+		if (itContentType == parsedOutput.headers.end() && itRedirection == parsedOutput.headers.end())
+			return makeErrorResponse(502, &cfg);
+
+		HTTP_Response response = buildCgiHttpResponse(parsedOutput);
+
+		if (req.keep_alive == false)
+			response.close = true;
+
+		return response;
+	}
 
 	// --- 2.12. Uploads ---
 
