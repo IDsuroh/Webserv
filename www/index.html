@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Webserv Test</title>
+        <link rel="stylesheet" href="/static/style.css">
+    </head>
+    <body>
+        <header class="site-header">
+            <div class="container">
+                <h1>Webserv</h1>
+                <p class="tagline">A tiny static site to test our HTTP server.</p>
+            </div>
+        </header>
+
+        <nav class="site-nav">
+            <div class="container">
+                <a href="/">Home</a>
+                <a href="/files/">Files</a>
+                <a href="/upload/">Upload</a>
+                <a href="/trash/">Trash</a>
+                <a href="/cgi-bin/test.py">CGI Test</a>
+                <a href="/stress/readonly">Stress Readonly</a>
+                <a href="/stress/small">Stress Small</a>
+                <a href="/stress/large">Stress Large</a>
+                <a href="/stress/upload">Stress Upload</a>
+            </div>
+        </nav>
+
+        <main class="container">
+            <section class="intro">
+                <h2>Welcome!</h2>
+                <p>
+                    If you can see this page, the basic <strong>GET</strong> handling and
+                    static file serving are working. Use the tiles below to navigate to
+                    different parts of our Webserv project.
+                </p>
+            </section>
+
+            <section class="cards">
+                <article class="card">
+                    <h3>Browse Files</h3>
+                    <p>
+                        Lists the contents of <code>www/files/</code>. Great for testing
+                        <strong>autoindex</strong> and directory handling.
+                    </p>
+                    <a class="button" href="/files/">Go to /files/</a>
+                </article>
+
+                <article class="card">
+                    <h3>Upload Area</h3>
+                    <p>
+                        Endpoint backed by <code>www/upload/</code>. Use it to test
+                        <strong>POST</strong> request and file uploads.
+                    </p>
+                    <a class="button" href="/upload/">Go to /upload/</a>
+                </article>
+
+                <article class="card">
+                    <h3>Trash Area</h3>
+                    <p>
+                        Files under <code>www/trash/</code> can be listed with GET and
+                        removed with <strong>DELETE</strong> requests.
+                    </p>
+                    <a class="button" href="/trash/">Go to /trash/</a>
+                </article>
+
+                <article class="card">
+                    <h3>CGI Test</h3>
+                    <p>
+                        Runs <code>cgi-bin/test.py</code>. Use this to check our
+                        <strong>CGI</strong> implementation for GET and POST.
+                    </p>
+                    <a class="button" href="/cgi-bin/test.py">Run CGI</a>
+                </article>
+
+                <article class="card">
+                    <h3>Readonly Endpoint</h3>
+                    <p>
+                        A simple endpoint to trigger <strong>405 Method Not Alowed</strong>
+                        for POST/DELETE while allowing GET.
+                    </p>
+                    <a class="button" href="/stress/readonly">Go to /stress/readonly</a>
+                </article>
+
+                <article class="card">
+                    <h3>Stress Endpoints</h3>
+                    <p>
+                        Use our Python scripts to test these:
+                        <code>/stress/small</code>, <code>/stress/large</code>,
+                        <code>/stress/upload</code>.
+                    </p>
+                    <a class="button" href="/stress/small">Try /stress/small</a>
+                </article>
+            </section>
+        </main>
+
+        <footer class="site-footer">
+            <div class="container">
+                <p>Webserv &mdash; 42 project HTTP server.</p>
+            </div>
+        </footer>
+    </body>
+</html>

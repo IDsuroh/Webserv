@@ -14,7 +14,6 @@ namespace http  {
 
     BodyResult  consume_body_content_length(Connection& connection, std::size_t max_body, int& status, std::string& reason);
     BodyResult  consume_body_chunked(Connection& connection, std::size_t max_body, int& status, std::string& reason);
-	BodyResult	consume_all_trailers(std::string& buffer, std::size_t max_line, int& status, std::string& reason);
 
 }   //namespace http
 

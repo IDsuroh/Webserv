@@ -174,7 +174,7 @@ namespace http  {
                 }
 
                 case CS_TRAILERS:   {
-                    BodyResult  trail = http::consume_all_trailers(connection.readBuffer, MAX_LINE, status, reason);
+                    BodyResult  trail = consume_all_trailers(connection.readBuffer, MAX_LINE, status, reason);
 
                     if (trail != BODY_COMPLETE)
                         return trail;  // BODY_INCOMPLETE or BODY_ERROR (propagate)

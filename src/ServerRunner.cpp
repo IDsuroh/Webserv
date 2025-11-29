@@ -607,6 +607,7 @@ void	ServerRunner::handleRequest(Connection& connection)	{
 	// Meaning it is not yet fully complete. It is just to handle the simple response.
 
 	const Server&	active = _servers[0];
+	(void)active;
 
 	connection.writeBuffer = http::build_simple_response(200, "OK", "Hello from webserv\r\n", connection.request.keep_alive);
 	connection.writeOffset = 0;
