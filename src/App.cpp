@@ -879,8 +879,6 @@ namespace {
 				eof = true;															// Permanent poll error (EBADF, EINVAL, ...) - stop reading
 				break;
 			}
-
-			waitpid(pipes.pid, &childStatus, WNOHANG);								// Reap child if it finished (prevents zombies, enables POLLHUP timing)
 			
 			if (pfd.revents & POLLERR) {											// Fatal error on the file descriptor - no further reads are possible
 				eof = true;
