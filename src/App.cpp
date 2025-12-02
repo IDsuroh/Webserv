@@ -87,6 +87,9 @@ namespace {
 		std::size_t							cgi_timeout;
 		std::vector<std::string>			cgi_allowed_methods;
 
+		int									redirect_status;	// 0 - No redirect
+		std::string							redirect_target;
+
 		EffectiveConfig()
 			: server(NULL)
 			, location(NULL)
@@ -100,6 +103,8 @@ namespace {
 			, cgi_pass()
 			, cgi_timeout(kDefaultCgiTimeout)
 			, cgi_allowed_methods()
+			, redirect_status(0)
+			, redirect_target()
 			{}
 	};
 
@@ -251,6 +256,17 @@ namespace {
 			cfg.cgi_allowed_methods = splitWords(value);
 		else
 			cfg.cgi_allowed_methods = cfg.allowed_methods;
+
+		if (getDirectiveValue(loc, srv, "return", value)) {
+			std::vector<std::string> tokens = splitWords(value);
+			if (tokens.size() == 2) {
+				int status = parseHttpStatus(tokens[0]);
+				if (status >= 300 && status <= 399) {
+					cfg.redirect_status = status;
+					cfg.redirect_target = tokens [1];
+				}
+			}
+		}
 
 		return cfg;
 	}
@@ -1378,6 +1394,38 @@ namespace {
 		return response;
 	}
 
+
+
+	HTTP_Response makeRedirectResponse(int status, const std::string& location) {
+
+		if (status < 300 || status > 399)
+			status = 302;
+		
+		HTTP_Response res;
+
+		res.status = status;
+		res.reason = getReasonPhrase(res.status);
+		res.headers["location"] = location;
+		res.headers["content-type"] = "text/html";
+
+		std::ostringstream body;
+		body << "<!DOCTYPE html>\n"
+			<< "<html><head><meta charset=\"utf-8\">"
+			<< "<title>" << res.status << ' ' << res.reason << "</title></head>"
+			<< "<body><h1>" << res.status << ' ' << res.reason << "</h1>"
+			<< "<p>Resource moved to <a href=\"" << location << "\">" << location << "</a></p>"
+			<< "</body></html>";
+
+		res.body = body.str();
+
+		std::ostringstream length;
+		length << res.body.size();
+		res.headers["content-length"] = length.str();
+
+		return res;
+	}
+	
+
 	// --- 2.14. MIME types ---
 
 	// Determines the Content-Type from the file extension.
@@ -1444,6 +1492,13 @@ HTTP_Response	handleRequest(const HTTP_Request& request, const std::vector<Serve
 
 	// 4) Build effective configuration (merge Server + Location)
 	EffectiveConfig config = buildEffectiveConfig(server, location);
+	
+	// Insertion) Redirections
+	if (config.redirect_status != 0) {
+		HTTP_Response response = makeRedirectResponse(config.redirect_status, config.redirect_target);	
+		applyConnectionHeader(request, response);
+		return response;
+	}
 
 	// 5.1) Check if method is implemented at all
 	if (request.method != "GET"	&& request.method != "POST"	&& request.method != "DELETE") {
@@ -1498,7 +1553,15 @@ HTTP_Response	handleRequest(const HTTP_Request& request, const std::vector<Serve
 			break;
 
 		case RK_DIRECTORY:
-			response = handleDirectoryRequest(request, config, fsPath, path);
+			if (path.empty() || path[path.size() - 1] != '/') {
+				std::string redirectUrl = path + '/';	
+				if (!query.empty()) {
+					redirectUrl += '?';
+					redirectUrl += query;
+				}
+				response = makeRedirectResponse(301, redirectUrl);						// Tipical choice - could be 302
+			} else
+				response = handleDirectoryRequest(request, config, fsPath, path);
 			break;
 
 		case RK_STATIC_FILE:
