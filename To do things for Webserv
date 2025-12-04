@@ -183,48 +183,130 @@ if (pid == 0) {
 }
 */
 
-✅ Now:
+✅ WEBSERV IMPLEMENTATION CHECKLIST
 
-Keep your final webserv.conf.
+(Only start each phase when the previous one works)
 
-Keep your www/ structure and HTML/CSS ready.
+✔ NOW (before your partner finishes)
 
-⏳ When basic GET works
+Just prepare the environment.
 
-Test /, /static/style.css, /files/file1.txt.
+ Final webserv.conf ready
 
-(Optionally) write a tiny GET stress script and save it for later.
+ www/ folder with:
 
-⏳ When autoindex works
+index.html
 
-Test /files/, /upload/, /trash/.
+static/style.css
 
-Maybe small GET stress on /files/.
+files/file1.txt
 
-⏳ When big file send works
+upload/ (empty)
 
-Test /stress/small.html and /stress/large.bin.
+trash/ (empty)
 
-Now GET stress on these two becomes meaningful.
+cgi-bin/test.py
 
-⏳ When DELETE works
+stress/small.html
 
-Test /trash/test.txt create + DELETE.
+stress/large.bin
 
-Optional simple DELETE stress.
+stress/upload/
 
-⏳ When POST + upload work
+ All error pages in errors/
 
-Test /upload/foo.txt manually.
+⏳ WHEN BASIC GET WORKS
 
-Only now:
+(Root mapping + static file serving)
 
-POST stress to /upload/...
+Test:
 
-POST body stress to /stress/upload.
+ GET / → www/index.html
 
-⏳ When CGI works
+ GET /static/style.css
 
-Test /cgi-bin/test.py.
+ GET /files/file1.txt
 
-Optional CGI stress.
+Optional but nice:
+
+ Write a simple GET stress script (don’t run yet)
+
+⏳ WHEN AUTOINDEX WORKS
+
+(Directory listing)
+
+Test:
+
+ GET /files/ → autoindex listing
+
+ GET /upload/ → autoindex listing
+
+ GET /trash/ → autoindex listing
+
+Optional:
+
+ Light GET stress on /files/
+
+⏳ WHEN BIG FILE SEND WORKS
+
+(Chunked file reads / large responses)
+
+Test:
+
+ GET /stress/small.html
+
+ GET /stress/large.bin
+
+Confirm Content-Length
+
+Confirm server doesn’t hang/crash
+
+Now GET stress is fully meaningful:
+
+ Run GET stress against /stress/small.html
+
+ Run GET stress against /stress/large.bin
+
+⏳ WHEN DELETE WORKS
+
+Test:
+
+ Create a file: www/trash/test.txt
+
+ GET /trash/ shows it
+
+ DELETE /trash/test.txt
+
+ GET /trash/ no longer shows it
+
+Optional:
+
+ Simple DELETE stress (delete files repeatedly + recreate)
+
+⏳ WHEN POST + UPLOAD WORKS
+
+Test:
+
+ POST /upload/foo.txt (upload a real file)
+
+ GET /upload/foo.txt returns it
+
+ client_max_body_size respected
+
+Now POST stress becomes meaningful:
+
+ POST stress to /upload/filename
+
+ POST body stress to /stress/upload (high-volume raw POST)
+
+⏳ WHEN CGI WORKS
+
+Test:
+
+ GET /cgi-bin/test.py returns correct HTML
+
+ POST /cgi-bin/test.py prints method/body correctly
+
+Optional:
+
+ Light CGI stress testing (ensure no zombie processes, no leaks)
