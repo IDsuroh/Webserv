@@ -23,21 +23,15 @@ CYAN    := \033[1;36m
 RED     := \033[1;31m
 RESET   := \033[0m
 
-all: loading $(NAME)
+# Default target: run spinner, then build the binary if needed
+all: $(NAME)
 
-# "Loading screen" with a buffering circle animation (POSIX sh compatible)
-loading:
-	@printf "$(CYAN)Building $(NAME) $(RESET)"
-	@for s in ◐ ◓ ◑ ◒ ◐ ◓ ◑ ◒; do \
-		printf "\r$(CYAN)Building $(NAME) $$s$(RESET)"; \
-		sleep 0.15; \
-	done; \
-	printf "\r$(CYAN)Building $(NAME) ◉$(RESET)\n"
-
+# Binary depends ONLY on object files
 $(NAME): $(OBJS)
 	@printf "$(GREEN)[Link]$(RESET)  $@\n"
 	@$(CXX) $(CXXFLAGS) -o $@ $(OBJS)
 
+# Compile rule: .cpp -> obj/*.o
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)
 	@printf "$(YELLOW)[Compiling]$(RESET) $<\n"
