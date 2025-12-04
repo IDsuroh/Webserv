@@ -182,3 +182,49 @@ if (pid == 0) {
     _exit(127);
 }
 */
+
+✅ Now:
+
+Keep your final webserv.conf.
+
+Keep your www/ structure and HTML/CSS ready.
+
+⏳ When basic GET works
+
+Test /, /static/style.css, /files/file1.txt.
+
+(Optionally) write a tiny GET stress script and save it for later.
+
+⏳ When autoindex works
+
+Test /files/, /upload/, /trash/.
+
+Maybe small GET stress on /files/.
+
+⏳ When big file send works
+
+Test /stress/small.html and /stress/large.bin.
+
+Now GET stress on these two becomes meaningful.
+
+⏳ When DELETE works
+
+Test /trash/test.txt create + DELETE.
+
+Optional simple DELETE stress.
+
+⏳ When POST + upload work
+
+Test /upload/foo.txt manually.
+
+Only now:
+
+POST stress to /upload/...
+
+POST body stress to /stress/upload.
+
+⏳ When CGI works
+
+Test /cgi-bin/test.py.
+
+Optional CGI stress.
