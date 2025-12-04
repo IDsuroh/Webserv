@@ -2,7 +2,7 @@
 #include "../include/ServerRunner.hpp"
 
 // Print Structures Tester Function
-static void	printConfig(const std::vector<Server>& servers)	{
+/*static void	printConfig(const std::vector<Server>& servers)	{
 
 	for (size_t s = 0; s < servers.size(); ++s)	{
 		const Server&	srv = servers[s];
@@ -43,7 +43,7 @@ static void	printConfig(const std::vector<Server>& servers)	{
 
 	}
 	std::cout << std::endl;
-}
+}*/
 
 int	main(int argc, char** argv) {
 
