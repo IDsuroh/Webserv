@@ -63,7 +63,7 @@ int	main(int argc, char** argv) {
 		Config	config(argv[1]);
 		const std::vector<Server>&	servers = config.getServers();
 
-		printConfig(servers);
+		//printConfig(servers);
 
 		ServerRunner	runner(servers);
 		runner.run();
