@@ -1,17 +1,63 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   App.cpp                                            :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
+/*   Updated: 2025/12/06 21:34:05 by hugo-mar         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
+/*	---------------------------------------------------------------------------
+	Application Layer ("App") of the Webserver
+
+	This module receives a fully parsed HTTP_Request from the core layer and
+	decides how to generate the corresponding HTTP_Response.
+
+	Responsibilities:
+		- Parse and normalise the request target (path + query)
+		- Select the Server block and its matching Location
+		- Build the EffectiveConfig merging server/location directives
+		- Apply redirects, method validation and body constraints
+		- Map logical paths to the filesystem and enforce anti-traversal rules
+		- Classify the request (static file, directory, CGI, upload, etc.)
+		- Delegate to the appropriate handler to produce the final response
+		- Set connection headers (keep-alive / close)
+
+	Why "App"?
+		In a typical HTTP server architecture, the "Application Layer" is the
+		component that interprets the request semantically and makes the logical
+		decisions about how it should be served. It is separate from:
+		- the core networking layer (poll/select, buffering, parsing),
+		- the configuration parser,
+		- the HTTP serializer.
+
+	The App therefore represents everything that turns a valid HTTP request
+	into a meaningful HTTP response using the server configuration and the
+	filesystem/CGI handlers.
+	------------------------------------------------------------------------- */
+
 #include "App.hpp"
 
 namespace {
 
-	// --- 2.1. Target (path + query) ---
+	// --------------------------------
+	// --- 1. Target (path + query) ---
+	// --------------------------------
 
-	// Extracts the path and query from req.target.
-	// Returns false if the target is invalid (e.g. empty or in an unsupported format).
+	/*
+	Extracts and parses the request target into path and query components.
+	Expects an origin-form target (starting with '/').
+	Returns true on success, false if the target is empty or the path is invalid.
+	*/
 	bool parseTarget(const HTTP_Request& request, std::string& path, std::string& query) {
 
 		if (request.target.empty())
 			return false;
 		
-		std::size_t questionMark = request.target.find('?');
+		std::string::size_type	questionMark = request.target.find('?');
 
 		if (questionMark == std::string::npos) {
 			path = request.target;
@@ -27,26 +73,39 @@ namespace {
 		return true;
 	}
 
-	// --- 2.2. Server selection (vhost) ---
+	
+	// -----------------------------------
+	// --- 2. Server selection (vhost) ---
+	// -----------------------------------
 
-	// Selects the Server based on the Host header / server_name.
-	// Always returns a valid Server (e.g. the default one if no match is found).
+	/*
+	Selects the appropriate virtual server based on the Host header.
+	Returns the first matching server_name; falls back to servers[0] if none match.
+	*/
 	const Server& selectServer(const std::vector<Server>& servers, const HTTP_Request& request) {
 
 		for (size_t i = 0; i < servers.size(); ++i) {
+
 			std::vector<std::string>::const_iterator it;
+
 			it = std::find(servers[i].server_name.begin(), servers[i].server_name.end(), request.host);
+
 			if (it != servers[i].server_name.end())
 				return servers[i];
 		}
 
-		return servers[0];
+		return servers[0];						// Falls back to the first server, matching real-world default vhost behavior (NGINX/Apache).
 	}
 
-	// --- 2.3. Location selection (longest prefix) ---
 
-	// Performs a longest prefix match against the path.
-	// Returns a pointer to the matching Location, or NULL if none matches.
+	// ----------------------------------------------
+	// --- 3. Location selection (longest prefix) ---
+	// ----------------------------------------------
+
+	/*
+	Performs longest-prefix matching to find the best location for the request path.
+	A location matches only if the prefix boundary is valid. Returns NULL if none match.
+	*/
 	const Location* matchLocation(const Server& server, const std::string& requestPath) {
 
 		const Location*	bestMatchLocation = NULL;
@@ -54,60 +113,74 @@ namespace {
 		for (std::vector<Location>::const_iterator it = server.locations.begin(); it != server.locations.end(); ++ it) {
 
 			const std::string& locationPath = it->path;
-			bool match = (requestPath.compare(0, locationPath.size(), locationPath) == 0);
-			bool boundary = (requestPath.size() == locationPath.size() ||
+			bool match = (requestPath.compare(0, locationPath.size(), locationPath) == 0);										// Is locationPath a prefix of requestPath?
+			bool boundary = (requestPath.size() == locationPath.size() ||														// '/ap' cannot match '/api'.
 							(requestPath.size() > locationPath.size() && requestPath[locationPath.size()] == '/'));
 
-			if (match && boundary && (bestMatchLocation == NULL || bestMatchLocation->path.size() < locationPath.size()))
-				bestMatchLocation = &(*it);
+			if (match && boundary && (bestMatchLocation == NULL || bestMatchLocation->path.size() < locationPath.size()))		// Longest prefix match
+				bestMatchLocation = &(*it);																						// Gives the address of the Location object pointed to by the iterator
 		}
 
 		return bestMatchLocation;
 	}
 
-	// --- 2.4. Effective config (merge Server + Location) ---
 
-	// Effective configuration for a request, produced by merging Server- and Location-level directives.
+	// -----------------------------------------------------
+	// --- 4. Effective config (merge Server + Location) ---
+	// -----------------------------------------------------
+
+	// --- 4.1. Effective Config Utilities (helper functions and structs) ---
+
+	/*
+	Default limits for maximum request body size and CGI execution timeout (default configuration constants).
+	*/
 	const std::size_t	kDefaultClientMaxBodySize =	1024 * 1024;	// 1 MiB - use MiB for an exact binary body-size limit
 	const std::size_t	kDefaultCgiTimeout = 		30;				// 30 seconds
 
+	/*
+	Holds the merged Server and Location directives for handling a request.
+	Provides resolved defaults, limits, CGI options, and redirect configuration.
+	*/
 	struct EffectiveConfig {
-		const Server*						server;			// never NULL
-		const Location*						location;		// may be NULL
+		const Server*						server;					// never NULL
+		const Location*						location;				// may be NULL
 
 		std::string							root;
 		bool								autoindex;
-		std::vector<std::string>			index_files;
-		std::vector<std::string>			allowed_methods;
-		std::map<int, std::string>			error_pages;
+		std::vector<std::string>			indexFiles;
+		std::vector<std::string>			allowedMethods;
+		std::map<int, std::string>			errorPages;
 
-		std::size_t							client_max_body_size;
-		std::string							upload_store;
-		std::map<std::string, std::string>	cgi_pass;
-		std::size_t							cgi_timeout;
-		std::vector<std::string>			cgi_allowed_methods;
+		std::size_t							clientMaxBodySize;
+		std::string							uploadStore;
+		std::map<std::string, std::string>	cgiPass;
+		std::size_t							cgiTimeout;
+		std::vector<std::string>			cgiAllowedMethods;
 
-		int									redirect_status;	// 0 - No redirect
-		std::string							redirect_target;
+		int									redirectStatus;			// 0 - no redirect
+		std::string							redirectTarget;
 
 		EffectiveConfig()
 			: server(NULL)
 			, location(NULL)
 			, root(".")
 			, autoindex(false)
-			, index_files()
-			, allowed_methods()
-			, error_pages()
-			, client_max_body_size(kDefaultClientMaxBodySize)
-			, upload_store()
-			, cgi_pass()
-			, cgi_timeout(kDefaultCgiTimeout)
-			, cgi_allowed_methods()
-			, redirect_status(0)
-			, redirect_target()
+			, indexFiles()
+			, allowedMethods()
+			, errorPages()
+			, clientMaxBodySize(kDefaultClientMaxBodySize)
+			, uploadStore()
+			, cgiPass()
+			, cgiTimeout(kDefaultCgiTimeout)
+			, cgiAllowedMethods()
+			, redirectStatus(0)
+			, redirectTarget()
 			{}
 	};
 
+	/*
+	Splits a string into whitespace-separated words and returns them as a vector.
+	*/
 	std::vector<std::string> splitWords(const std::string& input) {
 
 		std::vector<std::string>	words;
@@ -120,20 +193,24 @@ namespace {
 		return words;
 	}
 
+	/*
+	Validates and parses an HTTP status code string into an integer (100–599).
+	Throws on non-digits, overflow, or invalid ranges.
+	*/
 	int parseHttpStatus(const std::string& str) {
 
 		if (str.empty())
 			throw std::runtime_error("Empty HTTP status code");
 
-		for (size_t i = 0; i < str.size(); ++i) {
-			if (!(std::isdigit(static_cast<unsigned char>(str[i]))))					// static_cast for protection against UB if signed (locale dependent)
+		for (std::string::size_type i = 0; i < str.size(); ++i) {
+			if (!(std::isdigit(static_cast<unsigned char>(str[i]))))				// static_cast for protection against UB if signed (locale dependent)
 				throw std::runtime_error("Invalid HTTP status code: " + str);
 		}
 
 		errno = 0;
-		unsigned long long value = std::strtoull(str.c_str(), NULL, 10);				// Parse into ULL first to avoid overflow: ULL is guaranteed to hold any value we may receive.
+		unsigned long value = std::strtoul(str.c_str(), NULL, 10);					// Parse into unsigned long first to detect overflow before casting to int.
 
-		if ((value == ULLONG_MAX && errno == ERANGE))
+		if ((value == ULONG_MAX && errno == ERANGE))
 			throw std::runtime_error("HTTP status code overflow: " + str);
 
 		if (value < 100 || value > 599)
@@ -142,28 +219,37 @@ namespace {
 		return static_cast<int>(value);
 	}
 
+	/*
+	Parses a numeric string into size_t, validating digits and overflow conditions.
+	*/
 	size_t parseSizeT(const std::string& str) {
 
 		if (str.empty())
 			throw std::runtime_error("Empty numeric value");
 
+		size_t value = 0;
+		const size_t max = std::numeric_limits<size_t>::max();
+
 		for (size_t i = 0; i < str.size(); ++i) {
+
 			if (!(std::isdigit(static_cast<unsigned char>(str[i]))))
 				throw std::runtime_error("Invalid numeric value: " + str);
+
+			size_t digit = str[i] - '0';
+
+			if (value > max / 10 || (value == max / 10 && digit > max % 10))
+				throw std::runtime_error("Numeric value exceeds size_t range: " + str);
+
+			value = value * 10 + digit;
 		}
 
-		errno = 0;
-		unsigned long long value = std::strtoull(str.c_str(), NULL, 10);
-
-		if (value == ULLONG_MAX && errno == ERANGE)
-			throw std::runtime_error("Numeric value exceeds size_t range: " + str);
-		
-		if (value > std::numeric_limits<std::size_t>::max())							// size_t depends on platform; on 64-bit systems this check is effectively redundant
-			throw std::runtime_error("Value exceeds size_t range: " + str);
-
-		return static_cast<size_t>(value);
+		return value;
 	}
 
+	/*
+	Looks up a directive by key, preferring Location over Server.
+	Returns true and sets value if found; otherwise returns false.
+	*/
 	bool getDirectiveValue(const Location* loc, const Server& srv, const std::string& key, std::string& value) {
 		
 		std::map<std::string, std::string>::const_iterator	it;
@@ -185,12 +271,16 @@ namespace {
 		return false;
 	}
 
+	/*
+	Merges error_page configuration from Server and Location into EffectiveConfig.
+	Server-level mappings are loaded first; Location error_page overrides or adds entries.
+	*/
 	void resolveErrorPages(EffectiveConfig& cfg, const Server& srv, const Location* loc) {
 
 		std::map<std::string, std::string>::const_iterator it;
 		
 		for (it = srv.error_pages.begin(); it != srv.error_pages.end(); ++it)
-			cfg.error_pages[parseHttpStatus(it->first)] = it->second;
+			cfg.errorPages[parseHttpStatus(it->first)] = it->second;
 		
 		if (!loc)
 			return;
@@ -203,13 +293,18 @@ namespace {
 		if (tokens.size() < 2)
 			throw std::runtime_error("Bad error_page configuration");
 
-		const std::string& uri = tokens.back();							// URI - Uniform Resource Identifier - identifies a resource (e.g. page, file, image, etc.)
-
+		const std::string& uri = tokens.back();						// Follows NGINX-style syntax: multiple status codes followed by a single URI.
+																	// URI - Uniform Resource Identifier - identifies a resource (e.g. page, file, image, etc.)
 		for (std::size_t i = 0; i + 1 < tokens.size(); ++i)
-			cfg.error_pages[parseHttpStatus(tokens[i])] = uri;
+			cfg.errorPages[parseHttpStatus(tokens[i])] = uri;
 	}
 
-	// Builds a unified view of the config (root, methods, error_pages, etc.)
+	// --- 4.2. Effective Configuration Construction ---
+
+	/*
+	Builds the EffectiveConfig by merging Server and Location directives.
+	Applies defaults for methods, error pages, CGI options, and redirects.
+	*/
 	EffectiveConfig buildEffectiveConfig(const Server& srv, const Location* loc) {
 
 		EffectiveConfig	cfg;
@@ -226,44 +321,44 @@ namespace {
 			cfg.autoindex = (value == "on");
 
 		if (getDirectiveValue(loc, srv, "index", value))
-			cfg.index_files = splitWords(value);
+			cfg.indexFiles = splitWords(value);
 
 		if (getDirectiveValue(loc, srv, "methods", value))
-			cfg.allowed_methods = splitWords(value);
+			cfg.allowedMethods = splitWords(value);
 		else {
-			cfg.allowed_methods.push_back("GET");
-			cfg.allowed_methods.push_back("POST");
+			cfg.allowedMethods.push_back("GET");						// Default to GET and POST so locations remain functional without explicit method configuration. 
+			cfg.allowedMethods.push_back("POST");
 		}
 
 		resolveErrorPages(cfg, srv, loc);
 
 		if (getDirectiveValue(loc, srv, "client_max_body_size", value))
-			cfg.client_max_body_size = parseSizeT(value);
+			cfg.clientMaxBodySize = parseSizeT(value);
 
 		if (getDirectiveValue(loc, srv, "upload_store", value))
-			cfg.upload_store = value;
+			cfg.uploadStore = value;
 
 		if (getDirectiveValue(loc, srv, "cgi_pass", value)) {
 			std::vector<std::string> tokens = splitWords(value);
 			if (tokens.size() == 2)
-				cfg.cgi_pass[tokens[0]] = tokens[1];
+				cfg.cgiPass[tokens[0]] = tokens[1];
 		}
 
 		if (getDirectiveValue(loc, srv, "cgi_timeout", value))
-			cfg.cgi_timeout = parseSizeT(value);
+			cfg.cgiTimeout = parseSizeT(value);
 
 		if (getDirectiveValue(loc, srv, "cgi_allowed_methods", value))
-			cfg.cgi_allowed_methods = splitWords(value);
+			cfg.cgiAllowedMethods = splitWords(value);
 		else
-			cfg.cgi_allowed_methods = cfg.allowed_methods;
+			cfg.cgiAllowedMethods = cfg.allowedMethods;
 
 		if (getDirectiveValue(loc, srv, "return", value)) {
 			std::vector<std::string> tokens = splitWords(value);
 			if (tokens.size() == 2) {
 				int status = parseHttpStatus(tokens[0]);
 				if (status >= 300 && status <= 399) {
-					cfg.redirect_status = status;
-					cfg.redirect_target = tokens [1];
+					cfg.redirectStatus = status;
+					cfg.redirectTarget = tokens [1];
 				}
 			}
 		}
@@ -271,26 +366,35 @@ namespace {
 		return cfg;
 	}
 
-	// --- 2.5. Allowed methods / 405 ---
 
-	// Checks whether the method is allowed by the effective configuration.
+	// --------------------------------
+	// --- 5. Allowed methods / 405 ---
+	// --------------------------------
+
+	/*
+	Checks whether the given HTTP method is allowed by the configuration.
+	*/
 	bool isMethodAllowed(const EffectiveConfig& cfg, const std::string& method) {
 		
-		for (std::vector<std::string>::const_iterator it = cfg.allowed_methods.begin(); it != cfg.allowed_methods.end(); ++it)
-		if (*it == method)
-		return true;
+		for (std::vector<std::string>::const_iterator it = cfg.allowedMethods.begin(); it != cfg.allowedMethods.end(); ++it)
+			if (*it == method)
+				return true;
 		
 		return false;
 	}
 
-	// Builds a 405 response with the Allow header and (if configured) an error_page.
+	HTTP_Response makeErrorResponse(int status, const EffectiveConfig* cfg);
+
+	/*
+	Builds a 405 Method Not Allowed response and sets the Allow header accordingly.
+	*/
 	HTTP_Response make405(const EffectiveConfig& cfg) {
 
 		HTTP_Response response = makeErrorResponse(405, &cfg);
 
 		std::string allowed;
-		for (std::vector<std::string>::const_iterator it = cfg.allowed_methods.begin(); it != cfg.allowed_methods.end(); ++it) {
-			if (!allowed.empty())
+		for (std::vector<std::string>::const_iterator it = cfg.allowedMethods.begin(); it != cfg.allowedMethods.end(); ++it) {
+			if (!allowed.empty())						// Add comma after the first method
 				allowed += ", ";
 			allowed += *it;
 		}
@@ -301,27 +405,38 @@ namespace {
 		return response;
 	}
 
-	// --- 2.6. Body validation (size, policy) ---
 
-	// Checks whether the request body is acceptable (size, transfer-encoding, etc.).
-	// On error, writes the status into statusCode (e.g. 413, 400, 501) and returns false.
-	bool checkRequestBodyAllowed(const EffectiveConfig& cfg, const HTTP_Request& req, int& statusCode) {
+	// -----------------------------------------
+	// --- 6. Body validation (size, policy) ---
+	// -----------------------------------------
 
-		if (cfg.client_max_body_size != 0 && req.content_length > cfg.client_max_body_size) {					// client_max_body_size == 0, means no limit
-			statusCode = 413;
+	/*
+	Validates request body size and supported transfer encodings.
+	Returns true if allowed; otherwise sets status code with the appropriate error.
+	*/
+	bool checkRequestBodyAllowed(const EffectiveConfig& cfg, const HTTP_Request& req, int& status) {
+
+		if (cfg.clientMaxBodySize != 0 && req.content_length > cfg.clientMaxBodySize) {					// clientMaxBodySize == 0, means no limit
+			status = 413;
 			return false;
 		}
 
 		if (req.transfer_encoding.empty() || req.transfer_encoding == "chunked")
 			return true;
 
-		statusCode = 501;
+		status = 501;
 		return false;
 	}
 
-	// --- 2.7. Root + path → secure filesystem path ---
 
-	// Builds the base filesystem path from the root + logical path.
+	// -----------------------------------------------
+	// --- 7. Root + path → secure filesystem path ---
+	// -----------------------------------------------
+
+	/*
+	Maps a URL path to a filesystem path by removing the location prefix and
+	appending the remainder to the configured root directory.
+	*/
 	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
 
 		std::string			locationPath = cfg.location ? cfg.location->path : "/";		// location may be NULL
@@ -338,37 +453,39 @@ namespace {
 			return cfg.root + '/' + subPath;
 	}
 
-	// Normalises the path (., .., //) and ensures canonical form.
-	// If normalisation fails (e.g. invalid path), returns false.
+	/*
+	Validates and canonicalizes a filesystem path relative to the given root.
+	Rejects any traversal outside root and rebuilds a normalized absolute path.
+	*/
 	bool normalizePath(std::string& fsPath, const std::string& root) {
 
-		if (fsPath.compare(0, root.size(), root) != 0)
+		if (fsPath.compare(0, root.size(), root) != 0)				// Reject paths that do not start inside the configured root
 			return false;
 
-		std::string relative = fsPath.substr(root.size());
+		std::string relative = fsPath.substr(root.size());			// Extract the portion after the root to normalize it
 
-		if (!relative.empty() && relative[0] == '/')
+		if (!relative.empty() && relative[0] == '/')				// Remove leading slash from the relative segment (if present)
 			relative.erase(0, 1);
 
 		std::vector<std::string> stack;
 		std::string token;
 
-		for (size_t i = 0; i <= relative.size(); ++i) {
-			char c = (i < relative.size()) ? relative[i] : '/';
+		for (size_t i = 0; i <= relative.size(); ++i) {				// Split by '/', interpreting '.' and '..' like a real filesystem
+			char c = (i < relative.size()) ? relative[i] : '/';		// Use a fake '/' at the end to ensure the last token is processed
 			if (c == '/') {
 				if (token == "..") {
 					if (stack.empty())
-						return false;
+						return false;								// Attempt to escape the root directory
 					else
-						stack.pop_back();
+						stack.pop_back();							// Go one level up
 				} else if (!token.empty() && token != ".")
-					stack.push_back(token);
+					stack.push_back(token);							// Normal directory component
 				token.clear();
 			} else
 				token += c;
 		}
 
-		fsPath = root;
+		fsPath = root;												// Rebuild normalized absolute path inside root
 
 		if (!stack.empty()) {
 			for (size_t i = 0; i < stack.size(); ++i)
@@ -378,8 +495,14 @@ namespace {
 		return true;
 	}
 
-	// --- 2.8. Classificação do pedido ---
 
+	// ----------------------------------
+	// --- 8. Request classification ----
+	// ----------------------------------
+
+	/*
+	High-level classification of how a request should be handled by the server.
+	*/
 	enum RequestKind {
 		RK_STATIC_FILE,
 		RK_DIRECTORY,
@@ -391,42 +514,61 @@ namespace {
 
 	bool isCgiRequest(const EffectiveConfig& cfg, const std::string& path);
 
-	// Decides which type of handling should be applied to fsPath given the effective configuration.
+	/*
+	Classifies the request as upload, CGI, directory, static file, forbidden,
+	or not found based on the effective configuration and filesystem state.
+	*/
 	RequestKind classifyRequest(const EffectiveConfig& cfg, const std::string& path, const std::string& fsPath, const HTTP_Request& req) {
 
-		const bool	cgi = isCgiRequest(cfg, path);
+		const bool cgi = isCgiRequest(cfg, path);
 		
-		if (req.method == "POST" && !cfg.upload_store.empty() && !cgi)
+		if (req.method == "POST" && !cfg.uploadStore.empty() && !cgi)	// Uploads take precedence when POST targets an upload_store and is not CGI
 			return RK_UPLOAD;
 
 		struct stat st;
-		if (stat(fsPath.c_str(), &st) != 0) {
+		if (stat(fsPath.c_str(), &st) != 0) {							// File does not exist or cannot be stat'ed
 			if (errno == EACCES)
-				return RK_FORBIDDEN;
-			return RK_NOT_FOUND;
+				return RK_FORBIDDEN;									// Permission denied by the filesystem
+			return RK_NOT_FOUND;										// Any other stat failure - treat as missing
 		}
 		
 		if (S_ISDIR(st.st_mode))
-			return RK_DIRECTORY;
+			return RK_DIRECTORY;										// Directory path
 		
-		if (S_ISREG(st.st_mode)) {
+		if (S_ISREG(st.st_mode)) {										// Regular file
 			if (cgi)
-				return RK_CGI;
-			return RK_STATIC_FILE;
+				return RK_CGI;											// File should be executed as CGI
+			return RK_STATIC_FILE;										// Otherwise serve as static content
 		}
 
-		return RK_FORBIDDEN;
+		return RK_FORBIDDEN;											// Other filesystem objects are not allowed
 	}
 
-	// --- 2.9. Static file ---
+
+	// ----------------------
+	// --- 9. Static file ---
+	// ----------------------
 
 	std::string getMimeType(const std::string& extension);
 	std::string getReasonPhrase(int status);
 
-	// Generates a 200 response for a static file (or an appropriate error).
+	/*
+	Converts a value to a string using stream insertion.
+	*/
+	template<typename T>
+	static std::string toString(T v) {
+		std::ostringstream oss;
+		oss << v;
+		return oss.str();
+	}
+
+	/*
+	Serves a static file by reading it into memory and returning a 200 response.
+	Applies basic MIME detection, handles 403/404 errors, and sets Content-Length.
+	*/
 	HTTP_Response handleStaticFile(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 
-		(void)req;														// For now we don't differentiate by method here (GET only in this project).
+		(void)req;														// For now Only GET is supported for static file.
 		
 		std::ifstream staticFile(fsPath.c_str(), std::ios::binary);
 		if (!staticFile) {
@@ -436,41 +578,46 @@ namespace {
 				return makeErrorResponse(404, &cfg);
 		}
 		
-		HTTP_Response	response;
+		HTTP_Response res;
 
-		response.status = 200;
-		response.reason = getReasonPhrase(200);
+		res.status = 200;
+		res.reason = getReasonPhrase(200);
 
 		std::string::size_type dotPos = fsPath.rfind('.');
 		if (dotPos != std::string::npos && dotPos + 1 < fsPath.size())
-			response.headers["Content-Type"] = getMimeType(fsPath.substr(dotPos + 1));
+			res.headers["Content-Type"] = getMimeType(fsPath.substr(dotPos + 1));
 		else
-			response.headers["Content-Type"] = "application/octet-stream";
+			res.headers["Content-Type"] = "application/octet-stream";
 		
 		std::ostringstream oss;
 		oss << staticFile.rdbuf();
-		if (!staticFile && !staticFile.eof())							// This is ok, but could be better with stat (and stat can also give us modification date)
+		if (!staticFile && !staticFile.eof())							// Failbit is OK at EOF; otherwise it's a real read error
 			return makeErrorResponse(500, &cfg);
-		response.body = oss.str();
+		res.body = oss.str();
 		
-		std::ostringstream length;
-		length << response.body.size();
-		response.headers["Content-Length"] = length.str();
-		
-		return response;
+		res.headers["Content-Length"] = toString(res.body.size());
+
+		return res;
 	}
 
 	
-	// --- 2.10. Directory / index / autoindex ---
+	// -----------------------------------------
+	// --- 10. Directory / index / autoindex ---
+	// -----------------------------------------
 
-	// Escapes special HTML characters to prevent broken markup and basic XSS vectors.
-	// Converts &, <, >, " and ' into their corresponding HTML entities.
-	std::string htmlEscape(const std::string& input) {
+	// --- 10.1. Directory/Index Utilities (Helper Functions) ---
+
+	/*
+	Escapes special HTML characters in a string, producing a safe HTML-encoded output.
+	Converts &, <, >, " and ' into their corresponding HTML entities.
+	Prevents HTML injection and mitigates XSS risks.
+	*/
+	std::string htmlEscape(const std::string& in) {
 
 		std::string out;
-		out.reserve(input.size() * 2); // small optimization
+		out.reserve(in.size() * 2); // small optimization
 
-		for (std::string::const_iterator it = input.begin(); it != input.end(); ++it) {
+		for (std::string::const_iterator it = in.begin(); it != in.end(); ++it) {
 
 			unsigned char c = static_cast<unsigned char>(*it);
 
@@ -499,122 +646,149 @@ namespace {
 		return out;
 	}
 
-	// Handles directory requests:
-	// - tries index files;
-	// - if there is no index and autoindex is enabled → generates a listing;
-	// - otherwise → returns an appropriate error.
-	// Precondition: dirFsPath is already a valid directory (classifyRequest ensures this).
-	// URL should already have been normalized (redirect /dir -> /dir/ done earlier, if needed).
-	HTTP_Response handleDirectoryRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath, const std::string& requestPath) {
-
-		std::string fixedRequestPath = requestPath;
-		if (!fixedRequestPath.empty() && fixedRequestPath.back() != '/')
-			fixedRequestPath += '/';
-
-		for (size_t i = 0; i < cfg.index_files.size(); ++ i) {
-
-			std::string indexFsPath;
-			if (!fsPath.empty() && fsPath.back() == '/')
-				indexFsPath = fsPath + cfg.index_files[i];
-			else
-				indexFsPath = fsPath + '/' + cfg.index_files[i];
-
-			struct stat	st;
-
-			if (stat(indexFsPath.c_str(), &st) == 0 && S_ISREG(st.st_mode))
-				return handleStaticFile(req, cfg, indexFsPath);
-		}
-		
-		if (cfg.autoindex) {
-
-			DIR* currentDir = opendir(fsPath.c_str());
-			if (!currentDir) {
-				if (errno == EACCES)
-					return makeErrorResponse(403, &cfg);
-				else
-					return makeErrorResponse(500, &cfg);
-			}
-			
-			HTTP_Response response;
-			
-			std::ostringstream oss;
-			oss	<< "<!DOCTYPE html>\n"
-			<< "<html><head><meta charset=\"utf-8\">"
-			<< "<title>Index of " << htmlEscape(fixedRequestPath) << "</title>"
-			<< "</head><body>"
-			<< "<h1>Index of " << htmlEscape(fixedRequestPath) << "</h1>"
-			<< "<ul>";
-		    if (fixedRequestPath != "/")
-				oss << "<li><a href=\"../\">Parent directory</a></li>";
-						
-			struct dirent* entry;
-			while ((entry = readdir(currentDir)) != NULL) {
-				
-				if (strcmp(entry->d_name, ".") == 0  || strcmp(entry->d_name, "..") == 0 || entry->d_name[0] == '.')
-					continue;
-				
-				std::string fullPath;
-				if (!fsPath.empty() && fsPath.back() == '/')
-					fullPath = fsPath + entry->d_name;
-				else
-					fullPath = fsPath + '/' + entry->d_name;
-
-				struct stat st;
-
-				if (stat(fullPath.c_str(), &st) != 0)
-					continue;
-				if (S_ISREG(st.st_mode))
-					oss << "<li><a href=\"" << htmlEscape(entry->d_name) << "\">" << htmlEscape(entry->d_name) << "</a></li>";
-				else if (S_ISDIR(st.st_mode))
-					oss << "<li><a href=\"" << htmlEscape(entry->d_name) << "/\">" << htmlEscape(entry->d_name) << "/</a></li>";
-			}
-			
-			closedir(currentDir);
-			
-			oss << "</ul></body></html>\n";
-			
-			response.body = oss.str();
-
-			response.status = 200;
-			response.reason = getReasonPhrase(200);
-			response.headers["Content-Type"] = "text/html; charset=utf-8";
-
-			std::ostringstream length;
-			length << response.body.size();
-			response.headers["Content-Length"] = length.str();
-			
-			return response;
-		}
-		
-		return makeErrorResponse(403, &cfg);
+	/*
+	Concatenates two path components, inserting '/' only if needed.
+	*/
+	std::string joinPath(const std::string& directory, const std::string& entry) {
+		if (!directory.empty() && directory[directory.size() - 1] == '/')
+			return directory + entry;
+		return directory + "/" + entry;
 	}
 
-    // --- 2.11. CGI (esqueleto) ---
+	/*
+	Generates a simple HTML autoindex page for a directory, listing files and
+	subdirectories based on the request path and filesystem path.
+	*/
+	std::string generateAutoIndexPage(const std::string& reqPath, const std::string& fsPath) {
 
-	// Decides whether a path should be treated as CGI.
+		std::string fixedReqPath = reqPath;
+		if (!fixedReqPath.empty() && fixedReqPath[fixedReqPath.size() - 1] != '/')
+			fixedReqPath += '/';										// Ensure trailing slash
+
+		DIR* currentDir = opendir(fsPath.c_str());
+		if (!currentDir)
+			return "";														// Signals an error, handled by the caller
+
+		std::ostringstream oss;
+
+		oss << "<!DOCTYPE html>\n"
+			<< "<html><head><meta charset=\"utf-8\">"
+			<< "<title>Index of " << htmlEscape(fixedReqPath) << "</title>"
+			<< "</head><body>"
+			<< "<h1>Index of " << htmlEscape(fixedReqPath) << "</h1>"
+			<< "<ul>";
+
+		if (fixedReqPath != "/")
+			oss << "<li><a href=\"../\">Parent directory</a></li>";			// Navigation link
+
+		struct dirent* entry;
+
+		while ((entry = readdir(currentDir)) != NULL) {
+
+			if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 || entry->d_name[0] == '.')		// Skip hidden/system entries
+				continue;
+
+			std::string fullPath = joinPath(fsPath, entry->d_name);
+
+			struct stat st;
+			if (stat(fullPath.c_str(), &st) != 0)							// Skip unreadable entries
+				continue;
+
+			std::string escapedName = htmlEscape(entry->d_name);
+			if (S_ISREG(st.st_mode))
+				oss << "<li><a href=\"" << escapedName << "\">" << escapedName << "</a></li>";			// File entry
+			else if (S_ISDIR(st.st_mode))
+				oss << "<li><a href=\"" << escapedName << "/\">" << escapedName << "/</a></li>";		// Directory entry
+		}
+		
+		closedir(currentDir);												// Done listing directory
+
+		oss << "</ul></body></html>\n";
+	
+		return oss.str();													// Return final HTML page
+	}
+
+	// --- 10.2. Directory Request Handler ---
+	
+	/*
+	Handles a request targeting a directory: tries index files first, then
+	generates an autoindex page if enabled, or returns 403 otherwise.
+	*/
+	HTTP_Response handleDirectoryRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath, const std::string& reqPath) {
+
+		for (size_t i = 0; i < cfg.indexFiles.size(); ++i) {							// Try each configured index file in order
+
+			std::string indexFileFsPath = joinPath(fsPath, cfg.indexFiles[i]);
+
+			struct stat st;
+			if (stat(indexFileFsPath.c_str(), &st) == 0 && S_ISREG(st.st_mode))			// Serve the first existing regular index file
+				return handleStaticFile(req, cfg, indexFileFsPath);
+		}
+
+		if (cfg.autoindex) {
+
+			DIR* testDir = opendir(fsPath.c_str());						// Checks whether the directory is accessible
+			if (!testDir) {
+				if (errno == EACCES)
+					return makeErrorResponse(403, &cfg);				// Directory exists but is not readable
+				else
+					return makeErrorResponse(500, &cfg);				// Unexpected filesystem error
+			}
+			closedir(testDir);											// Directory is accessible
+
+			std::string html = generateAutoIndexPage(reqPath, fsPath);
+
+			if (html.empty())
+				return makeErrorResponse(500, &cfg);					// Failed to build autoindex HTML
+
+			HTTP_Response res;
+			res.body = html;
+			res.status = 200;
+			res.reason = getReasonPhrase(200);
+			res.headers["Content-Type"] = "text/html; charset=utf-8";
+			res.headers["Content-Length"] = toString(res.body.size());
+
+			return res;
+		}
+
+		return makeErrorResponse(403, &cfg);							// No index and autoindex is disabled
+	}
+
+
+	// ---------------
+    // --- 11. CGI ---
+	// ---------------
+
+	/*
+	Determines whether the requested path should be handled as CGI based on
+	the configured cgi_pass extensions.
+	*/
 	bool isCgiRequest(const EffectiveConfig& cfg, const std::string& path) {
 
-		if (cfg.cgi_pass.empty())
+		if (cfg.cgiPass.empty())
 			return false;
 
-		std::string::size_type	dotPosition = path.rfind('.');
-		if (dotPosition == std::string::npos)
+		std::string::size_type	pos = path.rfind('.');
+		if (pos == std::string::npos)
 			return false;
 
-		std::string fileExtension = path.substr(dotPosition);
+		std::string fileExtension = path.substr(pos);
 
-		if (cfg.cgi_pass.find(fileExtension) == cfg.cgi_pass.end())
+		if (cfg.cgiPass.find(fileExtension) == cfg.cgiPass.end())
 			return false;
 
 		return true;
 	}
 
-	// Returns true if the request's HTTP method is permitted for CGI.
+	/*
+	Determines whether the request method is allowed for CGI execution,
+	falling back to the general allowed methods if no CGI-specific list exists.
+	*/
 	bool isCgiMethodAllowed(const HTTP_Request& req, const EffectiveConfig& cfg) {
 
-		const std::vector<std::string>& methodList = !cfg.cgi_allowed_methods.empty() ? cfg.cgi_allowed_methods : cfg.allowed_methods;
+		const std::vector<std::string>& effectiveMethods = !cfg.cgiAllowedMethods.empty() ? cfg.cgiAllowedMethods : cfg.allowedMethods;
 
-		for (std::vector<std::string>::const_iterator it = methodList.begin(); it != methodList.end(); ++it) {
+		for (std::vector<std::string>::const_iterator it = effectiveMethods.begin(); it != effectiveMethods.end(); ++it) {
 			if (*it == req.method)
 				return true;
 		}
@@ -622,29 +796,36 @@ namespace {
 		return false;
 	}
 
-	// Returns the file's extension if valid, or an empty string.
+	/*
+	Extracts a valid file extension from a filesystem path, ignoring dots in
+	directory names, trailing dots, and hidden files that start with a dot.
+	*/
 	std::string getFileExtension(const std::string& fsPath) {
 
 		std::string::size_type slashPos = fsPath.rfind('/');
 		std::string::size_type dotPos = fsPath.rfind('.');
 
 		if (dotPos == std::string::npos)
+			return "";																	// No dot - no extension
+
+		if (slashPos != std::string::npos && dotPos < slashPos)
+			return "";																	// Dot is in a directory name, not in the filename
+
+		if (dotPos == fsPath.size() - 1)												// File without extension
 			return "";
 
-		if (slashPos != std::string::npos && dotPos < slashPos)								// Dot before the last slash - it's in a directory name, not in the filename
-			return "";
-
-		if (dotPos == fsPath.size() - 1)													// File without extension
-			return "";
-
-		if (dotPos == 0 || (slashPos != std::string::npos && dotPos == slashPos + 1))		// It's a hidden file
+		if (dotPos == 0 || (slashPos != std::string::npos && dotPos == slashPos + 1))	// Hidden file (e.g. .bashrc) - not an extension
 			return "";
 
 		return fsPath.substr(dotPos + 1);
 	}
 
-	// Prepares interpreter and arguments for executing a CGI script.
-	bool prepareCgiExecutor(const EffectiveConfig& cfg, const std::string& fsPath, std::string& outInterpreter,	std::vector<std::string>& outArgv) {
+	/*
+	Prepares the CGI interpreter and argument list for a given filesystem
+	path. Returns true only if the extension is mapped in cgi_pass and the
+	interpreter is executable.
+	*/
+	bool prepareCgiExecutor(const EffectiveConfig& cfg, const std::string& fsPath, std::string& interpreter, std::vector<std::string>& argv) {
 		
 		std::string ext = getFileExtension(fsPath);
 		
@@ -653,8 +834,8 @@ namespace {
 
 		ext = '.' + ext;
 		
-		std::map<std::string, std::string>::const_iterator it = cfg.cgi_pass.find(ext);
-		if (it == cfg.cgi_pass.end())
+		std::map<std::string, std::string>::const_iterator it = cfg.cgiPass.find(ext);
+		if (it == cfg.cgiPass.end())
 			return false;
 		
 		if (it->second.empty())
@@ -663,27 +844,20 @@ namespace {
 		if (access(it->second.c_str(), X_OK) != 0)
 			return false;
 
-		outInterpreter = it->second;
+		interpreter = it->second;
 
-		outArgv.clear();
-		outArgv.push_back(outInterpreter);
-		outArgv.push_back(fsPath);
+		argv.clear();
+		argv.push_back(interpreter);
+		argv.push_back(fsPath);
 
 		return true;
 	}
 
-	// Converts SizeT to String
-	std::string toStringSizeT(std::size_t n) {
-
-		std::ostringstream oss;
-		
-		oss << n;
-
-		return oss.str();
-	}
-
-	// Converts HTTP header names into uppercase CGI environment variable format.
-	// Returns empty string when header contains invalid or unsupported characters.
+	/*
+	Converts an HTTP header name into a valid CGI environment variable
+	by applying the HTTP_ prefix, uppercasing letters, replacing dashes
+	with underscores, and rejecting invalid characters.
+	*/
 	std::string formatCgiEnvHeader(const std::string& header) {
 
 		std::string cgiEnvHeader = "HTTP_";
@@ -703,53 +877,66 @@ namespace {
 		return cgiEnvHeader;
 	}
 
-	// Builds CGI environment variables from HTTP request and config.
+	/*
+	Builds the CGI environment variable list for a given request and script
+	filesystem path, populating standard CGI variables, server metadata, and
+	HTTP_* header mappings.
+	*/
 	std::vector<std::string> buildCgiEnv(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 		
 		std::vector<std::string> env;
+		env.reserve(32);													// Arbitrary but large enough to avoid reallocations
+
+		std::string::size_type qPos = req.target.find('?');
+		std::string query = (qPos == std::string::npos) ? "" : req.target.substr(qPos + 1);
+		std::string scriptName = (qPos == std::string::npos) ? req.target : req.target.substr(0, qPos);
 
 		env.push_back("GATEWAY_INTERFACE=CGI/1.1");
 		env.push_back("REQUEST_METHOD=" + req.method);
 		env.push_back("SCRIPT_FILENAME=" + fsPath);
 		env.push_back("REQUEST_URI=" + req.target);
 		env.push_back("SERVER_PROTOCOL=" + req.version);
-
-		std::string::size_type qMarkPos = req.target.find('?');
-		env.push_back("QUERY_STRING=" + (qMarkPos == std::string::npos ? "" : req.target.substr(qMarkPos + 1)));
-		env.push_back("SCRIPT_NAME=" + (qMarkPos == std::string::npos ? req.target : req.target.substr(0, qMarkPos)));
-
+		env.push_back("QUERY_STRING=" + query);
+		env.push_back("SCRIPT_NAME=" + scriptName);
 		env.push_back("PATH_INFO=");
 		env.push_back("PATH_TRANSLATED=");
 
 		if (req.content_length > 0)
-			env.push_back("CONTENT_LENGTH=" + toStringSizeT(req.content_length));
+			env.push_back("CONTENT_LENGTH=" + toString(req.content_length));
 
-		std::map<std::string, std::string>::const_iterator it = req.headers.find("content-type");
-		env.push_back("CONTENT_TYPE=" + (it != req.headers.end() ? it->second : ""));
+		std::string serverPort;
+		std::string::size_type serverCPos = req.host.find(':');
 
-		std::string::size_type colonPos = req.host.find(':');
-		if (colonPos != std::string::npos)										// If Host header has port we use this
-			env.push_back("SERVER_PORT=" + req.host.substr(colonPos + 1));
-		else if (!cfg.server->listen.empty()) {									// Otherwise fall back to this server's first listen directive
-			const std::string& listenStr = cfg.server->listen[0];
-			std::string::size_type listenColonPos = listenStr.find(':');
-			if (listenColonPos != std::string::npos)
-				env.push_back("SERVER_PORT=" + listenStr.substr(listenColonPos + 1));
+		if (serverCPos != std::string::npos) {
+			serverPort = req.host.substr(serverCPos + 1);					// Prefer port explicitly given in Host header
+		} else if (!cfg.server->listen.empty()) {
+			const std::string& listenDirective = cfg.server->listen[0];
+			std::string::size_type listenCPos = listenDirective.find(':');
+			if (listenCPos != std::string::npos)
+				serverPort = listenDirective.substr(listenCPos + 1);		// Otherwise extract port from first listen directive (host:port)
 			else
-				env.push_back("SERVER_PORT=" + listenStr);
+				serverPort = listenDirective;								// Listen contains only a port number
 		} else
-			env.push_back("SERVER_PORT=80");
+			serverPort = "80";												// Final fallback: standard HTTP port
 
-		env.push_back("SERVER_NAME=" + (colonPos == std::string::npos ? req.host : req.host.substr(0, colonPos)));
+		std::string serverName = (serverCPos == std::string::npos ? req.host : req.host.substr(0, serverCPos));
+		if (serverName.empty())
+			serverName = "localhost";										// Reasonable fallback for missing Host header
+			
+		env.push_back("SERVER_PORT=" + serverPort);
+		env.push_back("SERVER_NAME=" + serverName);
+		env.push_back("REMOTE_ADDR=127.0.0.1"); 							// Default loopback address when real client IP isn't available (common in NGINX/Apache local setups)	
 
-		env.push_back("REMOTE_ADDR=127.0.0.1"); // “If you don’t have a real IP, you can use 127.0.0.1 or something neutral. (For 42 webserver it's ok) In an ideal world you’d fetch the real IP from the Connection (which lives in the core), but that would mean exposing more information to the App. It’s not worth complicating things for the project.”
-
-		for (it = req.headers.begin(); it != req.headers.end(); ++ it) {
-			if (it->first != "content-type") {
-				std::string envHeader = formatCgiEnvHeader(it->first);
-				if (!envHeader.empty())
-					env.push_back(envHeader + '=' + it->second);
+		for (std::map<std::string, std::string>::const_iterator it = req.headers.begin(); it != req.headers.end(); ++ it) {	
+			
+			if (it->first == "content-type") {
+				env.push_back("CONTENT_TYPE=" + it->second);
+				continue;
 			}
+				
+			std::string envHeader = formatCgiEnvHeader(it->first);
+			if (!envHeader.empty())
+				env.push_back(envHeader + "=" + it->second);
 		}
 
 		env.push_back("REDIRECT_STATUS=200");
@@ -757,21 +944,30 @@ namespace {
 		return env;
 	}
 
-	// Internal structure used to keep CGI process pipes.
+	/*
+	Internal structure holding the pipe file descriptors used by the CGI process.
+	*/
 	struct CgiPipes {
-		int		stdinParent;		// parent writes here (child reads from STDIN)
-		int		stdoutParent;  		// parent reads here (child writes to STDOUT)
-		pid_t	pid;
+		int		stdinParent;		// parent writes here (becomes child's STDIN)
+		int		stdoutParent;  		// parent reads here (comes from child's STDOUT)
+		pid_t	pid;				// PID of the forked CGI child process
 	};
 	
-		// Leitura + timeout:
-		struct CgiRawOutput {
-			bool timedOut;
-			int exitStatus;          // -1 se não foi possível obter
-			std::string data;         // tudo o que veio do STDOUT
-		};
+	/*
+	Result container for CGI child execution, storing its output and status.
+	*/
+	struct CgiRawOutput {
+		bool		timedOut;		// true if reading from the child exceeded the timeout
+		int			exitStatus;		// Exit code of the CGI process (or -1 if unavailable)
+		std::string	data;			// tudo o que veio do STDOUT
+	};
 
-	// Spawns the CGI child process and sets up stdin/stdout pipes.
+	/*
+	Spawns a CGI child process, sets up pipes for its STDIN and STDOUT,
+	and prepares argv/envp before calling execve in the child. On success,
+	returns the child's PID and the file descriptors the parent uses to
+	write to the process and read from it.
+	*/
 	bool spawnCgiProcess(const std::vector<std::string>& argv, const std::vector<std::string>& env, CgiPipes& pipes) {
 
 		int pipeStdin[2];
@@ -799,15 +995,15 @@ namespace {
 				_exit(1);
 			}
 
-			close(pipeStdin[0]); close(pipeStdin[1]); close(pipeStdout[0]);	close(pipeStdout[1]);	// Close all original pipe fds in the child
+			close(pipeStdin[0]); close(pipeStdin[1]); close(pipeStdout[0]);	close(pipeStdout[1]);
 
-			std::vector<char*> cArgv;										// Prepare argv in execve-compatible (NULL-terminated) format
+			std::vector<char*> cArgv;								// Prepare argv in execve-compatible (NULL-terminated) format
 			cArgv.reserve(argv.size() + 1);
 			for (size_t i = 0; i < argv.size(); ++i)
 				cArgv.push_back(const_cast<char*>(argv[i].c_str()));
 			cArgv.push_back(NULL);
 
-			std::vector<char*> cEnvp;										// The same for envp
+			std::vector<char*> cEnvp;								// The same for envp
 			cEnvp.reserve(env.size() + 1);
 			for (size_t i = 0; i < env.size(); ++i)
 				cEnvp.push_back(const_cast<char*>(env[i].c_str()));
@@ -819,15 +1015,19 @@ namespace {
 
 		close(pipeStdin[0]); close(pipeStdout[1]);
 
-		pipes.stdinParent = pipeStdin[1];
-		pipes.stdoutParent = pipeStdout[0];
+		pipes.stdinParent = pipeStdin[1];							// Parent will write request body here
+		pipes.stdoutParent = pipeStdout[0];							// Parent will read CGI output here
 		pipes.pid = pid;
 
 		return true;
 	}
 
-	// Writes request body to CGI and reads its output with timeout.
-	// Handles non-blocking pipes, EOF detection, and child exit status.
+	/*
+	Sends the request body to the CGI process, then reads its STDOUT using
+	non-blocking I/O and poll() with a hard timeout. Collects all output data
+	and, if the CGI exits normally, captures its exit status. If the process
+	times out or the status cannot be obtained, exitStatus is set to -1.
+	*/
 	CgiRawOutput readCgiOutput(const CgiPipes& pipes, std::size_t timeoutSeconds, const std::string& requestBody) {
 
 		if (!requestBody.empty()) {													// 1. Write the request body into the CGI's stdin
@@ -845,7 +1045,7 @@ namespace {
 					continue;
 				}
 
-				break;																// (n <= 0) pipe closed or write error (we cannot inspect errno here) - stop writing immediately
+				break;																// (n <= 0) pipe closed or write error (we cannot inspect errno after read/write rule) - stop writing immediately
 			}
 		}
 		close(pipes.stdinParent);													// Close stdin so the CGI knows the request body has ended
@@ -856,7 +1056,7 @@ namespace {
 
 		struct timeval start;														// 3. Build a timeout deadline using gettimeofday
 		gettimeofday(&start, NULL);
-		long long deadlineMs = (static_cast<long long>(start.tv_sec) * 1000 ) + (static_cast<long long>(start.tv_usec) / 1000) + (static_cast<long long>(timeoutSeconds) * 1000);		// Cast to long long prevents overflow when multiplying by 1000
+		int64_t deadlineMs = (static_cast<int64_t>(start.tv_sec) * 1000 ) + (static_cast<int64_t>(start.tv_usec) / 1000) + (static_cast<int64_t>(timeoutSeconds) * 1000);	// int64_t ensures safe millisecond arithmetic on both 32-bit and 64-bit systems
 
 		CgiRawOutput cgiOutput;														// Struct holding the final CGI result (timeout, exit code, data)
 		cgiOutput.timedOut = false;
@@ -869,9 +1069,9 @@ namespace {
 
 			struct timeval now;														// Check the absolute timeout
 			gettimeofday(&now, NULL);
-			long long nowMs = (static_cast<long long>(now.tv_sec) * 1000) + (static_cast<long long>(now.tv_usec) / 1000);
+			int64_t nowMs = (static_cast<int64_t>(now.tv_sec) * 1000) + (static_cast<int64_t>(now.tv_usec) / 1000);
 
-			long long remainingMs = deadlineMs - nowMs;
+			int64_t remainingMs = deadlineMs - nowMs;
 			if (remainingMs <= 0) {
 				cgiOutput.timedOut = true;
 				break;
@@ -882,14 +1082,14 @@ namespace {
 			pfd.events = POLLIN | POLLHUP | POLLERR;
 			pfd.revents = 0;
 
-			int res = poll(&pfd, 1, static_cast<int>(remainingMs));
+			int pollResult = poll(&pfd, 1, static_cast<int>(remainingMs));
 
-			if (res == 0) {															// poll timeout reached
+			if (pollResult == 0) {													// poll timeout reached
 				cgiOutput.timedOut = true;
 				break;
 			}
 
-			if (res < 0) {
+			if (pollResult < 0) {
 				if (errno == EINTR)													// Interrupted by signal - retry poll
 					continue;
 				eof = true;															// Permanent poll error (EBADF, EINVAL, ...) - stop reading
@@ -907,7 +1107,7 @@ namespace {
 
 				for (;;) {
 
-					ssize_t n = read(pfd.fd, buf, sizeof(buf));
+					ssize_t n = read(pfd.fd, buf, sizeof(buf));						// ssize_t is required because read() returns -1 on error
 
 					if (n > 0) {
 						cgiOutput.data.append(buf, static_cast<std::size_t>(n));
@@ -946,9 +1146,12 @@ namespace {
 		return cgiOutput;
 	}
 
-	// Parse CGI output:
+	/*
+	Container for parsed CGI output, storing status, headers, body and a flag
+	indicating whether the header section was syntactically valid.
+	*/
 	struct CgiParsedOutput {
-		int									status;									// 0 in case of missing status:
+		int									status;			// 0 in case of missing status:
 		std::string							reason;
 		std::map<std::string, std::string>	headers;
 		std::string							body;
@@ -963,7 +1166,9 @@ namespace {
 		{}
 	};
 
-	/* Trim helpers (ASCII space/tab/CR/LF). */
+	/*
+	Removes leading spaces, tabs, and CR/LF characters from a string.
+	*/
 	std::string trimLeft(const std::string& s)  {
 		std::size_t i = 0;
 		while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n'))
@@ -971,6 +1176,9 @@ namespace {
 		return s.substr(i);
 	}
 
+	/*
+	Removes trailing spaces, tabs, and CR/LF characters from a string.
+	*/
 	std::string trimRight(const std::string& s) {
 		if (s.empty())
 			return s;
@@ -980,11 +1188,16 @@ namespace {
 		return s.substr(0, i);
 	}
 
+	/*
+	Strips leading and trailing ASCII whitespace using trimLeft/trimRight.
+	*/
 	std::string trim(const std::string& s)  {
 		return trimRight(trimLeft(s));
 	}
 
-	/* Lowercase a copy of a string (ASCII). */
+	/*
+	Returns a lowercase ASCII copy of the input string.
+	*/
 	std::string toLowerCopy(const std::string& s)   {
 		std::string out(s);	// copy constructor
 		for (std::size_t i = 0; i < out.size(); ++i)    {
@@ -994,11 +1207,15 @@ namespace {
 		return out;
 	}
 
-	// Parses raw CGI response headers and body.
+	/*
+	Parses raw CGI output into headers and body, extracting an optional
+	Status header into status/reason and marking the header block as valid
+	or invalid according to basic CGI rules.
+	*/
 	CgiParsedOutput parseCgiOutput(const std::string& raw) {
 
-		std::string 			remainingHeaders;
 		CgiParsedOutput			parsedOutput;
+		std::string 			remainingHeaders;
 		std::string::size_type	pos;
 
 		pos = raw.find("\r\n\r\n");
@@ -1024,7 +1241,7 @@ namespace {
 
 			pos = currentHeader.find(':');
 			if (pos == std::string::npos)
-				continue;
+				continue;											// Skip malformed header line (no colon)
 			
 			std::string name  = trim(currentHeader.substr(0, pos));
 			std::string value = trim(currentHeader.substr(pos + 1));
@@ -1043,60 +1260,60 @@ namespace {
 				parsedOutput.status = std::atoi(it->second.c_str());
 				parsedOutput.reason.clear();
 			}
-			parsedOutput.headers.erase(it);
+			parsedOutput.headers.erase(it);							// Status header was processed separately, so remove it from the general header map
 		}
 
 		return parsedOutput;
 	}
 
-	// std::string getReasonPhrase(int status);
+	std::string getReasonPhrase(int status);
 
-	// Builds a complete HTTP response from the parsed CGI output,
-	// applying CGI status fallback rules, copying all headers,
-	// recalculating Content-Length for safety, and returning the
-	// exact body produced by the CGI script.
+	/*
+	Builds an HTTP response from parsed CGI output, applying CGI rules for
+	Status and Location, copying safe headers, recomputing Content-Length,
+	and preserving the CGI body as-is.
+	*/
 	HTTP_Response buildCgiHttpResponse(const CgiParsedOutput& out) {
 
 		HTTP_Response res;
 		std::map<std::string, std::string>::const_iterator it;
 
-		if (out.status != 0) {											// CGI provided an explicit "Status:" header - use it
+		if (out.status != 0) {												// CGI provided an explicit "Status:" header - use it
 			res.status = out.status;
 			if (out.reason.empty())
 				res.reason = getReasonPhrase(out.status);
 			else
 				res.reason = out.reason;
-		} else {														// No "Status:" header - apply CGI fallback rules
+		} else {															// No "Status:" header - apply CGI fallback rules
 			it = out.headers.find("location");
-			if (it != out.headers.end()) {								// Classic CGI implicit redirect: a Location header without Status implies 302 Found (old CGI scripts)
+			if (it != out.headers.end()) {									// Classic CGI implicit redirect: a Location header without Status implies 302 Found (old CGI scripts)
 				res.status = 302;
 				res.reason = getReasonPhrase(res.status);
-			} else {													// Normal case: successful response without explicit status
+			} else {														// Normal case: successful response without explicit status
 				res.status = 200;
 				res.reason = getReasonPhrase(res.status);
 			}
 		}
 
-		for (it = out.headers.begin(); it != out.headers.end(); ++it) {	// Copy CGI headers, skipping those managed by the core
+		for (it = out.headers.begin(); it != out.headers.end(); ++it) {		// Copy CGI headers, skipping those managed by the core
 			if (it->first == "content-length" || it->first == "connection" || it->first == "transfer-encoding")
 				continue;
 			res.headers[it->first] = it->second;
 		}
 
-		std::ostringstream oss;											// Always recompute Content-Length - safer than trusting a value provided by the CGI script
-		oss << out.body.size();
-		res.headers["content-length"] = oss.str();
+		res.headers["content-length"] = toString(out.body.size());			// Always recompute Content-Length - safer than trusting a value provided by the CGI script
 
-		res.body = out.body;											// Copy the body exactly as produced by the CGI
-		res.close = false;												// Do not decide connection closing here - final keep-alive/close behaviour will be applied later
+		res.body = out.body;												// Copy the body exactly as produced by the CGI
+		res.close = false;													// Do not decide connection closing here - final keep-alive/close behaviour will be applied later
 
 		return res;
 	}
 	
 	/*
-		CGI logical handler
-		- It encapsulates the entire lifecycle of a CGI execution
-		- It validates, prepares, runs, gathers, and converts the external output into a correct HTTP response that complies with the protocol.
+	Handles execution of a CGI script: validates the target file and method,
+	spawns the CGI process, streams the request body, reads its output with
+	a timeout, validates CGI headers, and converts the result into an HTTP
+	response or an appropriate 4xx/5xx error.
 	*/
 	HTTP_Response handleCgiRequest(const HTTP_Request& req,	const EffectiveConfig& cfg, const std::string& fsPath)	{
 
@@ -1105,19 +1322,19 @@ namespace {
 
 		struct stat st;
 
-		if (stat(fsPath.c_str(), &st) != 0)			// Doesn't exist
+		if (stat(fsPath.c_str(), &st) != 0)							// Doesn't exist
 			return makeErrorResponse(404, &cfg);
 
-		if (!S_ISREG(st.st_mode))					// Not a regular file
+		if (!S_ISREG(st.st_mode))									// Not a regular file
 			return makeErrorResponse(403, &cfg);
 
-		if (access(fsPath.c_str(), R_OK) != 0)		// No read permissions
+		if (access(fsPath.c_str(), R_OK) != 0)						// No read permissions
 			return makeErrorResponse(403, &cfg);
 
 		std::string	interpreter;
 		std::vector<std::string> argv;
 		if (!prepareCgiExecutor(cfg, fsPath, interpreter, argv))
-			return makeErrorResponse(502, &cfg);
+			return makeErrorResponse(502, &cfg);					// 502 Bad Gateway: the server acted as a gateway but received an invalid or unusable response from the CGI process
 
 		std::vector<std::string> envp = buildCgiEnv(req, cfg, fsPath);
 
@@ -1125,7 +1342,7 @@ namespace {
 		if (!spawnCgiProcess(argv, envp, pipes))
 			return makeErrorResponse(502, &cfg);
 
-		CgiRawOutput raw = readCgiOutput(pipes, cfg.cgi_timeout, req.body);
+		CgiRawOutput raw = readCgiOutput(pipes, cfg.cgiTimeout, req.body);
 
 		if (raw.timedOut)
 			return makeErrorResponse(504, &cfg);
@@ -1141,24 +1358,33 @@ namespace {
 		std::map<std::string, std::string>::const_iterator itContentType = parsedOutput.headers.find("content-type");
 		std::map<std::string, std::string>::const_iterator itRedirection = parsedOutput.headers.find("location");
 		if (itContentType == parsedOutput.headers.end() && itRedirection == parsedOutput.headers.end())
-			return makeErrorResponse(502, &cfg);
+			return makeErrorResponse(502, &cfg);					// CGI must provide Content-Type or Location; otherwise it's neither a response nor a redirect.
 
-		HTTP_Response response = buildCgiHttpResponse(parsedOutput);
+		HTTP_Response res = buildCgiHttpResponse(parsedOutput);
 
 		if (req.keep_alive == false)
-			response.close = true;
+			res.close = true;
 
-		return response;
+		return res;
 	}
 
-	// --- 2.12. Uploads ---
 
+	// -------------------
+	// --- 12. Uploads ---
+	// -------------------
+
+	// --- 12.1. Upload Utilities (Helper Functions) ---
+
+	/*
+	Validates an upload filename to ensure it is safe: rejects empty names,
+	'.', '..', control characters, path separators, and problematic symbols.
+	*/
 	bool isSanitizedFilename(const std::string& filename) {
 
 		if (filename.empty())
 			return false;
 
-		if (filename == "." || filename == "..")
+		if (filename == "." || filename == "..")			// Prevent directory traversal via current/parent directory names
 			return false;
 
 		for (std::string::const_iterator it = filename.begin(); it != filename.end(); ++it) {
@@ -1172,8 +1398,6 @@ namespace {
 
 				case '/':
 				case '\\':
-					return false;
-
 				case ':':
 				case '*':
 				case '?':
@@ -1191,135 +1415,186 @@ namespace {
 		return true;
 	}
 
-	// Handles uploads (e.g., POST to upload_store).
+	/*
+	Detects whether the request uses multipart/form-data based on the Content-Type header.
+	*/	
+	bool isMultipart(const HTTP_Request& req) {
+
+		std::map<std::string, std::string>::const_iterator it =	req.headers.find("content-type");
+
+		return (it != req.headers.end() && it->second.find("multipart/form-data") != std::string::npos);
+	}
+
+	/*
+	Extracts the filename component after the last '/' in a path.
+	Returns an empty string if no '/' is found.
+	*/
+	std::string extractFilename(const std::string& path) {
+
+		std::string::size_type pos = path.rfind('/');
+		
+		if (pos == std::string::npos)
+			return "";
+		
+		return path.substr(pos + 1);
+	}
+
+	/*
+	Checks whether the given path exists and is a directory for uploads.
+	*/
+	bool isValidUploadDirectory(const std::string& dir) {
+
+		struct stat st;
+
+		return (stat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode));
+	}
+
+	/*
+	Checks whether an upload target already exists and returns an HTTP status:
+	0 if it can be created, 403 for directories, 409 for conflicts, 500 on errors.
+	*/
+	int getExistingTargetStatus(const std::string& path) {
+
+		struct stat st;
+
+		if (stat(path.c_str(), &st) == 0) {		// Path exists: decide what it is
+			if (S_ISDIR(st.st_mode))			// Directory - cannot overwrite a directory with a file
+				return 403;
+			return 409;							// Regular file (or similar) - conflict, do not overwrite
+		}
+
+		if (errno == ENOENT)					// Path does not exist - OK to create
+			return 0;
+
+		return 500;								// Any other stat error - internal server error
+	}
+
+	/*
+	Writes the upload body to the given path. Returns 0 on success or an
+	HTTP-style status code (403/500) on failure.
+	*/
+	int writeUploadedFile(const std::string& path, const std::string& body) {
+
+		std::ofstream file(path.c_str(), std::ios::binary);
+		if (file.fail()) {
+			if (errno == EACCES)
+				return 403;
+			return 500;
+		}
+
+		file.write(body.c_str(), body.size());
+		if (file.fail()) {
+			file.close();
+			std::remove(path.c_str());
+			return 500;
+		}
+
+		file.close();
+
+		return 0;									// Success
+	}
+
+	/*
+	Builds a 201 Created response with a Location header pointing to the target.
+	*/
+	HTTP_Response makeResponse201(const std::string& target) {
+		HTTP_Response res;
+
+		res.status = 201;
+		res.reason = getReasonPhrase(201);
+		res.headers["Location"] = target;
+		res.headers["Content-Type"] = "text/plain";
+		res.headers["Content-Length"] = "0";
+		res.body.clear();
+
+		return res;
+	}
+
+	// --- 12.2. Upload Request Handler ---
+
+	/*
+	Handles a simple upload request: validates the filename and upload directory,
+	checks for conflicts, writes the file, and returns 201 on success.
+	*/
 	HTTP_Response handleUploadRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 
-		if (req.method != "POST")										// Redundant (already checked in classifyRequest), but safe
-			return make405(cfg);
+		if (isMultipart(req))											// Allow only simple uploads (reject multipart/form-data - requires boundary parsing)
+        	return makeErrorResponse(501, &cfg);
 
-		std::map<std::string, std::string>::const_iterator it = req.headers.find("content-type");	// Allow only simple uploads (reject multipart/form-data)
-		if (it != req.headers.end())
-			if (it->second.find("multipart/form-data") != std::string::npos)	// multipart must be rejected (requires boundary parsing)
-				return makeErrorResponse(501, &cfg);
-
-		if (cfg.upload_store.empty())									// Config coherence (redundant - already checked in classifyRequest - but safe)
-			return makeErrorResponse(500, &cfg);
-
-		std::string::size_type lastSlashPos = fsPath.rfind('/');		// Separate parent directory and filename
-		if (lastSlashPos == std::string::npos)
-			return makeErrorResponse(400, &cfg);
-
-		std::string filename = fsPath.substr(lastSlashPos + 1);
-			
+		std::string filename = extractFilename(fsPath);
 		if (filename.empty() || !isSanitizedFilename(filename))			// Filename validation
 			return makeErrorResponse(400, &cfg);
 			
-		std::string destinationDirectory = cfg.upload_store;
-		std::string destinationFilePath;
+		std::string dest = joinPath(cfg.uploadStore, filename);
 
-		if (!destinationDirectory.empty() && destinationDirectory.back() == '/')
-			destinationFilePath = destinationDirectory + filename;
-		else
-			destinationFilePath = destinationDirectory + '/' + filename;
-
-		struct stat st;													// Validate parent directory (must exist and be a directory)
-		
-		if (stat(destinationDirectory.c_str(), &st) < 0)
-			return makeErrorResponse(500, &cfg);						// Parent directory missing or inaccessible
-
-		if (!S_ISDIR(st.st_mode))
-			return makeErrorResponse(500, &cfg);						// Parent path is not a directory
-
-		if (stat(destinationFilePath.c_str(), &st) == 0) {							// Destination path: check for existence and disallow overwrite
-			if (S_ISDIR(st.st_mode))
-				return makeErrorResponse(403, &cfg);					
-			return makeErrorResponse(409, &cfg);						// Overwrite not allowed
-		} else
-			if (errno != ENOENT)										// ENOENT = file does not exist - OK to create
-				return makeErrorResponse(500, &cfg);
-
-		std::ofstream uploadedFile(destinationFilePath.c_str(), std::ios::binary);	// Create file for writing
-
-		if (!uploadedFile) {
-			if (errno == EACCES)
-				return makeErrorResponse(403, &cfg);
+		if (!isValidUploadDirectory(cfg.uploadStore))
 			return makeErrorResponse(500, &cfg);
-		}
 
-		uploadedFile.write(req.body.data(), req.body.size());			// Write file contents
+		int status = getExistingTargetStatus(dest);
+		if (status != 0)
+			return makeErrorResponse(status, &cfg);
 
-		if (uploadedFile.fail()) {
-			uploadedFile.close();
-			std::remove(destinationFilePath.c_str());								// Cleanup incomplete file
-			return makeErrorResponse(500, &cfg);
-		}
+		int writeStatus = writeUploadedFile(dest, req.body);
+		if (writeStatus != 0)
+			return makeErrorResponse(writeStatus, &cfg);
 
-		uploadedFile.close();
-
-		HTTP_Response response;											// It's a success!!
-
-		response.status = 201;
-		response.reason = getReasonPhrase(response.status);
-		response.headers["Location"] = req.target;						// Logical path
-		response.headers["Content-Type"] = "text/plain";
-		response.headers["Content-Length"] = "0";
-		response.body.clear();
-
-		return response;
+		return makeResponse201(req.target);
 	}
 
-    // --- 2.13. Error pages custom / genérico ---
 
-	// Returns the relative or absolute path configured for a given status,
-	// or an empty string if no specific error_page is defined.
-	std::string findErrorPagePath(const EffectiveConfig& conf, int status) {
+	// -----------------------------------------
+	// --- 13. Error pages: custom / generic ---
+	// -----------------------------------------
+
+	/*
+	Resolves the configured error_page URI into a filesystem path by normalizing
+	its leading './' or '/' and joining it with the root directory.
+	*/
+	std::string findErrorPagePath(const EffectiveConfig& cfg, int status) {
 		
-		std::map<int, std::string>::const_iterator it = conf.error_pages.find(status);
+		std::map<int, std::string>::const_iterator it = cfg.errorPages.find(status);
 
-		if (it == conf.error_pages.end())
+		if (it == cfg.errorPages.end())									// No custom error page for this status
 			return "";
 		
 		std::string path = it->second; 
 
 		if (path.size() >= 2 && path[0] == '.' && path[1] == '/')
-			path.erase(0, 2);
+			path.erase(0, 2);											// Strip leading "./"
 		else if (!path.empty() && path[0] == '/')
-			path.erase(0, 1);
+			path.erase(0, 1);											// Strip leading "/"
 
-		if (!conf.root.empty() && conf.root.back() != '/')
-			path = conf.root + '/' + path;
-		else
-			path = conf.root + path;
+		path = joinPath(cfg.root, path);
 
 		return path;
 	}
 
+	/*
+	Returns the standard HTTP reason phrase for a given status code, or
+	"Unknown Status" if not recognized.
+	*/
 	std::string getReasonPhrase(int status) {
 
 		switch (status) {
 
-			// 1xx — Informational
-			case 100: return "Continue";
+			case 100: return "Continue";							// 1xx — Informational
 			case 101: return "Switching Protocols";
 			case 102: return "Processing";
 
-			// 2xx — Success
-			case 200: return "OK";
+			case 200: return "OK";									// 2xx — Success
 			case 201: return "Created";
 			case 202: return "Accepted";
 			case 204: return "No Content";
 			case 206: return "Partial Content";
 
-			// 3xx — Redirection
-			case 301: return "Moved Permanently";
+			case 301: return "Moved Permanently";					// 3xx — Redirection
 			case 302: return "Found";
 			case 303: return "See Other";
 			case 304: return "Not Modified";
 			case 307: return "Temporary Redirect";
 			case 308: return "Permanent Redirect";
 
-			// 4xx — Client errors
-			case 400: return "Bad Request";
+			case 400: return "Bad Request";							// 4xx — Client errors
 			case 401: return "Unauthorized";
 			case 403: return "Forbidden";
 			case 404: return "Not Found";
@@ -1331,8 +1606,7 @@ namespace {
 			case 415: return "Unsupported Media Type";
 			case 431: return "Request Header Fields Too Large";
 
-			// 5xx — Server errors
-			case 500: return "Internal Server Error";
+			case 500: return "Internal Server Error";				// 5xx — Server errors
 			case 501: return "Not Implemented";
 			case 502: return "Bad Gateway";
 			case 503: return "Service Unavailable";
@@ -1343,22 +1617,17 @@ namespace {
 		}
 	}
 
-	// Builds an error response:
-	// - tries to use a configured error_page if available;
-	// - if that fails, generates a default HTML page.
-	// conf may be NULL for early errors (before a Server is selected).
-	HTTP_Response makeErrorResponse(int status, const EffectiveConfig* conf) {
+	/*
+	Builds an HTTP error response for the given status code. Uses a configured
+	custom error_page if available; otherwise falls back to a simple HTML body.
+	*/
+	HTTP_Response makeErrorResponse(int status, const EffectiveConfig* cfg) {
 		
-		HTTP_Response	response;
-
-		response.status = status;
-		response.reason = getReasonPhrase(status);
-
 		std::string	body;
-
-		// 1) Try custom error_page if configuration is available
-		if (conf) {
-			std::string errorPagePath = findErrorPagePath(*conf, status);
+		const std::string reason = getReasonPhrase(status);
+		
+		if (cfg) {																// Try loading a custom error_page
+			const std::string errorPagePath = findErrorPagePath(*cfg, status);
 			if (!errorPagePath.empty()) {
 				std::ifstream file(errorPagePath.c_str(), std::ios::binary);
 				if (file) {
@@ -1368,38 +1637,43 @@ namespace {
 				}
 			}
 		}
-
-		// 2) If no body (no error_page or failed to read it) → generate default HTML
-		if (body.empty()) {
+		
+		if (body.empty()) {														// Otherwise, generate default HTML (if no error_page or if reading fails)
 			std::ostringstream oss;
 			oss	<< "<!DOCTYPE html>\n"
-				<< "<html><head><meta charset=\"utf-8\">"
-				<< "<title>" << status << ' ' << response.reason << "</title>"
-				<< "</head><body>"
-				<< "<h1>" << status << ' ' << response.reason << "</h1>"
-				<< "</body></html>\n";
+			<< "<html><head><meta charset=\"utf-8\">"
+			<< "<title>" << status << ' ' << reason << "</title>"
+			<< "</head><body>"
+			<< "<h1>" << status << ' ' << reason << "</h1>"
+			<< "</body></html>\n";
 			body = oss.str();
 		}
+		
+		HTTP_Response res;
 
-		// 3) Fill in the response fields
-		response.body = body;
+		res.status = status;													// Fill in the response fields
+		res.reason = reason;
+		res.body = body;
+		res.headers.clear();
+		res.headers["Content-Type"] = "text/html";
+		res.headers["Content-Length"] = toString(body.size());
 
-		std::ostringstream contentLength;
-		contentLength << body.size();
-
-		response.headers.clear();
-		response.headers["Content-Type"] = "text/html";
-		response.headers["Content-Length"] = contentLength.str();
-
-		return response;
+		return res;
 	}
 
 
+	// ---------------------------------
+	// --- 14. Redirection responses ---
+	// ---------------------------------
 
+	/*
+	Builds a 3xx redirect response with Location and a small HTML body.
+	Falls back to 302 if the provided status is not in the 3xx range.
+	*/
 	HTTP_Response makeRedirectResponse(int status, const std::string& location) {
 
 		if (status < 300 || status > 399)
-			status = 302;
+			status = 302;								// Standard fallback redirect (safe and widely supported)
 		
 		HTTP_Response res;
 
@@ -1409,26 +1683,29 @@ namespace {
 		res.headers["content-type"] = "text/html";
 
 		std::ostringstream body;
+
 		body << "<!DOCTYPE html>\n"
 			<< "<html><head><meta charset=\"utf-8\">"
 			<< "<title>" << res.status << ' ' << res.reason << "</title></head>"
 			<< "<body><h1>" << res.status << ' ' << res.reason << "</h1>"
-			<< "<p>Resource moved to <a href=\"" << location << "\">" << location << "</a></p>"
+			<< "<p>Resource moved to <a href=\"" << htmlEscape(location) << "\">" << htmlEscape(location) << "</a></p>"
 			<< "</body></html>";
 
 		res.body = body.str();
-
-		std::ostringstream length;
-		length << res.body.size();
-		res.headers["content-length"] = length.str();
+		res.headers["content-length"] = toString(res.body.size());
 
 		return res;
 	}
 	
 
-	// --- 2.14. MIME types ---
+	// ----------------------
+	// --- 15. MIME types ---
+	// ----------------------
 
-	// Determines the Content-Type from the file extension.
+	/*
+	Returns the MIME type corresponding to a file extension, normalized to
+	lowercase, or "application/octet-stream" if the extension is unknown.
+	*/
 	std::string getMimeType(const std::string& ext) {
 
 		std::string lowerExt = ext;
@@ -1448,137 +1725,154 @@ namespace {
 		if (lowerExt == "txt") return "text/plain";
 		if (lowerExt == "pdf") return "application/pdf";
 
-		return "application/octet-stream";
+		return "application/octet-stream";					// Standard fallback MIME type for unknown files (RFC 2046)
 	}
 
-    // --- 2.15. Connection / keep-alive ---
 
-	// Sets the Connection/close header in the HTTP_Response based on the request and status.
-	void applyConnectionHeader(const HTTP_Request& request, HTTP_Response& response) {
+	// -----------------------------------
+	// --- 16. Connection / keep-alive ---
+	// -----------------------------------
+
+	/*
+	Sets the Connection header and marks the response to keep the socket open
+	or close it based on the client's keep-alive preference.
+	*/
+	void applyConnectionHeader(const HTTP_Request& req, HTTP_Response& res) {
 		
-		if (request.keep_alive) {
-			response.close = false;
-			response.headers["Connection"] = "keep-alive";
+		if (req.keep_alive) {
+			res.close = false;
+			res.headers["Connection"] = "keep-alive";
 		} else {
-			response.close = true;
-			response.headers["Connection"] = "close";
+			res.close = true;
+			res.headers["Connection"] = "close";
 		}
 	}
 }
 
-HTTP_Response	handleRequest(const HTTP_Request& request, const std::vector<Server>& servers) {
+
+/*
+Main application dispatcher: parses the request target, selects the server
+and location, builds the effective configuration, enforces method/body
+rules, maps the path to the filesystem or CGI, and delegates to the
+appropriate handler to produce the final HTTP response.
+*/
+HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& servers) {
 	
-	// 0) Minimal safeguard: no servers configured → 500
+	// 0) Minimal safeguard: no servers configured - 500
 	if (servers.empty()) {
-		HTTP_Response response = makeErrorResponse(500, NULL);
-		applyConnectionHeader(request, response);
-		return response;
+		HTTP_Response res = makeErrorResponse(500, NULL);
+		applyConnectionHeader(req, res);
+		return res;
 	}
 
-	// 1) Parse target → extract path + query
+	// 1) Parse target - extract path + query
 	std::string	path;
 	std::string	query;
-	if (!parseTarget(request, path, query)) {
-		HTTP_Response response = makeErrorResponse(400, NULL);
-		applyConnectionHeader(request, response);
-		return response;
+	if (!parseTarget(req, path, query)) {
+		HTTP_Response res = makeErrorResponse(400, NULL);
+		applyConnectionHeader(req, res);
+		return res;
 	}
 	
-	// 2) Select the Server (vhost)
-	const Server& server = selectServer(servers, request);
+	// 2) Select the Server and the matching Location
+	const Server& srv = selectServer(servers, req);
+	const Location* loc = matchLocation(srv, path);
 
-	// 3) Find the matching Location (longest prefix)
-	const Location* location = matchLocation(server, path);
-
-	// 4) Build effective configuration (merge Server + Location)
-	EffectiveConfig config = buildEffectiveConfig(server, location);
+	// 3) Build effective configuration (merge Server + Location)
+	EffectiveConfig cfg;
+	try {
+		cfg = buildEffectiveConfig(srv, loc);
+	} catch (const std::exception&){
+		HTTP_Response res = makeErrorResponse(500, NULL);
+		applyConnectionHeader(req, res);
+		return res;
+	}
 	
-	// Insertion) Redirections
-	if (config.redirect_status != 0) {
-		HTTP_Response response = makeRedirectResponse(config.redirect_status, config.redirect_target);	
-		applyConnectionHeader(request, response);
-		return response;
+	// 4) Handle configured redirections (return directive)
+	if (cfg.redirectStatus != 0) {
+		HTTP_Response res = makeRedirectResponse(cfg.redirectStatus, cfg.redirectTarget);	
+		applyConnectionHeader(req, res);
+		return res;
 	}
 
 	// 5.1) Check if method is implemented at all
-	if (request.method != "GET"	&& request.method != "POST"	&& request.method != "DELETE") {
-		HTTP_Response response = makeErrorResponse(501, &config);
-		applyConnectionHeader(request, response);
-		return response;
+	if (req.method != "GET"	&& req.method != "POST"	&& req.method != "DELETE") {
+		HTTP_Response res = makeErrorResponse(501, &cfg);
+		applyConnectionHeader(req, res);
+		return res;
 	}
 
 	// 5.2) Check if the method is allowed (405)
-	if (!isMethodAllowed(config, request.method)) {
-		HTTP_Response response = make405(config);
-		applyConnectionHeader(request, response);
-		return response;
+	if (!isMethodAllowed(cfg, req.method)) {
+		HTTP_Response res = make405(cfg);
+		applyConnectionHeader(req, res);
+		return res;
 	}
 
 	// 6) Validate body constraints (size, etc.)
-	int bodyErrorStatus = 0;
-	if (!checkRequestBodyAllowed(config, request, bodyErrorStatus)) {
-		HTTP_Response response = makeErrorResponse(bodyErrorStatus, &config);
-		applyConnectionHeader(request, response);
-		return response;
+	int status = 0;
+	if (!checkRequestBodyAllowed(cfg, req, status)) {
+		HTTP_Response res = makeErrorResponse(status, &cfg);
+		applyConnectionHeader(req, res);
+		return res;
 	}
 
-	// 7) Map logical path → filesystem
-	std::string fsPath = makeFilesystemPath(config, path);
-	if (fsPath.empty()) {
-		// Se a construção falhar, tratamos como erro interno de config.
-		HTTP_Response response = makeErrorResponse(500, &config);
-		applyConnectionHeader(request, response);
-		return response;
+	// 7) Map logical path - filesystem
+	std::string fsPath = makeFilesystemPath(cfg, path);
+	if (fsPath.empty()) {												// On failure, it is treated as an internal configuration error.
+		HTTP_Response res = makeErrorResponse(500, &cfg);
+		applyConnectionHeader(req, res);
+		return res;
 	}
 
-	// 8) Normalizar e garantir que está dentro do root (anti-traversal)
-	if (!normalizePath(fsPath, config.root)) {
-		// You may choose between 403 (forbidden) or 404 (to avoid exposing structure).
-		HTTP_Response response = makeErrorResponse(403, &config);
-		applyConnectionHeader(request, response);
-		return response;
+	// 8) Normalize and ensure it is within the root (anti-traversal)
+	if (!normalizePath(fsPath, cfg.root)) {								// Reject attempts to escape the root directory or invalid traversal
+		HTTP_Response res = makeErrorResponse(403, &cfg);				// 404 (to avoid exposing structure) is also acceptable.
+		applyConnectionHeader(req, res);
+		return res;
 	}
 
 	// 9) Classify the request (static file, directory, CGI, upload, etc.)
-	RequestKind kind = classifyRequest(config, path, fsPath, request);
-	HTTP_Response response;
+	RequestKind kind = classifyRequest(cfg, path, fsPath, req);
+	HTTP_Response res;
 	switch (kind) {
 
 		case RK_UPLOAD:
-			response = handleUploadRequest(request, config, fsPath);
+			res = handleUploadRequest(req, cfg, fsPath);
 			break;
 
 		case RK_CGI:
-			response = handleCgiRequest(request, config, fsPath);
+			res = handleCgiRequest(req, cfg, fsPath);
 			break;
 
 		case RK_DIRECTORY:
-			if (path.empty() || path[path.size() - 1] != '/') {
+			if (path.empty() || path[path.size() - 1] != '/') {			// Redirect /dir → /dir/
 				std::string redirectUrl = path + '/';	
 				if (!query.empty()) {
 					redirectUrl += '?';
 					redirectUrl += query;
 				}
-				response = makeRedirectResponse(301, redirectUrl);						// Tipical choice - could be 302
+				res = makeRedirectResponse(301, redirectUrl);			// Typical for directory redirects — 301 is standard; 302 is fine too.
 			} else
-				response = handleDirectoryRequest(request, config, fsPath, path);
+				res = handleDirectoryRequest(req, cfg, fsPath, path);
 			break;
 
 		case RK_STATIC_FILE:
-			response = handleStaticFile(request, config, fsPath);
+			res = handleStaticFile(req, cfg, fsPath);
 			break;
 
 		case RK_FORBIDDEN:
-			response = makeErrorResponse(403, &config);
+			res = makeErrorResponse(403, &cfg);
 			break;
 
 		case RK_NOT_FOUND:
 		default:
-			response = makeErrorResponse(404, &config);
+			res = makeErrorResponse(404, &cfg);
 			break;
 	}
 
 	// 10) Apply Connection / keep-alive header based on the request
-	applyConnectionHeader(request, response);
-	return response;
+	applyConnectionHeader(req, res);
+
+	return res;
 }
