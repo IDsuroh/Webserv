@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/06 21:34:05 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2025/12/07 00:22:15 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -48,9 +48,9 @@ namespace {
 	// --------------------------------
 
 	/*
-	Extracts and parses the request target into path and query components.
-	Expects an origin-form target (starting with '/').
-	Returns true on success, false if the target is empty or the path is invalid.
+	 Extracts and parses the request target into path and query components.
+	 Expects an origin-form target (starting with '/').
+	 Returns true on success, false if the target is empty or the path is invalid.
 	*/
 	bool parseTarget(const HTTP_Request& request, std::string& path, std::string& query) {
 
@@ -79,8 +79,8 @@ namespace {
 	// -----------------------------------
 
 	/*
-	Selects the appropriate virtual server based on the Host header.
-	Returns the first matching server_name; falls back to servers[0] if none match.
+	 Selects the appropriate virtual server based on the Host header.
+	 Returns the first matching server_name; falls back to servers[0] if none match.
 	*/
 	const Server& selectServer(const std::vector<Server>& servers, const HTTP_Request& request) {
 
@@ -103,8 +103,8 @@ namespace {
 	// ----------------------------------------------
 
 	/*
-	Performs longest-prefix matching to find the best location for the request path.
-	A location matches only if the prefix boundary is valid. Returns NULL if none match.
+	 Performs longest-prefix matching to find the best location for the request path.
+	 A location matches only if the prefix boundary is valid. Returns NULL if none match.
 	*/
 	const Location* matchLocation(const Server& server, const std::string& requestPath) {
 
@@ -132,14 +132,14 @@ namespace {
 	// --- 4.1. Effective Config Utilities (helper functions and structs) ---
 
 	/*
-	Default limits for maximum request body size and CGI execution timeout (default configuration constants).
+	 Default limits for maximum request body size and CGI execution timeout (default configuration constants).
 	*/
 	const std::size_t	kDefaultClientMaxBodySize =	1024 * 1024;	// 1 MiB - use MiB for an exact binary body-size limit
 	const std::size_t	kDefaultCgiTimeout = 		30;				// 30 seconds
 
 	/*
-	Holds the merged Server and Location directives for handling a request.
-	Provides resolved defaults, limits, CGI options, and redirect configuration.
+	 Holds the merged Server and Location directives for handling a request.
+	 Provides resolved defaults, limits, CGI options, and redirect configuration.
 	*/
 	struct EffectiveConfig {
 		const Server*						server;					// never NULL
@@ -179,7 +179,7 @@ namespace {
 	};
 
 	/*
-	Splits a string into whitespace-separated words and returns them as a vector.
+	 Splits a string into whitespace-separated words and returns them as a vector.
 	*/
 	std::vector<std::string> splitWords(const std::string& input) {
 
@@ -194,8 +194,8 @@ namespace {
 	}
 
 	/*
-	Validates and parses an HTTP status code string into an integer (100–599).
-	Throws on non-digits, overflow, or invalid ranges.
+	 Validates and parses an HTTP status code string into an integer (100–599).
+	 Throws on non-digits, overflow, or invalid ranges.
 	*/
 	int parseHttpStatus(const std::string& str) {
 
@@ -220,7 +220,7 @@ namespace {
 	}
 
 	/*
-	Parses a numeric string into size_t, validating digits and overflow conditions.
+	 Parses a numeric string into size_t, validating digits and overflow conditions.
 	*/
 	size_t parseSizeT(const std::string& str) {
 
@@ -247,8 +247,8 @@ namespace {
 	}
 
 	/*
-	Looks up a directive by key, preferring Location over Server.
-	Returns true and sets value if found; otherwise returns false.
+	 Looks up a directive by key, preferring Location over Server.
+	 Returns true and sets value if found; otherwise returns false.
 	*/
 	bool getDirectiveValue(const Location* loc, const Server& srv, const std::string& key, std::string& value) {
 		
@@ -272,8 +272,8 @@ namespace {
 	}
 
 	/*
-	Merges error_page configuration from Server and Location into EffectiveConfig.
-	Server-level mappings are loaded first; Location error_page overrides or adds entries.
+	 Merges error_page configuration from Server and Location into EffectiveConfig.
+	 Server-level mappings are loaded first; Location error_page overrides or adds entries.
 	*/
 	void resolveErrorPages(EffectiveConfig& cfg, const Server& srv, const Location* loc) {
 
@@ -302,8 +302,8 @@ namespace {
 	// --- 4.2. Effective Configuration Construction ---
 
 	/*
-	Builds the EffectiveConfig by merging Server and Location directives.
-	Applies defaults for methods, error pages, CGI options, and redirects.
+	 Builds the EffectiveConfig by merging Server and Location directives.
+	 Applies defaults for methods, error pages, CGI options, and redirects.
 	*/
 	EffectiveConfig buildEffectiveConfig(const Server& srv, const Location* loc) {
 
@@ -372,7 +372,7 @@ namespace {
 	// --------------------------------
 
 	/*
-	Checks whether the given HTTP method is allowed by the configuration.
+	 Checks whether the given HTTP method is allowed by the configuration.
 	*/
 	bool isMethodAllowed(const EffectiveConfig& cfg, const std::string& method) {
 		
@@ -386,7 +386,7 @@ namespace {
 	HTTP_Response makeErrorResponse(int status, const EffectiveConfig* cfg);
 
 	/*
-	Builds a 405 Method Not Allowed response and sets the Allow header accordingly.
+	 Builds a 405 Method Not Allowed response and sets the Allow header accordingly.
 	*/
 	HTTP_Response make405(const EffectiveConfig& cfg) {
 
@@ -411,8 +411,8 @@ namespace {
 	// -----------------------------------------
 
 	/*
-	Validates request body size and supported transfer encodings.
-	Returns true if allowed; otherwise sets status code with the appropriate error.
+	 Validates request body size and supported transfer encodings.
+	 Returns true if allowed; otherwise sets status code with the appropriate error.
 	*/
 	bool checkRequestBodyAllowed(const EffectiveConfig& cfg, const HTTP_Request& req, int& status) {
 
@@ -434,8 +434,8 @@ namespace {
 	// -----------------------------------------------
 
 	/*
-	Maps a URL path to a filesystem path by removing the location prefix and
-	appending the remainder to the configured root directory.
+	 Maps a URL path to a filesystem path by removing the location prefix and
+	 appending the remainder to the configured root directory.
 	*/
 	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
 
@@ -454,8 +454,8 @@ namespace {
 	}
 
 	/*
-	Validates and canonicalizes a filesystem path relative to the given root.
-	Rejects any traversal outside root and rebuilds a normalized absolute path.
+	 Validates and canonicalizes a filesystem path relative to the given root.
+	 Rejects any traversal outside root and rebuilds a normalized absolute path.
 	*/
 	bool normalizePath(std::string& fsPath, const std::string& root) {
 
@@ -501,7 +501,7 @@ namespace {
 	// ----------------------------------
 
 	/*
-	High-level classification of how a request should be handled by the server.
+	 High-level classification of how a request should be handled by the server.
 	*/
 	enum RequestKind {
 		RK_STATIC_FILE,
@@ -515,8 +515,8 @@ namespace {
 	bool isCgiRequest(const EffectiveConfig& cfg, const std::string& path);
 
 	/*
-	Classifies the request as upload, CGI, directory, static file, forbidden,
-	or not found based on the effective configuration and filesystem state.
+	 Classifies the request as upload, CGI, directory, static file, forbidden,
+	 or not found based on the effective configuration and filesystem state.
 	*/
 	RequestKind classifyRequest(const EffectiveConfig& cfg, const std::string& path, const std::string& fsPath, const HTTP_Request& req) {
 
@@ -553,7 +553,7 @@ namespace {
 	std::string getReasonPhrase(int status);
 
 	/*
-	Converts a value to a string using stream insertion.
+	 Converts a value to a string using stream insertion.
 	*/
 	template<typename T>
 	static std::string toString(T v) {
@@ -563,8 +563,8 @@ namespace {
 	}
 
 	/*
-	Serves a static file by reading it into memory and returning a 200 response.
-	Applies basic MIME detection, handles 403/404 errors, and sets Content-Length.
+	 Serves a static file by reading it into memory and returning a 200 response.
+	 Applies basic MIME detection, handles 403/404 errors, and sets Content-Length.
 	*/
 	HTTP_Response handleStaticFile(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 
@@ -608,9 +608,9 @@ namespace {
 	// --- 10.1. Directory/Index Utilities (Helper Functions) ---
 
 	/*
-	Escapes special HTML characters in a string, producing a safe HTML-encoded output.
-	Converts &, <, >, " and ' into their corresponding HTML entities.
-	Prevents HTML injection and mitigates XSS risks.
+	 Escapes special HTML characters in a string, producing a safe HTML-encoded output.
+	 Converts &, <, >, " and ' into their corresponding HTML entities.
+	 Prevents HTML injection and mitigates XSS risks.
 	*/
 	std::string htmlEscape(const std::string& in) {
 
@@ -647,7 +647,7 @@ namespace {
 	}
 
 	/*
-	Concatenates two path components, inserting '/' only if needed.
+	 Concatenates two path components, inserting '/' only if needed.
 	*/
 	std::string joinPath(const std::string& directory, const std::string& entry) {
 		if (!directory.empty() && directory[directory.size() - 1] == '/')
@@ -656,8 +656,8 @@ namespace {
 	}
 
 	/*
-	Generates a simple HTML autoindex page for a directory, listing files and
-	subdirectories based on the request path and filesystem path.
+	 Generates a simple HTML autoindex page for a directory, listing files and
+	 subdirectories based on the request path and filesystem path.
 	*/
 	std::string generateAutoIndexPage(const std::string& reqPath, const std::string& fsPath) {
 
@@ -711,8 +711,8 @@ namespace {
 	// --- 10.2. Directory Request Handler ---
 	
 	/*
-	Handles a request targeting a directory: tries index files first, then
-	generates an autoindex page if enabled, or returns 403 otherwise.
+	 Handles a request targeting a directory: tries index files first, then
+	 generates an autoindex page if enabled, or returns 403 otherwise.
 	*/
 	HTTP_Response handleDirectoryRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath, const std::string& reqPath) {
 
@@ -760,8 +760,8 @@ namespace {
 	// ---------------
 
 	/*
-	Determines whether the requested path should be handled as CGI based on
-	the configured cgi_pass extensions.
+	 Determines whether the requested path should be handled as CGI based on
+	 the configured cgi_pass extensions.
 	*/
 	bool isCgiRequest(const EffectiveConfig& cfg, const std::string& path) {
 
@@ -781,8 +781,8 @@ namespace {
 	}
 
 	/*
-	Determines whether the request method is allowed for CGI execution,
-	falling back to the general allowed methods if no CGI-specific list exists.
+	 Determines whether the request method is allowed for CGI execution,
+	 falling back to the general allowed methods if no CGI-specific list exists.
 	*/
 	bool isCgiMethodAllowed(const HTTP_Request& req, const EffectiveConfig& cfg) {
 
@@ -797,8 +797,8 @@ namespace {
 	}
 
 	/*
-	Extracts a valid file extension from a filesystem path, ignoring dots in
-	directory names, trailing dots, and hidden files that start with a dot.
+	 Extracts a valid file extension from a filesystem path, ignoring dots in
+	 directory names, trailing dots, and hidden files that start with a dot.
 	*/
 	std::string getFileExtension(const std::string& fsPath) {
 
@@ -821,9 +821,9 @@ namespace {
 	}
 
 	/*
-	Prepares the CGI interpreter and argument list for a given filesystem
-	path. Returns true only if the extension is mapped in cgi_pass and the
-	interpreter is executable.
+	 Prepares the CGI interpreter and argument list for a given filesystem
+	 path. Returns true only if the extension is mapped in cgi_pass and the
+	 interpreter is executable.
 	*/
 	bool prepareCgiExecutor(const EffectiveConfig& cfg, const std::string& fsPath, std::string& interpreter, std::vector<std::string>& argv) {
 		
@@ -854,9 +854,9 @@ namespace {
 	}
 
 	/*
-	Converts an HTTP header name into a valid CGI environment variable
-	by applying the HTTP_ prefix, uppercasing letters, replacing dashes
-	with underscores, and rejecting invalid characters.
+	 Converts an HTTP header name into a valid CGI environment variable
+	 by applying the HTTP_ prefix, uppercasing letters, replacing dashes
+	 with underscores, and rejecting invalid characters.
 	*/
 	std::string formatCgiEnvHeader(const std::string& header) {
 
@@ -878,9 +878,9 @@ namespace {
 	}
 
 	/*
-	Builds the CGI environment variable list for a given request and script
-	filesystem path, populating standard CGI variables, server metadata, and
-	HTTP_* header mappings.
+	 Builds the CGI environment variable list for a given request and script
+	 filesystem path, populating standard CGI variables, server metadata, and
+	 HTTP_* header mappings.
 	*/
 	std::vector<std::string> buildCgiEnv(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 		
@@ -945,7 +945,7 @@ namespace {
 	}
 
 	/*
-	Internal structure holding the pipe file descriptors used by the CGI process.
+	 Internal structure holding the pipe file descriptors used by the CGI process.
 	*/
 	struct CgiPipes {
 		int		stdinParent;		// parent writes here (becomes child's STDIN)
@@ -954,7 +954,7 @@ namespace {
 	};
 	
 	/*
-	Result container for CGI child execution, storing its output and status.
+	 Result container for CGI child execution, storing its output and status.
 	*/
 	struct CgiRawOutput {
 		bool		timedOut;		// true if reading from the child exceeded the timeout
@@ -963,10 +963,10 @@ namespace {
 	};
 
 	/*
-	Spawns a CGI child process, sets up pipes for its STDIN and STDOUT,
-	and prepares argv/envp before calling execve in the child. On success,
-	returns the child's PID and the file descriptors the parent uses to
-	write to the process and read from it.
+	 Spawns a CGI child process, sets up pipes for its STDIN and STDOUT,
+	 and prepares argv/envp before calling execve in the child. On success,
+	 returns the child's PID and the file descriptors the parent uses to
+	 write to the process and read from it.
 	*/
 	bool spawnCgiProcess(const std::vector<std::string>& argv, const std::vector<std::string>& env, CgiPipes& pipes) {
 
@@ -1023,10 +1023,10 @@ namespace {
 	}
 
 	/*
-	Sends the request body to the CGI process, then reads its STDOUT using
-	non-blocking I/O and poll() with a hard timeout. Collects all output data
-	and, if the CGI exits normally, captures its exit status. If the process
-	times out or the status cannot be obtained, exitStatus is set to -1.
+	 Sends the request body to the CGI process, then reads its STDOUT using
+	 non-blocking I/O and poll() with a hard timeout. Collects all output data
+	 and, if the CGI exits normally, captures its exit status. If the process
+	 times out or the status cannot be obtained, exitStatus is set to -1.
 	*/
 	CgiRawOutput readCgiOutput(const CgiPipes& pipes, std::size_t timeoutSeconds, const std::string& requestBody) {
 
@@ -1147,8 +1147,8 @@ namespace {
 	}
 
 	/*
-	Container for parsed CGI output, storing status, headers, body and a flag
-	indicating whether the header section was syntactically valid.
+	 Container for parsed CGI output, storing status, headers, body and a flag
+	 indicating whether the header section was syntactically valid.
 	*/
 	struct CgiParsedOutput {
 		int									status;			// 0 in case of missing status:
@@ -1167,7 +1167,7 @@ namespace {
 	};
 
 	/*
-	Removes leading spaces, tabs, and CR/LF characters from a string.
+	 Removes leading spaces, tabs, and CR/LF characters from a string.
 	*/
 	std::string trimLeft(const std::string& s)  {
 		std::size_t i = 0;
@@ -1177,7 +1177,7 @@ namespace {
 	}
 
 	/*
-	Removes trailing spaces, tabs, and CR/LF characters from a string.
+	 Removes trailing spaces, tabs, and CR/LF characters from a string.
 	*/
 	std::string trimRight(const std::string& s) {
 		if (s.empty())
@@ -1189,14 +1189,14 @@ namespace {
 	}
 
 	/*
-	Strips leading and trailing ASCII whitespace using trimLeft/trimRight.
+	 Strips leading and trailing ASCII whitespace using trimLeft/trimRight.
 	*/
 	std::string trim(const std::string& s)  {
 		return trimRight(trimLeft(s));
 	}
 
 	/*
-	Returns a lowercase ASCII copy of the input string.
+	 Returns a lowercase ASCII copy of the input string.
 	*/
 	std::string toLowerCopy(const std::string& s)   {
 		std::string out(s);	// copy constructor
@@ -1208,9 +1208,9 @@ namespace {
 	}
 
 	/*
-	Parses raw CGI output into headers and body, extracting an optional
-	Status header into status/reason and marking the header block as valid
-	or invalid according to basic CGI rules.
+	 Parses raw CGI output into headers and body, extracting an optional
+	 Status header into status/reason and marking the header block as valid
+	 or invalid according to basic CGI rules.
 	*/
 	CgiParsedOutput parseCgiOutput(const std::string& raw) {
 
@@ -1266,12 +1266,10 @@ namespace {
 		return parsedOutput;
 	}
 
-	std::string getReasonPhrase(int status);
-
 	/*
-	Builds an HTTP response from parsed CGI output, applying CGI rules for
-	Status and Location, copying safe headers, recomputing Content-Length,
-	and preserving the CGI body as-is.
+	 Builds an HTTP response from parsed CGI output, applying CGI rules for
+	 Status and Location, copying safe headers, recomputing Content-Length,
+	 and preserving the CGI body as-is.
 	*/
 	HTTP_Response buildCgiHttpResponse(const CgiParsedOutput& out) {
 
@@ -1310,10 +1308,10 @@ namespace {
 	}
 	
 	/*
-	Handles execution of a CGI script: validates the target file and method,
-	spawns the CGI process, streams the request body, reads its output with
-	a timeout, validates CGI headers, and converts the result into an HTTP
-	response or an appropriate 4xx/5xx error.
+	 Handles execution of a CGI script: validates the target file and method,
+	 spawns the CGI process, streams the request body, reads its output with
+	 a timeout, validates CGI headers, and converts the result into an HTTP
+	 response or an appropriate 4xx/5xx error.
 	*/
 	HTTP_Response handleCgiRequest(const HTTP_Request& req,	const EffectiveConfig& cfg, const std::string& fsPath)	{
 
@@ -1376,8 +1374,8 @@ namespace {
 	// --- 12.1. Upload Utilities (Helper Functions) ---
 
 	/*
-	Validates an upload filename to ensure it is safe: rejects empty names,
-	'.', '..', control characters, path separators, and problematic symbols.
+	 Validates an upload filename to ensure it is safe: rejects empty names,
+	 '.', '..', control characters, path separators, and problematic symbols.
 	*/
 	bool isSanitizedFilename(const std::string& filename) {
 
@@ -1416,7 +1414,7 @@ namespace {
 	}
 
 	/*
-	Detects whether the request uses multipart/form-data based on the Content-Type header.
+	 Detects whether the request uses multipart/form-data based on the Content-Type header.
 	*/	
 	bool isMultipart(const HTTP_Request& req) {
 
@@ -1426,8 +1424,8 @@ namespace {
 	}
 
 	/*
-	Extracts the filename component after the last '/' in a path.
-	Returns an empty string if no '/' is found.
+	 Extracts the filename component after the last '/' in a path.
+	 Returns an empty string if no '/' is found.
 	*/
 	std::string extractFilename(const std::string& path) {
 
@@ -1440,7 +1438,7 @@ namespace {
 	}
 
 	/*
-	Checks whether the given path exists and is a directory for uploads.
+	 Checks whether the given path exists and is a directory for uploads.
 	*/
 	bool isValidUploadDirectory(const std::string& dir) {
 
@@ -1450,8 +1448,8 @@ namespace {
 	}
 
 	/*
-	Checks whether an upload target already exists and returns an HTTP status:
-	0 if it can be created, 403 for directories, 409 for conflicts, 500 on errors.
+	 Checks whether an upload target already exists and returns an HTTP status:
+	 0 if it can be created, 403 for directories, 409 for conflicts, 500 on errors.
 	*/
 	int getExistingTargetStatus(const std::string& path) {
 
@@ -1470,8 +1468,8 @@ namespace {
 	}
 
 	/*
-	Writes the upload body to the given path. Returns 0 on success or an
-	HTTP-style status code (403/500) on failure.
+	 Writes the upload body to the given path. Returns 0 on success or an
+	 HTTP-style status code (403/500) on failure.
 	*/
 	int writeUploadedFile(const std::string& path, const std::string& body) {
 
@@ -1495,7 +1493,7 @@ namespace {
 	}
 
 	/*
-	Builds a 201 Created response with a Location header pointing to the target.
+	 Builds a 201 Created response with a Location header pointing to the target.
 	*/
 	HTTP_Response makeResponse201(const std::string& target) {
 		HTTP_Response res;
@@ -1513,8 +1511,8 @@ namespace {
 	// --- 12.2. Upload Request Handler ---
 
 	/*
-	Handles a simple upload request: validates the filename and upload directory,
-	checks for conflicts, writes the file, and returns 201 on success.
+	 Handles a simple upload request: validates the filename and upload directory,
+	 checks for conflicts, writes the file, and returns 201 on success.
 	*/
 	HTTP_Response handleUploadRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 
@@ -1547,8 +1545,8 @@ namespace {
 	// -----------------------------------------
 
 	/*
-	Resolves the configured error_page URI into a filesystem path by normalizing
-	its leading './' or '/' and joining it with the root directory.
+	 Resolves the configured error_page URI into a filesystem path by normalizing
+	 its leading './' or '/' and joining it with the root directory.
 	*/
 	std::string findErrorPagePath(const EffectiveConfig& cfg, int status) {
 		
@@ -1570,8 +1568,8 @@ namespace {
 	}
 
 	/*
-	Returns the standard HTTP reason phrase for a given status code, or
-	"Unknown Status" if not recognized.
+	 Returns the standard HTTP reason phrase for a given status code, or
+	 "Unknown Status" if not recognized.
 	*/
 	std::string getReasonPhrase(int status) {
 
@@ -1618,8 +1616,8 @@ namespace {
 	}
 
 	/*
-	Builds an HTTP error response for the given status code. Uses a configured
-	custom error_page if available; otherwise falls back to a simple HTML body.
+	 Builds an HTTP error response for the given status code. Uses a configured
+	 custom error_page if available; otherwise falls back to a simple HTML body.
 	*/
 	HTTP_Response makeErrorResponse(int status, const EffectiveConfig* cfg) {
 		
@@ -1667,8 +1665,8 @@ namespace {
 	// ---------------------------------
 
 	/*
-	Builds a 3xx redirect response with Location and a small HTML body.
-	Falls back to 302 if the provided status is not in the 3xx range.
+	 Builds a 3xx redirect response with Location and a small HTML body.
+	 Falls back to 302 if the provided status is not in the 3xx range.
 	*/
 	HTTP_Response makeRedirectResponse(int status, const std::string& location) {
 
@@ -1703,8 +1701,8 @@ namespace {
 	// ----------------------
 
 	/*
-	Returns the MIME type corresponding to a file extension, normalized to
-	lowercase, or "application/octet-stream" if the extension is unknown.
+	 Returns the MIME type corresponding to a file extension, normalized to
+	 lowercase, or "application/octet-stream" if the extension is unknown.
 	*/
 	std::string getMimeType(const std::string& ext) {
 
@@ -1734,8 +1732,8 @@ namespace {
 	// -----------------------------------
 
 	/*
-	Sets the Connection header and marks the response to keep the socket open
-	or close it based on the client's keep-alive preference.
+	 Sets the Connection header and marks the response to keep the socket open
+	 or close it based on the client's keep-alive preference.
 	*/
 	void applyConnectionHeader(const HTTP_Request& req, HTTP_Response& res) {
 		
@@ -1751,11 +1749,11 @@ namespace {
 
 
 /*
-Main application dispatcher: parses the request target, selects the server
-and location, builds the effective configuration, enforces method/body
-rules, maps the path to the filesystem or CGI, and delegates to the
-appropriate handler to produce the final HTTP response.
-*/
+ Main application dispatcher: parses the request target, selects the server
+ and location, builds the effective configuration, enforces method/body
+ rules, maps the path to the filesystem or CGI, and delegates to the
+ appropriate handler to produce the final HTTP response.
+ */
 HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& servers) {
 	
 	// 0) Minimal safeguard: no servers configured - 500
