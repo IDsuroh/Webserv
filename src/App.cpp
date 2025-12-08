@@ -1353,7 +1353,7 @@ namespace {
 				parsedOutput.status = std::atoi(it->second.c_str());
 				parsedOutput.reason.clear();
 			}
-			parsedOutput.headers.erase(it);							// Status header was processed separately, so remove it from the general header map
+			parsedOutput.headers.erase(it->first);					// Status header was processed separately, so remove it from the general header map
 		}
 
 		return parsedOutput;
