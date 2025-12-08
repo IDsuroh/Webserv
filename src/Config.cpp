@@ -11,6 +11,7 @@ static void handleGenericDirective(Server& srv, const std::string& key, const st
 // ****************************************************************************
 
 // Print Tokens Tester Function
+/*
 static void	testTokens(const std::vector<std::string>& tokens)	{
 	
     if (tokens.empty())	{
@@ -23,6 +24,7 @@ static void	testTokens(const std::vector<std::string>& tokens)	{
 	std::cout << "\nParsing Tokens\n";
     
 }
+*/
 
 // ****************************************************************************
 
@@ -54,7 +56,7 @@ void    Config::parse() {
 	
     std::vector<std::string>    tokens;
     tokenize(contents.str(), tokens);
-	testTokens(tokens);
+	//testTokens(tokens);
     parseTokens(tokens);
 
 	std::cout<< "\nResult:\n";
