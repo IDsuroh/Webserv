@@ -6,7 +6,7 @@
 /*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/08 15:27:57 by suroh            ###   ########.fr       */
+/*   Updated: 2025/12/08 16:54:50 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -47,12 +47,10 @@ namespace {
 	// --- 1. Target (path + query) ---
 	// --------------------------------
 
-	/*
-	Target parsing relaxation:
-		The header parser already accepts origin/absolute/*.
-		Rejecting non-/ targets here breaks proxy-style GET http://… and OPTIONS *;
-		trusting the parsed path/query avoids duplicate/over-strict validation.
-	*/
+	// Target parsing relaxation:
+	// The header parser already accepts origin/absolute/*.
+	// Rejecting non-/ targets here breaks proxy-style GET http://… and OPTIONS *;
+	// trusting the parsed path/query avoids duplicate/over-strict validation.
 	bool parseTarget(const HTTP_Request& request, std::string& path, std::string& query) {
     	path = request.path;   // already parsed in HttpHeader
     	query = request.query;

@@ -13,6 +13,7 @@ SRCS := \
 	src/HttpSerializer.cpp \
 	src/HttpHeader.cpp \
 	src/HttpBody.cpp \
+	src/App.cpp
 
 OBJS := $(SRCS:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
 
