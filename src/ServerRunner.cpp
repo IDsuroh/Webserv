@@ -269,39 +269,9 @@ int openAndListen(const std::string& spec)  {
 			continue;
 		}
 
-		#ifdef __APPLE__	// for CGI settings for the listening socket
-	{
-		/*
-		    macOS (42 rules): DO NOT set FD_CLOEXEC here.
-		    Allowed fcntl flags are limited to F_SETFL + O_NONBLOCK, so we skip F_SETFD.
-
-		    Consequence:
-		      - Accepted sockets (clientFd) will inherit across execve() on macOS.
-
-		    TODO(CGI child, before execve):
-		      - In the forked CHILD path of the CGI launcher:
-		          * Keep only 0,1,2 and the CGI pipe ends (stdin/stdout as dup2 targets).
-		          * Close EVERYTHING else: all listener fds, all other client fds,
-		            any extra poll/kqueue/pipe fds that were opened.
-		      - This prevents fd leaks and ensures CGI doesn’t keep sockets alive.
-
-		    Where to implement:
-		      - In launchCgi(...) right after fork(), inside the CHILD branch,
-		        under #ifdef __APPLE__.
-
-		    Rationale:
-		      - On Linux we use FD_CLOEXEC so execve() auto-closes unrelated fds.
-		      - On macOS we can’t set FD_CLOEXEC per subject; we must close manually in the child.
-		*/
-		}
-		#else
-		{
-			// close-on-exec for the listening socket as well
-			int fdflags = fcntl(fd, F_GETFD);
-			if (fdflags == -1 || fcntl(fd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
-			        printSocketError("fcntl F_SETFD FD_CLOEXEC");
-		}
-		#endif
+		int fdflags = fcntl(fd, F_GETFD);
+		if (fdflags == -1 || fcntl(fd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
+				printSocketError("fcntl F_SETFD FD_CLOEXEC");
 
 		const int	enable = 1;
 		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) < 0)
@@ -339,13 +309,6 @@ int openAndListen(const std::string& spec)  {
 
 bool	makeNonBlocking(int fd)	{
 
-#ifdef __APPLE__
-	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)	{ // fcntl = file control, changes properties of an open file descriptor.
-		printSocketError("fcntl F_SETFL O_NONBLOCK"); // int fcntl(int fd, int cmd, ... /* arg */);
-		return false;
-	}
-
-#else
 	int	flags = fcntl(fd, F_GETFL, 0); // the return value is the current status flags bitmask for that fd.
 	if (flags == -1)	{
 		printSocketError("fcntl F_GETFL");
@@ -356,8 +319,6 @@ bool	makeNonBlocking(int fd)	{
 		printSocketError("fcntl F_SETFL O_NONBLOCK");
 		return false;
 	}
-
-#endif
 	return true;
 
 	// F_SETFL => set file status flag. Returns a bitmask containing:
@@ -497,41 +458,12 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 			break;
 		}
 
-		#ifdef __APPLE__	// for CGI settings for each accepted client socket
-		{
-		/*
-		    macOS (42 rules): DO NOT set FD_CLOEXEC here.
-		    Allowed fcntl flags are limited to F_SETFL + O_NONBLOCK, so we skip F_SETFD.
-
-		    Consequence:
-		      - Accepted sockets (clientFd) will inherit across execve() on macOS.
-
-		    TODO(CGI child, before execve):
-		      - In the forked CHILD path of the CGI launcher:
-		          * Keep only 0,1,2 and the CGI pipe ends (stdin/stdout as dup2 targets).
-		          * Close EVERYTHING else: all listener fds, all other client fds,
-		            any extra poll/kqueue/pipe fds that were opened.
-		      - This prevents fd leaks and ensures CGI doesn’t keep sockets alive.
-
-		    Where to implement:
-		      - In launchCgi(...) right after fork(), inside the CHILD branch,
-		        under #ifdef __APPLE__.
-
-		    Rationale:
-		      - On Linux we use FD_CLOEXEC so execve() auto-closes unrelated fds.
-		      - On macOS we can’t set FD_CLOEXEC per subject; we must close manually in the child.
-		*/
+		// set close-on-exec for the accepted client socket
+		int fdflags = fcntl(clientFd, F_GETFD);
+		if (fdflags != -1)	{
+			if (fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
+				printSocketError("fcntl F_SETFD FD_CLOEXEC");
 		}
-		#else
-		{
-			// set close-on-exec for the accepted client socket
-			int fdflags = fcntl(clientFd, F_GETFD);
-			if (fdflags != -1)	{
-			    if (fcntl(clientFd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
-			        printSocketError("fcntl F_SETFD FD_CLOEXEC");
-			}
-		}
-		#endif
 
 		if (!makeNonBlocking(clientFd)) {
 			close(clientFd);
