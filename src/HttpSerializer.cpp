@@ -38,28 +38,6 @@ namespace http  {
         return std::string(buf);
     }
 
-    std::string build_simple_response(int status, const std::string& reason, const std::string& body, bool keep_alive)   {
-        std::ostringstream  oss;
-        oss << "HTTP/1.1 " << status << ' ' << reason << "\r\n";
-        oss << "Server: webserv\r\n";
-        oss << "Date: " << http_date() << "\r\n";
-        oss << "Content-Length: " << body.size() << "\r\n";
-        oss << "Content-Type: text/plain\r\n";
-        if (keep_alive) {
-            oss << "Connection: keep-alive\r\n";
-            oss << "Keep-Alive: timeout=5\r\n";
-        }
-        else
-            oss << "Connection: close\r\n";
-        oss << "\r\n";
-        oss << body;
-        return oss.str();
-    }
-
-    std::string build_simple_response(int status, const std::string& reason, const std::string& body)   {
-        return build_simple_response(status, reason, body, false);
-    }
-
     std::string build_error_response(const Server& srv, int status, const std::string& reason, bool keep_alive) {
         // 1) decide body (configured file -> fallback default)
         std::string body;
@@ -93,6 +71,52 @@ namespace http  {
             oss << "Connection: close\r\n";
         oss << "\r\n";
         oss << body;
+        return oss.str();
+    }
+
+    // Local helper (C++98)
+    static std::string toLowerCopy(const std::string& s) {
+        std::string out(s);
+        for (std::size_t i = 0; i < out.size(); ++i)
+            out[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(out[i])));
+        return out;
+    }
+
+    std::string serialize_response(const HTTP_Response& res, const std::string& version) {
+        std::ostringstream oss;
+        oss << version << ' ' << res.status << ' ' << res.reason << "\r\n";
+
+        bool hasCL = false;
+        bool hasServer = false;
+        bool hasDate = false;
+        bool hasConnection = false;
+
+        for (std::map<std::string, std::string>::const_iterator it = res.headers.begin(); it != res.headers.end(); ++it) {
+            const std::string lower = toLowerCopy(it->first);
+            if (lower == "content-length")
+                hasCL = true;
+            else if (lower == "server")
+                hasServer = true;
+            else if (lower == "date")
+                hasDate = true;
+            else if (lower == "connection")
+                hasConnection = true;
+
+            oss << it->first << ": " << it->second << "\r\n";
+        }
+
+        // Inject defaults only if missing
+        if (!hasServer)
+            oss << "Server: webserv\r\n";
+        if (!hasDate)
+            oss << "Date: " << http_date() << "\r\n";
+        if (!hasConnection)
+            oss << "Connection: " << (res.close ? "close" : "keep-alive") << "\r\n";
+        if (!hasCL)
+            oss << "Content-Length: " << res.body.size() << "\r\n";
+
+        oss << "\r\n";
+        oss << res.body;
         return oss.str();
     }
 

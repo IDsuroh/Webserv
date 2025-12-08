@@ -2,6 +2,7 @@
 #include "../include/HttpHeader.hpp"
 #include "../include/HttpSerializer.hpp"
 #include "../include/HttpBody.hpp"
+#include "../include/App.hpp"
 
 ServerRunner::ServerRunner(const std::vector<Server>& servers)
     :   _servers(servers), _nowMs(0)
@@ -370,7 +371,6 @@ void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPo
 
 //**************************************************************************************************
 
-
 void    ServerRunner::handleEvents()    {
 
 	for (std::size_t i = _fds.size(); i-- > 0; )    {
@@ -534,16 +534,31 @@ static const Location*	longestPrefixMatch(const Server& srv, const std::string& 
 	return best;
 }
 
-void	ServerRunner::handleRequest(Connection& connection)	{
-	// For now we have a very minimal function to handle Request.
-	// Meaning it is not yet fully complete. It is just to handle the simple response.
+void	ServerRunner::handleRequest(Connection& connection) {
+    /*
+		Ask the App layer to build the response for this request
+		Not the same function. It is calling handleRequest from the App.hpp
+		which is a free function in the global namespace.
+    */
+	HTTP_Response appRes = ::handleRequest(connection.request, _servers);
 
-	const Server&	active = _servers[0];
-	(void)active;
+	// Serialize to wire format (use request version if present)
+    const std::string httpVersion = connection.request.version;
+    connection.writeBuffer = http::serialize_response(appRes, httpVersion);
+    connection.writeOffset = 0;
+    connection.response = appRes;
+    connection.state = S_WRITE;
 
-	connection.writeBuffer = http::build_simple_response(200, "OK", "Hello from webserv\r\n", connection.request.keep_alive);
-	connection.writeOffset = 0;
+    // If App says “close”, override keep-alive
+    if (appRes.close)
+        connection.request.keep_alive = false;
+
+    // Flip poll interest to POLLOUT for this fd
+    std::map<int, std::size_t>::iterator pit = _fdIndex.find(connection.fd);
+    if (pit != _fdIndex.end())
+        _fds[pit->second].events = POLLOUT;
 }
+
 
 void	ServerRunner::readFromClient(int clientFd)	{
 
@@ -634,11 +649,6 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			// minimal dispatcher -> handle Request
 			handleRequest(connection);
 
-			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-    		if (pit != _fdIndex.end())
-				_fds[pit->second].events = POLLOUT;
-			
-			connection.state = S_WRITE;	// ready to send
 			return ;
 		}
 		else	{
@@ -672,11 +682,6 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			// minimal dispatcher -> handle Request
 			handleRequest(connection);
     		
-			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-    		if (pit != _fdIndex.end())
-				_fds[pit->second].events = POLLOUT;
-
-			connection.state = S_WRITE;
 			return ;
 		}
 		if (result == http::BODY_ERROR)	{
@@ -742,6 +747,7 @@ void	ServerRunner::writeToClient(int clientFd)	{
 		connection.readBuffer.clear();
 		connection.headersComplete = false;
 		connection.request = HTTP_Request();
+		connection.response = HTTP_Response();
 		connection.state = S_HEADERS;
 		connection.kaIdleStartMs = _nowMs;
 		connection.lastActiveMs = _nowMs;
