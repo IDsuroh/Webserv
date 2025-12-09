@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   App.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
+/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/08 18:18:45 by suroh            ###   ########.fr       */
+/*   Updated: 2025/12/09 16:28:59 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -47,38 +47,82 @@ namespace {
 	// --- 1. Target (path + query) ---
 	// --------------------------------
 
-	// Target parsing relaxation:
-	// The header parser already accepts origin/absolute/*.
-	// Rejecting non-/ targets here breaks proxy-style GET http://… and OPTIONS *;
-	// trusting the parsed path/query avoids duplicate/over-strict validation.
+	/*
+	 Parses the request target, deriving path and query for origin-form,
+	 absolute-form ("http://…") and the "*" OPTIONS form. Extracts or rebuilds
+	 missing components when needed and returns false on malformed targets.
+	*/
 	bool parseTarget(const HTTP_Request& request, std::string& path, std::string& query) {
-    	path = request.path;   // already parsed in HttpHeader
-    	query = request.query;
-		
-    	if (request.target == "*") {  // OPTIONS * or similar
-    	    path.clear(); // or set to "/" if you prefer routing it to root
-    	    return true;
-    	}
-	
-    	if (!path.empty() && path[0] == '/')
-    	    return true; // normal origin-form
-	
-    	// absolute-form: http://host/path or https://host/path
-    	const std::string& tgt = request.target;
-    	std::size_t scheme = tgt.find("://");
-    	if (scheme != std::string::npos) {
-    	    std::size_t slash = tgt.find('/', scheme + 3);
-    	    if (slash == std::string::npos) {
-    	        path = "/";
-    	        return true;
-    	    }
-    	    std::size_t q = tgt.find('?', slash);
-    	    path = (q == std::string::npos) ? tgt.substr(slash) : tgt.substr(slash, q - slash);
-    	    return true;
-    	}
-	
-    	return false; // anything else is malformed
+
+		path  = request.path;
+		query = request.query;
+
+		if (request.target == "*") {
+			path = "/";
+			return true;
+		}
+
+		if (!path.empty() && path[0] == '/')								// Normal origin-form: "/something"
+			return true;
+
+		const std::string& tgt = request.target;							// Absolute-form: "https://host/path?query"
+		std::string::size_type scheme = tgt.find("://");
+		if (scheme != std::string::npos) {
+
+			std::string::size_type slash = tgt.find('/', scheme + 3);		// Find first '/' after "://"
+			if (slash == std::string::npos) {
+				path = "/";
+				return true;
+			}
+
+			std::string::size_type q = tgt.find('?', slash);				// Optional query part
+			if (q == std::string::npos) {
+				path = tgt.substr(slash);									// No '?' - everything from slash to end is the path
+			} else {
+				path = tgt.substr(slash, q - slash);						// Path is between first slash and '?'
+
+				if (query.empty() && q + 1 < tgt.size())					// If the core did not populate request.query, reconstruct it here
+					query = tgt.substr(q + 1);
+			}
+
+			return true;
+		}
+
+		return false;														// Any other form is considered malformed.
 	}
+
+	// // Target parsing relaxation:
+	// // The header parser already accepts origin/absolute/*.
+	// // Rejecting non-/ targets here breaks proxy-style GET http://… and OPTIONS *;
+	// // trusting the parsed path/query avoids duplicate/over-strict validation.
+	// bool parseTarget(const HTTP_Request& request, std::string& path, std::string& query) {
+    // 	path = request.path;   // already parsed in HttpHeader
+    // 	query = request.query;
+		
+    // 	if (request.target == "*") {  // OPTIONS * or similar
+    // 	    path.clear(); // or set to "/" if you prefer routing it to root
+    // 	    return true;
+    // 	}
+	
+    // 	if (!path.empty() && path[0] == '/')
+    // 	    return true; // normal origin-form
+	
+    // 	// absolute-form: http://host/path or https://host/path
+    // 	const std::string& tgt = request.target;
+    // 	std::size_t scheme = tgt.find("://");
+    // 	if (scheme != std::string::npos) {
+    // 	    std::size_t slash = tgt.find('/', scheme + 3);
+    // 	    if (slash == std::string::npos) {
+    // 	        path = "/";
+    // 	        return true;
+    // 	    }
+    // 	    std::size_t q = tgt.find('?', slash);
+    // 	    path = (q == std::string::npos) ? tgt.substr(slash) : tgt.substr(slash, q - slash);
+    // 	    return true;
+    // 	}
+	
+    // 	return false; // anything else is malformed
+	// }
 
 	
 	/*
@@ -213,30 +257,6 @@ namespace {
 	};
 
 	/*
-	Comma-aware parsing (methods/index/cgi_allowed_methods):
-		Config currently joins multi-values with commas;
-		Splitting on comma or space prevents “GET,POST” from being treated as one token
-		(fixes 405s and missing index files).
-	*/
-	std::vector<std::string> splitWordsAndCommas(const std::string& input) {
-    	std::vector<std::string> out;
-    	std::string cur;
-    	for (std::size_t i = 0; i <= input.size(); ++i) {
-    	    char c = (i == input.size()) ? ' ' : input[i];
-    	    if (c == ',' || std::isspace(static_cast<unsigned char>(c))) {
-    	        if (!cur.empty()) {
-    	            out.push_back(cur);
-    	            cur.clear();
-    	        }
-    	    }
-			else
-    	        cur += c;
-    	}
-    	return out;
-	}
-
-
-	/*
 	 Splits a string into whitespace-separated words and returns them as a vector.
 	*/
 	std::vector<std::string> splitWords(const std::string& input) {
@@ -249,6 +269,29 @@ namespace {
 			words.push_back(currentWord);
 
 		return words;
+	}
+
+	/*
+	 Comma-aware parsing (methods/index/cgi_allowed_methods):
+		- Config currently joins multi-values with commas;
+		- Splitting on comma or space prevents “GET,POST” from being treated as one token
+		  (fixes 405s and missing index files).
+	*/
+	std::vector<std::string> splitWordsAndCommas(const std::string& input) {
+		std::vector<std::string> out;
+		std::string cur;
+		for (std::size_t i = 0; i <= input.size(); ++i) {
+			char c = (i == input.size()) ? ' ' : input[i];
+			if (c == ',' || std::isspace(static_cast<unsigned char>(c))) {
+				if (!cur.empty()) {
+					out.push_back(cur);
+					cur.clear();
+				}
+			}
+			else
+				cur += c;
+		}
+		return out;
 	}
 
 	/*
@@ -277,43 +320,41 @@ namespace {
 		return static_cast<int>(value);
 	}
 
-	/* Replaced parseSizeT because
-		Suffix-aware sizes:
-			Aligns with ServerRunner’s parseSize (k/M/G).
-			Without it, config like 1k throws and returns 500.
+	/*
+	 Parses a numeric value with an optional binary suffix (k, M, G) and returns
+	 the corresponding size in bytes. Throws on invalid syntax or overflow.
 	*/
 	std::size_t parseSizeWithSuffix(const std::string& str) {
-    	if (str.empty())
-    	    throw std::runtime_error("Empty numeric value");
-    	
+		if (str.empty())
+			throw std::runtime_error("Empty numeric value");
+		
 		std::istringstream iss(str);
-    	unsigned long long value = 0;
-    	char suffix = 0;
-    	if (!(iss >> value))
-    	    throw std::runtime_error("Invalid numeric value: " + str);
-    	if (iss && !iss.eof())
-    	    iss >> suffix;
+		unsigned long long value = 0;
+		char suffix = 0;
+		if (!(iss >> value))
+			throw std::runtime_error("Invalid numeric value: " + str);
+		if (iss && !iss.eof())
+			iss >> suffix;
 		
-    	unsigned long long mult = 1;
-    	if (suffix == 'k' || suffix == 'K')
+		unsigned long long mult = 1;
+		if (suffix == 'k' || suffix == 'K')
 			mult = 1024ULL;
-    	else if (suffix == 'm' || suffix == 'M')
+		else if (suffix == 'm' || suffix == 'M')
 			mult = 1024ULL * 1024ULL;
-    	else if (suffix == 'g' || suffix == 'G')
+		else if (suffix == 'g' || suffix == 'G')
 			mult = 1024ULL * 1024ULL * 1024ULL;
-    	else if (suffix != 0)
-    	    throw std::runtime_error("Invalid size suffix in: " + str);
+		else if (suffix != 0)
+			throw std::runtime_error("Invalid size suffix in: " + str);
 		
-    	unsigned long long result = value * mult;
-    	if (result > std::numeric_limits<std::size_t>::max())
-    	    throw std::runtime_error("Numeric value exceeds size_t range: " + str);
-    	return static_cast<std::size_t>(result);
+		unsigned long long result = value * mult;
+		if (result > std::numeric_limits<std::size_t>::max())
+			throw std::runtime_error("Numeric value exceeds size_t range: " + str);
+		return static_cast<std::size_t>(result);
 	}
 
 	/*
 	 Parses a numeric string into size_t, validating digits and overflow conditions.
 	*/
-	/*
 	size_t parseSizeT(const std::string& str) {
 
 		if (str.empty())
@@ -337,7 +378,7 @@ namespace {
 
 		return value;
 	}
-	*/
+
 
 	/*
 	 Looks up a directive by key, preferring Location over Server.
@@ -438,7 +479,7 @@ namespace {
 		}
 
 		if (getDirectiveValue(loc, srv, "cgi_timeout", value))
-			cfg.cgiTimeout = parseSizeWithSuffix(value);
+			cfg.cgiTimeout = parseSizeT(value);
 
 		if (getDirectiveValue(loc, srv, "cgi_allowed_methods", value))
 			cfg.cgiAllowedMethods = splitWordsAndCommas(value);
