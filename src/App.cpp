@@ -6,7 +6,7 @@
 /*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/09 20:12:00 by suroh            ###   ########.fr       */
+/*   Updated: 2025/12/09 21:38:13 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -572,11 +572,28 @@ namespace {
 	// --- 7. Root + path → secure filesystem path ---
 	// -----------------------------------------------
 
+	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
+	
+	    // Start from the URL path (e.g. "/files/file1.txt")
+	    std::string subPath = path;
+	
+	    // Ensure it starts with a leading slash, so we can safely do root + subPath
+	    if (subPath.empty() || subPath[0] != '/')
+	        subPath = "/" + subPath;
+	
+	    // Join root and path:
+	    //   root = "./www"
+	    //   path = "/files/file1.txt"
+	    // => "./www/files/file1.txt"
+	    return cfg.root + subPath;
+	}
+
+
 	/*
 	 Maps a URL path to a filesystem path by removing the location prefix and
 	 appending the remainder to the configured root directory.
 	*/
-	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
+ 	/*std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
 
 		std::string			locationPath = cfg.location ? cfg.location->path : "/";		// location may be NULL
 		std::string			subPath;
@@ -592,7 +609,7 @@ namespace {
 			return cfg.root + subPath;
 		else
 			return cfg.root + '/' + subPath;
-	}
+	}*/
 
 	/*
 	 Validates and canonicalizes a filesystem path relative to the given root.
