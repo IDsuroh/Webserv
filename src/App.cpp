@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   App.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
+/*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/09 16:28:59 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2025/12/09 20:12:00 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -223,6 +223,8 @@ namespace {
 		const Server*						server;					// never NULL
 		const Location*						location;				// may be NULL
 
+		bool								locationHasRoot;		// new
+
 		std::string							root;
 		bool								autoindex;
 		std::vector<std::string>			indexFiles;
@@ -241,6 +243,7 @@ namespace {
 		EffectiveConfig()
 			: server(NULL)
 			, location(NULL)
+			, locationHasRoot(false)	// new
 			, root(".")
 			, autoindex(false)
 			, indexFiles()
@@ -448,6 +451,8 @@ namespace {
 
 		std::string	value;
 
+		cfg.locationHasRoot = (loc != NULL && loc->directives.find("root") != loc->directives.end());
+
 		if (getDirectiveValue(loc, srv, "root", value))
 			cfg.root = value;
 
@@ -576,10 +581,12 @@ namespace {
 		std::string			locationPath = cfg.location ? cfg.location->path : "/";		// location may be NULL
 		std::string			subPath;
 
-		if (path.compare(0, locationPath.size(), locationPath) == 0)
-			subPath = path.substr(locationPath.size());
-		else
-			subPath = path;
+		// Only strip the location prefix if this location has its *own* root.
+		if (cfg.location && cfg.locationHasRoot)	{
+			const std::string& locationPath = cfg.location->path;
+			if (path.compare(0, locationPath.size(), locationPath) == 0)
+				subPath = path.substr(locationPath.size());
+		}
 
 		if (!subPath.empty() && subPath[0] == '/')
 			return cfg.root + subPath;
