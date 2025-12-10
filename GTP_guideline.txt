@@ -110,3 +110,5 @@ The App classifies requests into these categories:
 - advanced virtual-host port-stripping logic
 - realpath() resolution
 - auto-logging system
+
+finished all -> just need to test
