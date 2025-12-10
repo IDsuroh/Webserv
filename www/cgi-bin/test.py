@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 import os
-import cgi
 
-print("Content-Type: text/html")
-print()  # blank line separates headers from body
+# Send correct CGI headers with CRLF
+print("Content-Type: text/html\r")  # becomes "Content-Type: text/html\r\n"
+print("\r")                         # becomes "\r\n" (blank line)
 
 print("<!DOCTYPE html>")
 print("<html>")

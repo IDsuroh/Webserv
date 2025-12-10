@@ -6,7 +6,7 @@
 /*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/09 21:38:13 by suroh            ###   ########.fr       */
+/*   Updated: 2025/12/10 20:34:50 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -758,6 +758,72 @@ namespace {
 		return res;
 	}
 
+	// ---------------------------------
+	// --- DELETE: filesystem helper ---
+	// ---------------------------------
+
+	/*
+	 Deletes a file by invoking /bin/rm via fork+execve+waitpid.
+	 This uses only allowed syscalls and actually removes the file.
+	*/
+	bool deleteFileWithRm(const std::string& path) {
+
+		pid_t pid = fork();
+		if (pid < 0)
+			return false; // fork failed
+
+		if (pid == 0) {
+			// Child: execve("/bin/rm", {"rm", "--", path, NULL}, env)
+			const char* argv[4];
+			argv[0] = "rm";
+			argv[1] = "--";
+			argv[2] = path.c_str();
+			argv[3] = NULL;
+
+			char* const envp[] = { NULL }; // minimal environment
+
+			execve("/bin/rm", const_cast<char* const*>(argv), envp);
+			// If execve fails:
+			_exit(127);
+		}
+
+		int status = 0;
+		if (waitpid(pid, &status, 0) < 0)
+			return false;
+
+		if (!WIFEXITED(status))
+			return false;
+
+		int code = WEXITSTATUS(status);
+		return (code == 0); // rm returns 0 on success
+	}
+
+	/*
+	 Handles HTTP DELETE on a static file path. Uses deleteFileWithRm to
+	 actually remove the file from disk. Returns 204 on success.
+	*/
+	HTTP_Response handleDeleteRequest(const HTTP_Request& req,
+	                                  const EffectiveConfig& cfg,
+	                                  const std::string& fsPath) {
+
+		(void)req;
+
+		HTTP_Response res;
+
+		// Optionally, could re-stat here, but classifyRequest already ensured
+		// we are dealing with a regular file.
+
+		if (!deleteFileWithRm(fsPath))
+			return makeErrorResponse(500, &cfg);
+
+		res.status = 204;
+		res.reason = getReasonPhrase(204);
+		res.body.clear();
+		res.headers["Content-Length"] = "0";
+		res.headers["Content-Type"] = "text/plain";
+
+		return res;
+	}
 	
 	// -----------------------------------------
 	// --- 10. Directory / index / autoindex ---
@@ -1370,7 +1436,101 @@ namespace {
 	 Status header into status/reason and marking the header block as valid
 	 or invalid according to basic CGI rules.
 	*/
-	CgiParsedOutput parseCgiOutput(const std::string& raw) {
+	/*	Parses a single "Header-Name: value" line into the headers map.
+		Skips empty or malformed lines (no ':').	*/
+	void parseCgiHeaderLine(const std::string& line, std::map<std::string, std::string>& headers)	{
+
+		if (line.empty())
+			return;
+
+		std::string::size_type colon = line.find(':');
+		if (colon == std::string::npos)
+			return; // malformed, skip
+
+		std::string name  = trim(line.substr(0, colon));
+		std::string value = trim(line.substr(colon + 1));
+
+		if (!name.empty())
+			headers[toLowerCopy(name)] = value;
+	}
+
+	CgiParsedOutput parseCgiOutput(const std::string& raw)	{
+
+		CgiParsedOutput			parsedOutput;
+		std::string 			remainingHeaders;
+		std::string::size_type	pos;
+
+		// --- 1) Find header/body separator ---
+
+		// Prefer strict CGI delimiter: CRLF CRLF
+		pos = raw.find("\r\n\r\n");
+
+		std::string lineDelim;
+		std::size_t headerEnd = std::string::npos;
+		std::size_t bodyStart = std::string::npos;
+	
+		if (pos != std::string::npos)	{
+			headerEnd = pos;
+			bodyStart = pos + 4;           // length of "\r\n\r\n"
+			lineDelim = "\r\n";
+		}
+		else	{
+			// Fallback: accept LF LF as well (some scripts use "\n\n")
+			pos = raw.find("\n\n");
+			if (pos == std::string::npos) {
+				parsedOutput.headersValid = false;
+				parsedOutput.body = raw;
+				return parsedOutput;
+			}
+			headerEnd = pos;
+			bodyStart = pos + 2;           // length of "\n\n"
+			lineDelim = "\n";
+		}
+
+		parsedOutput.headersValid = true;
+
+		remainingHeaders = raw.substr(0, headerEnd);
+		parsedOutput.body = raw.substr(bodyStart);
+
+		std::map<std::string, std::string>& hdrs = parsedOutput.headers;
+
+		// --- 2) Parse each header line ---
+
+		for (;;)	{
+			pos = remainingHeaders.find(lineDelim);
+			if (pos == std::string::npos)
+				break;
+
+			std::string currentHeader = remainingHeaders.substr(0, pos);
+			remainingHeaders = remainingHeaders.substr(pos + lineDelim.size());
+		
+			parseCgiHeaderLine(currentHeader, hdrs);
+		}
+
+		// Handle final header line if there's remaining text with no trailing delimiter
+		if (!remainingHeaders.empty())
+			parseCgiHeaderLine(remainingHeaders, hdrs);
+	
+		// --- 3) Optional "Status:" header handling ---
+
+		std::map<std::string, std::string>::iterator it = hdrs.find("status");
+		if (it != hdrs.end())	{
+			pos = it->second.find(' ');
+			if (pos != std::string::npos)	{
+				parsedOutput.status = std::atoi(it->second.substr(0, pos).c_str());
+				parsedOutput.reason = trim(it->second.substr(pos + 1));
+			}
+			else	{
+				parsedOutput.status = std::atoi(it->second.c_str());
+				parsedOutput.reason.clear();
+			}
+			hdrs.erase(it);					// remove Status from header map
+		}
+
+		return parsedOutput;
+	}
+
+	/* CgiParsedOutput parseCgiOutput(const std::string& raw) {
 
 		CgiParsedOutput			parsedOutput;
 		std::string 			remainingHeaders;
@@ -1422,7 +1582,7 @@ namespace {
 		}
 
 		return parsedOutput;
-	}
+	} */
 
 	/*
 	 Builds an HTTP response from parsed CGI output, applying CGI rules for
@@ -1471,57 +1631,89 @@ namespace {
 	 a timeout, validates CGI headers, and converts the result into an HTTP
 	 response or an appropriate 4xx/5xx error.
 	*/
-	HTTP_Response handleCgiRequest(const HTTP_Request& req,	const EffectiveConfig& cfg, const std::string& fsPath)	{
-
-		if (!isCgiMethodAllowed(req, cfg))
-			return makeErrorResponse(405, &cfg);
-
-		struct stat st;
-
-		if (stat(fsPath.c_str(), &st) != 0)							// Doesn't exist
-			return makeErrorResponse(404, &cfg);
-
-		if (!S_ISREG(st.st_mode))									// Not a regular file
-			return makeErrorResponse(403, &cfg);
-
-		if (access(fsPath.c_str(), R_OK) != 0)						// No read permissions
-			return makeErrorResponse(403, &cfg);
-
-		std::string	interpreter;
-		std::vector<std::string> argv;
-		if (!prepareCgiExecutor(cfg, fsPath, interpreter, argv))
-			return makeErrorResponse(502, &cfg);					// 502 Bad Gateway: the server acted as a gateway but received an invalid or unusable response from the CGI process
-
-		std::vector<std::string> envp = buildCgiEnv(req, cfg, fsPath);
-
-		CgiPipes pipes;
-		if (!spawnCgiProcess(argv, envp, pipes))
-			return makeErrorResponse(502, &cfg);
-
-		CgiRawOutput raw = readCgiOutput(pipes, cfg.cgiTimeout, req.body);
-
-		if (raw.timedOut)
-			return makeErrorResponse(504, &cfg);
-
-		if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty()))
-			return makeErrorResponse(502, &cfg);
-
-		CgiParsedOutput parsedOutput = parseCgiOutput(raw.data);
-
-		if (!parsedOutput.headersValid)
-			return makeErrorResponse(502, &cfg);
-
-		std::map<std::string, std::string>::const_iterator itContentType = parsedOutput.headers.find("content-type");
-		std::map<std::string, std::string>::const_iterator itRedirection = parsedOutput.headers.find("location");
-		if (itContentType == parsedOutput.headers.end() && itRedirection == parsedOutput.headers.end())
-			return makeErrorResponse(502, &cfg);					// CGI must provide Content-Type or Location; otherwise it's neither a response nor a redirect.
-
-		HTTP_Response res = buildCgiHttpResponse(parsedOutput);
-
-		if (req.keep_alive == false)
-			res.close = true;
-
-		return res;
+	HTTP_Response handleCgiRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath)	{
+								
+	    if (!isCgiMethodAllowed(req, cfg)) {
+	        std::cerr << "[CGI DEBUG] 405: method not allowed for CGI\n";
+	        return makeErrorResponse(405, &cfg);
+	    }
+	
+	    struct stat st;
+	
+	    if (stat(fsPath.c_str(), &st) != 0) { // Doesn't exist
+	        std::cerr << "[CGI DEBUG] 404: stat() failed for " << fsPath << "\n";
+	        return makeErrorResponse(404, &cfg);
+	    }
+	
+	    if (!S_ISREG(st.st_mode)) {
+	        std::cerr << "[CGI DEBUG] 403: not a regular file: " << fsPath << "\n";
+	        return makeErrorResponse(403, &cfg);
+	    }
+	
+	    if (access(fsPath.c_str(), R_OK) != 0) {
+	        std::cerr << "[CGI DEBUG] 403: no read permission on " << fsPath << "\n";
+	        return makeErrorResponse(403, &cfg);
+	    }
+	
+	    std::string interpreter;
+	    std::vector<std::string> argv;
+	
+	    if (!prepareCgiExecutor(cfg, fsPath, interpreter, argv)) {
+	        std::cerr << "[CGI DEBUG] 502: prepareCgiExecutor failed for " << fsPath
+	                  << " (cgiPass size=" << cfg.cgiPass.size() << ")\n";
+	        return makeErrorResponse(502, &cfg);
+	    }
+	
+	    std::cerr << "[CGI DEBUG] interpreter=" << interpreter
+	              << " script=" << fsPath << "\n";
+	
+	    std::vector<std::string> envp = buildCgiEnv(req, cfg, fsPath);
+	
+	    CgiPipes pipes;
+	    if (!spawnCgiProcess(argv, envp, pipes)) {
+	        std::cerr << "[CGI DEBUG] 502: spawnCgiProcess failed\n";
+	        return makeErrorResponse(502, &cfg);
+	    }
+	
+	    CgiRawOutput raw = readCgiOutput(pipes, cfg.cgiTimeout, req.body);
+	
+	    if (raw.timedOut) {
+	        std::cerr << "[CGI DEBUG] 504: CGI timed out\n";
+	        return makeErrorResponse(504, &cfg);
+	    }
+	
+	    std::cerr << "[CGI DEBUG] CGI exitStatus=" << raw.exitStatus
+	              << " data.size=" << raw.data.size() << "\n";
+	
+	    if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {
+	        std::cerr << "[CGI DEBUG] 502: bad exit status and no data\n";
+	        return makeErrorResponse(502, &cfg);
+	    }
+	
+	    CgiParsedOutput parsedOutput = parseCgiOutput(raw.data);
+	
+	    if (!parsedOutput.headersValid) {
+	        std::cerr << "[CGI DEBUG] 502: headers invalid after parseCgiOutput\n";
+	        return makeErrorResponse(502, &cfg);
+	    }
+	
+	    std::map<std::string, std::string>::const_iterator itContentType =
+	        parsedOutput.headers.find("content-type");
+	    std::map<std::string, std::string>::const_iterator itRedirection =
+	        parsedOutput.headers.find("location");
+	
+	    if (itContentType == parsedOutput.headers.end() &&
+	        itRedirection == parsedOutput.headers.end()) {
+	        std::cerr << "[CGI DEBUG] 502: no Content-Type or Location in CGI headers\n";
+	        return makeErrorResponse(502, &cfg);
+	    }
+	
+	    HTTP_Response res = buildCgiHttpResponse(parsedOutput);
+	
+	    if (!req.keep_alive)
+	        res.close = true;
+	
+	    return res;
 	}
 
 
@@ -1952,7 +2144,7 @@ HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 	}
 
 	// 5.1) Check if method is implemented at all
-	if (req.method != "GET"	&& req.method != "POST"	&& req.method != "DELETE") {
+	if (req.method != "GET"	&& req.method != "POST"	&& req.method != "DELETE" && req.method != "HEAD") {
 		HTTP_Response res = makeErrorResponse(501, &cfg);
 		applyConnectionHeader(req, res);
 		return res;
@@ -2014,7 +2206,10 @@ HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 			break;
 
 		case RK_STATIC_FILE:
-			res = handleStaticFile(req, cfg, fsPath);
+			if (req.method == "DELETE")
+				res = handleDeleteRequest(req, cfg, fsPath);
+			else
+				res = handleStaticFile(req, cfg, fsPath);
 			break;
 
 		case RK_FORBIDDEN:
@@ -2029,6 +2224,12 @@ HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 
 	// 10) Apply Connection / keep-alive header based on the request
 	applyConnectionHeader(req, res);
+
+	// 11) HEAD requests: send headers only, no body.
+	if (req.method == "HEAD") {
+		res.headers.erase("Content-Length");
+		res.body.clear();
+	}
 
 	return res;
 }
