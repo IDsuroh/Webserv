@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   App.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
+/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/10 20:34:50 by suroh            ###   ########.fr       */
+/*   Updated: 2025/12/11 20:42:42 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -91,67 +91,6 @@ namespace {
 		return false;														// Any other form is considered malformed.
 	}
 
-	// // Target parsing relaxation:
-	// // The header parser already accepts origin/absolute/*.
-	// // Rejecting non-/ targets here breaks proxy-style GET http://… and OPTIONS *;
-	// // trusting the parsed path/query avoids duplicate/over-strict validation.
-	// bool parseTarget(const HTTP_Request& request, std::string& path, std::string& query) {
-    // 	path = request.path;   // already parsed in HttpHeader
-    // 	query = request.query;
-		
-    // 	if (request.target == "*") {  // OPTIONS * or similar
-    // 	    path.clear(); // or set to "/" if you prefer routing it to root
-    // 	    return true;
-    // 	}
-	
-    // 	if (!path.empty() && path[0] == '/')
-    // 	    return true; // normal origin-form
-	
-    // 	// absolute-form: http://host/path or https://host/path
-    // 	const std::string& tgt = request.target;
-    // 	std::size_t scheme = tgt.find("://");
-    // 	if (scheme != std::string::npos) {
-    // 	    std::size_t slash = tgt.find('/', scheme + 3);
-    // 	    if (slash == std::string::npos) {
-    // 	        path = "/";
-    // 	        return true;
-    // 	    }
-    // 	    std::size_t q = tgt.find('?', slash);
-    // 	    path = (q == std::string::npos) ? tgt.substr(slash) : tgt.substr(slash, q - slash);
-    // 	    return true;
-    // 	}
-	
-    // 	return false; // anything else is malformed
-	// }
-
-	
-	/*
-	 Extracts and parses the request target into path and query components.
-	 Expects an origin-form target (starting with '/').
-	 Returns true on success, false if the target is empty or the path is invalid.
-	*/
-	/*
-	bool parseTarget(const HTTP_Request& request, std::string& path, std::string& query) {
-
-		if (request.target.empty())
-			return false;
-		
-		std::string::size_type	questionMark = request.target.find('?');
-
-		if (questionMark == std::string::npos) {
-			path = request.target;
-			query = "";
-		} else {
-			path = request.target.substr(0, questionMark);
-			query = request.target.substr(questionMark + 1);
-		}
-
-		if (path.empty() || path[0] != '/')
-			return false;
-
-		return true;
-	}
-	*/
 	
 	// -----------------------------------
 	// --- 2. Server selection (vhost) ---
@@ -223,8 +162,6 @@ namespace {
 		const Server*						server;					// never NULL
 		const Location*						location;				// may be NULL
 
-		bool								locationHasRoot;		// new
-
 		std::string							root;
 		bool								autoindex;
 		std::vector<std::string>			indexFiles;
@@ -243,7 +180,6 @@ namespace {
 		EffectiveConfig()
 			: server(NULL)
 			, location(NULL)
-			, locationHasRoot(false)	// new
 			, root(".")
 			, autoindex(false)
 			, indexFiles()
@@ -451,8 +387,6 @@ namespace {
 
 		std::string	value;
 
-		cfg.locationHasRoot = (loc != NULL && loc->directives.find("root") != loc->directives.end());
-
 		if (getDirectiveValue(loc, srv, "root", value))
 			cfg.root = value;
 
@@ -572,44 +506,25 @@ namespace {
 	// --- 7. Root + path → secure filesystem path ---
 	// -----------------------------------------------
 
-	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
-	
-	    // Start from the URL path (e.g. "/files/file1.txt")
-	    std::string subPath = path;
-	
-	    // Ensure it starts with a leading slash, so we can safely do root + subPath
-	    if (subPath.empty() || subPath[0] != '/')
-	        subPath = "/" + subPath;
-	
-	    // Join root and path:
-	    //   root = "./www"
-	    //   path = "/files/file1.txt"
-	    // => "./www/files/file1.txt"
-	    return cfg.root + subPath;
-	}
-
-
 	/*
 	 Maps a URL path to a filesystem path by removing the location prefix and
 	 appending the remainder to the configured root directory.
 	*/
- 	/*std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
+	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
 
 		std::string			locationPath = cfg.location ? cfg.location->path : "/";		// location may be NULL
 		std::string			subPath;
 
-		// Only strip the location prefix if this location has its *own* root.
-		if (cfg.location && cfg.locationHasRoot)	{
-			const std::string& locationPath = cfg.location->path;
-			if (path.compare(0, locationPath.size(), locationPath) == 0)
-				subPath = path.substr(locationPath.size());
-		}
+		if (path.compare(0, locationPath.size(), locationPath) == 0)
+			subPath = path.substr(locationPath.size());
+		else
+			subPath = path;
 
 		if (!subPath.empty() && subPath[0] == '/')
 			return cfg.root + subPath;
 		else
 			return cfg.root + '/' + subPath;
-	}*/
+	}
 
 	/*
 	 Validates and canonicalizes a filesystem path relative to the given root.
@@ -758,69 +673,48 @@ namespace {
 		return res;
 	}
 
-	// ---------------------------------
-	// --- DELETE: filesystem helper ---
-	// ---------------------------------
+
+	// -------------------------
+	// --- 9.1 DELETE method ---
+	// -------------------------
 
 	/*
-	 Deletes a file by invoking /bin/rm via fork+execve+waitpid.
-	 This uses only allowed syscalls and actually removes the file.
+	 Deletes a file on disk using the standard C library remove().
+	 Returns 0 on success, or an HTTP-style status code (404/403/500) on failure.
 	*/
-	bool deleteFileWithRm(const std::string& path) {
+	int deleteFile(const std::string& path) {
 
-		pid_t pid = fork();
-		if (pid < 0)
-			return false; // fork failed
+		if (std::remove(path.c_str()) == 0)
+			return 0;			// Success
 
-		if (pid == 0) {
-			// Child: execve("/bin/rm", {"rm", "--", path, NULL}, env)
-			const char* argv[4];
-			argv[0] = "rm";
-			argv[1] = "--";
-			argv[2] = path.c_str();
-			argv[3] = NULL;
-
-			char* const envp[] = { NULL }; // minimal environment
-
-			execve("/bin/rm", const_cast<char* const*>(argv), envp);
-			// If execve fails:
-			_exit(127);
+		switch (errno) {		// Map common errno values to HTTP-style status codes.
+			case ENOENT:
+				return 404;		// File no longer exists
+			case EACCES:
+			case EPERM:
+				return 403;		// Permission denied
+			default:
+				return 500;		// Any other error - internal problem
 		}
-
-		int status = 0;
-		if (waitpid(pid, &status, 0) < 0)
-			return false;
-
-		if (!WIFEXITED(status))
-			return false;
-
-		int code = WEXITSTATUS(status);
-		return (code == 0); // rm returns 0 on success
 	}
 
 	/*
-	 Handles HTTP DELETE on a static file path. Uses deleteFileWithRm to
-	 actually remove the file from disk. Returns 204 on success.
+	 Handles HTTP DELETE for a static file. Relies on the standard library to
+	 remove the target from disk and returns 204 on success.
 	*/
-	HTTP_Response handleDeleteRequest(const HTTP_Request& req,
-	                                  const EffectiveConfig& cfg,
-	                                  const std::string& fsPath) {
+	HTTP_Response handleDeleteRequest(const EffectiveConfig& cfg, const std::string& fsPath) {
 
-		(void)req;
+		int status = deleteFile(fsPath);
+		if (status != 0)
+			return makeErrorResponse(status, &cfg);
 
 		HTTP_Response res;
-
-		// Optionally, could re-stat here, but classifyRequest already ensured
-		// we are dealing with a regular file.
-
-		if (!deleteFileWithRm(fsPath))
-			return makeErrorResponse(500, &cfg);
-
+		
 		res.status = 204;
 		res.reason = getReasonPhrase(204);
 		res.body.clear();
-		res.headers["Content-Length"] = "0";
-		res.headers["Content-Type"] = "text/plain";
+		res.headers["content-length"] = "0";
+		res.headers["content-type"] = "text/plain";
 
 		return res;
 	}
@@ -1432,12 +1326,9 @@ namespace {
 	}
 
 	/*
-	 Parses raw CGI output into headers and body, extracting an optional
-	 Status header into status/reason and marking the header block as valid
-	 or invalid according to basic CGI rules.
+	 Parses a single "Header-Name: value" line into the headers map.
+	 Skips empty or malformed lines (no ':').
 	*/
-	/*	Parses a single "Header-Name: value" line into the headers map.
-		Skips empty or malformed lines (no ':').	*/
 	void parseCgiHeaderLine(const std::string& line, std::map<std::string, std::string>& headers)	{
 
 		if (line.empty())
@@ -1445,7 +1336,7 @@ namespace {
 
 		std::string::size_type colon = line.find(':');
 		if (colon == std::string::npos)
-			return; // malformed, skip
+			return;											// Skip malformed header line (no colon)
 
 		std::string name  = trim(line.substr(0, colon));
 		std::string value = trim(line.substr(colon + 1));
@@ -1454,36 +1345,36 @@ namespace {
 			headers[toLowerCopy(name)] = value;
 	}
 
+	/*
+	 Parses raw CGI output into headers and body, extracting an optional
+	 Status header into status/reason and marking the header block as valid
+	 or invalid according to basic CGI rules.
+	*/
 	CgiParsedOutput parseCgiOutput(const std::string& raw)	{
 
 		CgiParsedOutput			parsedOutput;
 		std::string 			remainingHeaders;
 		std::string::size_type	pos;
+		std::string				lineDelim;
+		std::string::size_type	headerEnd = std::string::npos;
+		std::string::size_type	bodyStart = std::string::npos;
 
-		// --- 1) Find header/body separator ---
-
-		// Prefer strict CGI delimiter: CRLF CRLF
-		pos = raw.find("\r\n\r\n");
-
-		std::string lineDelim;
-		std::size_t headerEnd = std::string::npos;
-		std::size_t bodyStart = std::string::npos;
-	
-		if (pos != std::string::npos)	{
+		// 1) Find header/body separator
+		pos = raw.find("\r\n\r\n");											// Prefer strict CGI delimiter: CRLF CRLF
+		if (pos != std::string::npos) {
 			headerEnd = pos;
-			bodyStart = pos + 4;           // length of "\r\n\r\n"
+			bodyStart = pos + 4;											// length of "\r\n\r\n"
 			lineDelim = "\r\n";
 		}
-		else	{
-			// Fallback: accept LF LF as well (some scripts use "\n\n")
+		else {																// Fallback: accept LF LF as well (some scripts use "\n\n")
 			pos = raw.find("\n\n");
-			if (pos == std::string::npos) {
+			if (pos == std::string::npos) {									// Missing CRLFCRLF or LFLF: breaks CGI header rules (RFC3875) and should trigger 502.
 				parsedOutput.headersValid = false;
 				parsedOutput.body = raw;
 				return parsedOutput;
 			}
 			headerEnd = pos;
-			bodyStart = pos + 2;           // length of "\n\n"
+			bodyStart = pos + 2;											// length of "\n\n"
 			lineDelim = "\n";
 		}
 
@@ -1492,11 +1383,8 @@ namespace {
 		remainingHeaders = raw.substr(0, headerEnd);
 		parsedOutput.body = raw.substr(bodyStart);
 
-		std::map<std::string, std::string>& hdrs = parsedOutput.headers;
-
-		// --- 2) Parse each header line ---
-
-		for (;;)	{
+		// 2) Parse each header line
+		for (;;) {
 			pos = remainingHeaders.find(lineDelim);
 			if (pos == std::string::npos)
 				break;
@@ -1504,85 +1392,28 @@ namespace {
 			std::string currentHeader = remainingHeaders.substr(0, pos);
 			remainingHeaders = remainingHeaders.substr(pos + lineDelim.size());
 		
-			parseCgiHeaderLine(currentHeader, hdrs);
+			parseCgiHeaderLine(currentHeader, parsedOutput.headers);
 		}
-
-		// Handle final header line if there's remaining text with no trailing delimiter
-		if (!remainingHeaders.empty())
-			parseCgiHeaderLine(remainingHeaders, hdrs);
+		if (!remainingHeaders.empty())										// Handle final header line if there's remaining text with no trailing delimiter
+			parseCgiHeaderLine(remainingHeaders, parsedOutput.headers);
 	
-		// --- 3) Optional "Status:" header handling ---
-
-		std::map<std::string, std::string>::iterator it = hdrs.find("status");
-		if (it != hdrs.end())	{
-			pos = it->second.find(' ');
-			if (pos != std::string::npos)	{
-				parsedOutput.status = std::atoi(it->second.substr(0, pos).c_str());
-				parsedOutput.reason = trim(it->second.substr(pos + 1));
-			}
-			else	{
-				parsedOutput.status = std::atoi(it->second.c_str());
-				parsedOutput.reason.clear();
-			}
-			hdrs.erase(it);					// remove Status from header map
-		}
-
-		return parsedOutput;
-	}
-
-	/* CgiParsedOutput parseCgiOutput(const std::string& raw) {
-
-		CgiParsedOutput			parsedOutput;
-		std::string 			remainingHeaders;
-		std::string::size_type	pos;
-
-		pos = raw.find("\r\n\r\n");
-		if (pos == std::string::npos) {					// Missing CRLFCRLF: breaks CGI header rules (RFC3875) and should trigger 502.
-			parsedOutput.headersValid = false;
-			parsedOutput.body = raw;
-			return parsedOutput;
-		}
-		
-		parsedOutput.headersValid = true;
-
-		remainingHeaders = raw.substr(0, pos);
-		parsedOutput.body = raw.substr(pos + 4);
-
-		for (;;) {
-
-			pos = remainingHeaders.find("\r\n");
-			if (pos == std::string::npos)
-				break;
-
-			std::string currentHeader = remainingHeaders.substr(0, pos);
-			remainingHeaders = remainingHeaders.substr(pos + 2);
-
-			pos = currentHeader.find(':');
-			if (pos == std::string::npos)
-				continue;											// Skip malformed header line (no colon)
-			
-			std::string name  = trim(currentHeader.substr(0, pos));
-			std::string value = trim(currentHeader.substr(pos + 1));
-
-			if (!name.empty())
-				parsedOutput.headers[toLowerCopy(name)] = value;
-		}
-
-		std::map<std::string, std::string>::const_iterator it = parsedOutput.headers.find("status");
-		if (it != parsedOutput.headers.end()) {
+		// 3) "Status:" header handling
+		std::map<std::string, std::string>::iterator it = parsedOutput.headers.find("status");
+		if (it != parsedOutput.headers.end())	{
 			pos = it->second.find(' ');
 			if (pos != std::string::npos) {
 				parsedOutput.status = std::atoi(it->second.substr(0, pos).c_str());
 				parsedOutput.reason = trim(it->second.substr(pos + 1));
-			} else {
+			}
+			else {
 				parsedOutput.status = std::atoi(it->second.c_str());
 				parsedOutput.reason.clear();
 			}
-			parsedOutput.headers.erase(it->first);					// Status header was processed separately, so remove it from the general header map
+			parsedOutput.headers.erase(it);					// Status header was processed separately, so remove it from the general header map
 		}
 
 		return parsedOutput;
-	} */
+	}
 
 	/*
 	 Builds an HTTP response from parsed CGI output, applying CGI rules for
@@ -2207,7 +2038,7 @@ HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 
 		case RK_STATIC_FILE:
 			if (req.method == "DELETE")
-				res = handleDeleteRequest(req, cfg, fsPath);
+				res = handleDeleteRequest(cfg, fsPath);
 			else
 				res = handleStaticFile(req, cfg, fsPath);
 			break;
@@ -2221,15 +2052,13 @@ HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 			res = makeErrorResponse(404, &cfg);
 			break;
 	}
-
-	// 10) Apply Connection / keep-alive header based on the request
-	applyConnectionHeader(req, res);
-
-	// 11) HEAD requests: send headers only, no body.
-	if (req.method == "HEAD") {
-		res.headers.erase("Content-Length");
+	
+	// 10) Handle HEAD request - send headers only, no body.
+	if (req.method == "HEAD")
 		res.body.clear();
-	}
+	
+	// 11) Apply Connection / keep-alive header based on the request
+	applyConnectionHeader(req, res);
 
 	return res;
 }
