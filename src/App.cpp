@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   App.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
+/*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/15 14:15:49 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2025/12/15 14:22:18 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -512,15 +512,15 @@ namespace {
 	*/
 	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
 		
-		std::string fs = cfg.root;   // ex: "./www"
+		std::string fs = cfg.root;		// ex: "./www"
 
 		if (!fs.empty() && fs[fs.size() - 1] == '/' &&
 			!path.empty() && path[0] == '/')
 			fs.erase(fs.size() - 1);
 
-		fs += path;                  // "./www" + "/files/file1.txt"
+		fs += path;						// "./www" + "/files/file1.txt"
 		
-		return fs;                   // "./www/files/file1.txt"
+		return fs;						// "./www/files/file1.txt"
 	}
 
 
