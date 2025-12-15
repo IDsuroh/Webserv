@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/11 20:42:42 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2025/12/15 14:15:49 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -507,24 +507,42 @@ namespace {
 	// -----------------------------------------------
 
 	/*
-	 Maps a URL path to a filesystem path by removing the location prefix and
-	 appending the remainder to the configured root directory.
+	Maps the logical URL path directly under the effective root directory.
+	EffectiveConfig::root is expected to already reflect server/location merging.
 	*/
 	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
+		
+		std::string fs = cfg.root;   // ex: "./www"
 
-		std::string			locationPath = cfg.location ? cfg.location->path : "/";		// location may be NULL
-		std::string			subPath;
+		if (!fs.empty() && fs[fs.size() - 1] == '/' &&
+			!path.empty() && path[0] == '/')
+			fs.erase(fs.size() - 1);
 
-		if (path.compare(0, locationPath.size(), locationPath) == 0)
-			subPath = path.substr(locationPath.size());
-		else
-			subPath = path;
-
-		if (!subPath.empty() && subPath[0] == '/')
-			return cfg.root + subPath;
-		else
-			return cfg.root + '/' + subPath;
+		fs += path;                  // "./www" + "/files/file1.txt"
+		
+		return fs;                   // "./www/files/file1.txt"
 	}
+
+
+	// /*
+	//  Maps a URL path to a filesystem path by removing the location prefix and
+	//  appending the remainder to the configured root directory.
+	// */
+	// std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
+
+	// 	std::string			locationPath = cfg.location ? cfg.location->path : "/";		// location may be NULL
+	// 	std::string			subPath;
+
+	// 	if (path.compare(0, locationPath.size(), locationPath) == 0)
+	// 		subPath = path.substr(locationPath.size());
+	// 	else
+	// 		subPath = path;
+
+	// 	if (!subPath.empty() && subPath[0] == '/')
+	// 		return cfg.root + subPath;
+	// 	else
+	// 		return cfg.root + '/' + subPath;
+	// }
 
 	/*
 	 Validates and canonicalizes a filesystem path relative to the given root.
