@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   App.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
+/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/15 14:22:18 by suroh            ###   ########.fr       */
+/*   Updated: 2025/12/16 16:26:50 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1744,27 +1744,52 @@ namespace {
 	// -----------------------------------------
 
 	/*
-	 Resolves the configured error_page URI into a filesystem path by normalizing
-	 its leading './' or '/' and joining it with the root directory.
+	Resolves error_page configured value into a filesystem path.
+
+	Rule:
+	- If the configured value starts with '/', treat it as a URI under cfg.root.
+	- Otherwise, treat it as a filesystem path relative to the current working directory.
 	*/
 	std::string findErrorPagePath(const EffectiveConfig& cfg, int status) {
-		
+
 		std::map<int, std::string>::const_iterator it = cfg.errorPages.find(status);
-
-		if (it == cfg.errorPages.end())									// No custom error page for this status
+		if (it == cfg.errorPages.end())
 			return "";
-		
-		std::string path = it->second; 
 
-		if (path.size() >= 2 && path[0] == '.' && path[1] == '/')
-			path.erase(0, 2);											// Strip leading "./"
-		else if (!path.empty() && path[0] == '/')
-			path.erase(0, 1);											// Strip leading "/"
+		std::string path = it->second;
+		if (path.empty())
+			return "";
 
-		path = joinPath(cfg.root, path);
+		if (path[0] == '/') {						// Case URI under root (nginx-like)
+			return joinPath(cfg.root, path);
+		}
 
 		return path;
 	}
+
+
+	// /*
+	//  Resolves the configured error_page URI into a filesystem path by normalizing
+	//  its leading './' or '/' and joining it with the root directory.
+	// */
+	// std::string findErrorPagePath(const EffectiveConfig& cfg, int status) {
+		
+	// 	std::map<int, std::string>::const_iterator it = cfg.errorPages.find(status);
+
+	// 	if (it == cfg.errorPages.end())									// No custom error page for this status
+	// 		return "";
+		
+	// 	std::string path = it->second; 
+
+	// 	if (path.size() >= 2 && path[0] == '.' && path[1] == '/')
+	// 		path.erase(0, 2);											// Strip leading "./"
+	// 	else if (!path.empty() && path[0] == '/')
+	// 		path.erase(0, 1);											// Strip leading "/"
+
+	// 	path = joinPath(cfg.root, path);
+
+	// 	return path;
+	// }
 
 	/*
 	 Returns the standard HTTP reason phrase for a given status code, or
@@ -1818,37 +1843,58 @@ namespace {
 	 Builds an HTTP error response for the given status code. Uses a configured
 	 custom error_page if available; otherwise falls back to a simple HTML body.
 	*/
+	
+	// DEBUG VERSION - just for testing. On the end return to the original version //
 	HTTP_Response makeErrorResponse(int status, const EffectiveConfig* cfg) {
-		
-		std::string	body;
+
+		std::cerr << "[ERROR] building error response"
+				<< " status=" << status
+				<< " cfg=" << (cfg ? "non-null" : "NULL")
+				<< std::endl;
+
+		std::string body;
 		const std::string reason = getReasonPhrase(status);
-		
-		if (cfg) {																// Try loading a custom error_page
+
+		if (cfg) {
 			const std::string errorPagePath = findErrorPagePath(*cfg, status);
+
+			std::cerr << "[ERROR] status=" << status
+					<< " errorPagePath=\"" << errorPagePath << "\""
+					<< std::endl;
+
 			if (!errorPagePath.empty()) {
 				std::ifstream file(errorPagePath.c_str(), std::ios::binary);
-				if (file) {
+				if (!file) {
+					std::cerr << "[ERROR] failed to open error page file: "
+							<< errorPagePath << std::endl;
+				} else {
 					std::ostringstream oss;
 					oss << file.rdbuf();
 					body = oss.str();
+
+					std::cerr << "[ERROR] custom error page loaded ("
+							<< body.size() << " bytes)"
+							<< std::endl;
 				}
 			}
 		}
-		
-		if (body.empty()) {														// Otherwise, generate default HTML (if no error_page or if reading fails)
+
+		if (body.empty()) {
+			std::cerr << "[ERROR] using fallback HTML for status "
+					<< status << std::endl;
+
 			std::ostringstream oss;
-			oss	<< "<!DOCTYPE html>\n"
-			<< "<html><head><meta charset=\"utf-8\">"
-			<< "<title>" << status << ' ' << reason << "</title>"
-			<< "</head><body>"
-			<< "<h1>" << status << ' ' << reason << "</h1>"
-			<< "</body></html>\n";
+			oss << "<!DOCTYPE html>\n"
+				<< "<html><head><meta charset=\"utf-8\">"
+				<< "<title>" << status << ' ' << reason << "</title>"
+				<< "</head><body>"
+				<< "<h1>" << status << ' ' << reason << "</h1>"
+				<< "</body></html>\n";
 			body = oss.str();
 		}
-		
-		HTTP_Response res;
 
-		res.status = status;													// Fill in the response fields
+		HTTP_Response res;
+		res.status = status;
 		res.reason = reason;
 		res.body = body;
 		res.headers.clear();
@@ -1857,6 +1903,50 @@ namespace {
 
 		return res;
 	}
+
+	
+
+	// ORIGINAL VERSION //
+	
+	// HTTP_Response makeErrorResponse(int status, const EffectiveConfig* cfg) {
+		
+	// 	std::string	body;
+	// 	const std::string reason = getReasonPhrase(status);
+		
+	// 	if (cfg) {																// Try loading a custom error_page
+	// 		const std::string errorPagePath = findErrorPagePath(*cfg, status);
+	// 		if (!errorPagePath.empty()) {
+	// 			std::ifstream file(errorPagePath.c_str(), std::ios::binary);
+	// 			if (file) {
+	// 				std::ostringstream oss;
+	// 				oss << file.rdbuf();
+	// 				body = oss.str();
+	// 			}
+	// 		}
+	// 	}
+		
+	// 	if (body.empty()) {														// Otherwise, generate default HTML (if no error_page or if reading fails)
+	// 		std::ostringstream oss;
+	// 		oss	<< "<!DOCTYPE html>\n"
+	// 		<< "<html><head><meta charset=\"utf-8\">"
+	// 		<< "<title>" << status << ' ' << reason << "</title>"
+	// 		<< "</head><body>"
+	// 		<< "<h1>" << status << ' ' << reason << "</h1>"
+	// 		<< "</body></html>\n";
+	// 		body = oss.str();
+	// 	}
+		
+	// 	HTTP_Response res;
+
+	// 	res.status = status;													// Fill in the response fields
+	// 	res.reason = reason;
+	// 	res.body = body;
+	// 	res.headers.clear();
+	// 	res.headers["Content-Type"] = "text/html";
+	// 	res.headers["Content-Length"] = toString(body.size());
+
+	// 	return res;
+	// }
 
 
 	// ---------------------------------
