@@ -1,0 +1,220 @@
+#Webserv CORE Logic Flow (Complete + Verbose + Concepts)
+This document outlines the lifecycle of the Webserv program,
+from initialization and configuration parsing to the event-driven network loop that handles HTTP requests.
+
+---
+
+##0) Program Entry and Core Wiring**Location:** `main(int argc, char** argv)`
+
+1. **Validation:** The program expects exactly one argument (the configuration file path).
+2. **Signal Handling:**
+* **Action:** It explicitly ignores `SIGPIPE`.
+* **Concept:** When writing to a socket that the peer has closed, the OS normally sends a `SIGPIPE` signal, which kills the process.
+	By ignoring it, the `write()` system call simply fails with the error `EPIPE`,
+	allowing the server to handle the error gracefully (e.g., by closing the connection) without crashing.
+
+
+3. **Config Initialization:**
+* Creates `Config config(argv[1]);`. This triggers the immediate parsing of the file.
+
+
+4. **Core Startup:**
+* Retrieves the parsed server blocks: `const std::vector<Server>& servers = config.getServers();`.
+* Initializes the event engine: `ServerRunner runner(servers);`.
+* Enters the infinite loop: `runner.run();`.
+
+
+
+---
+
+##1) Configuration Core (Nginx-like Parsing)**Location:** `Config.cpp`
+
+The configuration module transforms raw text into structured data (`Server` and `Location` objects) using a token-based approach.
+
+###1.1 Tokenization (`Config::tokenize`)Before parsing, the file content is converted into a stream of tokens.
+
+* **Rules:**
+* **Delimiters:** Whitespace separates tokens. `{`, `}`, and `;` are treated as standalone tokens.
+* **Quotes:** Supports single (`'`) and double (`"`) quotes. Whitespace inside quotes is preserved. Escaped quotes (e.g., `\"`) are handled literally.
+* **Comments:** Anything following a `#` (outside of quotes) is ignored until the end of the line.
+
+
+* **Outcome:** The parser operates on a clean `std::vector<std::string>` of tokens, abstracting away whitespace and raw string manipulation.
+
+###1.2 Recursive Descent Parsing
+
+The parser walks through the token stream to build objects:
+
+1. **`parseServerBlock`:** Activated when the `server` token is found. It creates a `Server` object and loops until the matching `}`.
+2. **Directives:** Inside a block, it dispatches known directives (e.g., `listen`, `server_name`, `error_page`) to specific handler functions.
+3. **`handleLocation` / `parseLocationBlock`:** When a `location` directive is found, it recursively parses the nested block.
+	It handles location-specific directives like `root`, `autoindex`, `methods`, and `return`.
+
+**Output:** A `std::vector<Server>` passed to the `ServerRunner`.
+
+---
+
+##2) Network Core (The Setup)**Location:** `ServerRunner.cpp` \rightarrow `ServerRunner::run()`
+
+The server setup phase establishes the "listening" sockets before entering the main event loop.
+
+###2.1 Listener Creation and Deduplication
+
+The function `setupListeners` iterates through all `Server` configurations to open the necessary ports.
+
+* **Deduplication (`specToFd` map):**
+	Since multiple server blocks might listen on the same port (e.g., `example.com:80` and `test.com:80`), the code normalizes the host:port string.
+	If a socket is already bound to that address, it reuses the existing File Descriptor (FD) instead of failing.
+	
+* **`openAndListen(spec)`:** This function performs the low-level socket setup.
+
+####**Key Networking Concepts in `openAndListen**`
+>
+> **1. `getaddrinfo()**`
+> 	Translates human-readable strings (e.g., "127.0.0.1", "8080") into strictly formatted `struct sockaddr` structures that the OS kernel understands.
+>
+> **2. `socket()**`
+> 	Creates the endpoint for communication, returning a File Descriptor (FD).
+>
+> **3. `FD_CLOEXEC` (Security)**
+> 	Immediately after creation, `fcntl(fd, F_SETFD, FD_CLOEXEC)` is called.
+>
+> * **Why?**
+> 	This ensures the socket is "Closed On Exec". If the server later uses `execve` (e.g., for CGI), the child process will
+> 	**not** inherit this sensitive listening socket. This prevents FD leaks and security vulnerabilities.
+>
+> **4. Blocking vs. Non-Blocking Sockets**
+> 	The code calls `makeNonBlocking(fd)` (using `fcntl` with `O_NONBLOCK`).
+>
+> * **Blocking (Default):** Calls like `accept` or `read` pause the thread until data arrives.
+>
+> * **Non-Blocking:** Calls return immediately. If data isn't ready, they fail with `EAGAIN` or `EWOULDBLOCK`. 
+>	This is mandatory for a single-threaded multiplexing server to handle multiple clients simultaneously.
+> 
+> **5. `setsockopt(SO_REUSEADDR)**`
+> 	Allows the server to bind to a port that is still in the `TIME_WAIT` state (common after a restart).
+>	Prevents "Address already in use" errors.
+>
+> **6. `bind()` & `listen()**`
+> 	`bind` assigns the IP/Port to the socket. `listen` marks it as a passive socket ready to accept incoming connections.
+
+###2.2 Poll Registration
+
+Once listeners are open, `setupPollFds()` builds the initial monitoring list:
+	* It creates a `std::vector<pollfd> _fds`.
+	* It adds each unique listening FD with `events = POLLIN`.
+	* **Meaning:** "Kernel, wake me up when a new client attempts to connect."
+
+---
+
+##3) Connection Lifecycle and State Machine	**Location:** `ServerRunner.cpp` \rightarrow `handleEvents()`
+
+The core loop uses `poll()` to sleep until an event occurs (or a 250ms timeout ticks).
+
+###3.1 Accepting Clients
+	When `poll` reports `POLLIN` on a **Listening FD**:
+		1. **`acceptNewClient(fd, srv)`** is called.
+		2. **The `accept()` Loop:**
+			* The code calls `accept()` in a loop to drain the kernel's queue of pending connections.
+			* **Input vs. Output:** `accept` takes the *Listener FD* (generic door) and returns a
+				*Client FD* (specific conversation channel).
+		3. **Client Setup:**
+			* The new Client FD is set to **Non-Blocking** and **FD_CLOEXEC**.
+			* A `Connection` object is created with state `S_HEADERS`.
+			* The Client FD is added to the `_fds` poll list with `POLLIN`.
+
+###3.2 Event Dispatching
+	When `poll` reports activity on a **Client FD**:
+		* If `POLLIN` (Data available to read): Call `readFromClient()`.
+		* If `POLLOUT` (Socket buffer ready to write): Call `writeToClient()`.
+		* If `POLLHUP` or `POLLERR`: Call `closeConnection()`.
+
+---
+
+##4) Reading and Parsing Requests	**Location:** `ServerRunner::readFromClient()`
+
+This function acts as the "Read Side" of the state machine.
+
+###4.1 Buffering and Header Parsing
+1. **Reading:** Bytes are read from the socket into `connection.readBuffer`.
+* If `read()` returns 0, the client closed the connection \rightarrow `closeConnection()`.
+
+2. **State `S_HEADERS`:**
+* The code checks for the Double-CRLF (`\r\n\r\n`) delimiter.
+* **Extraction:** `http::extract_next_head()` separates the header section from the body.
+* **Parsing:** `http::parse_head()` parses the request line and headers.
+* **Decision:** It determines the body mode (`BR_NONE`, `BR_CONTENT_LENGTH`, or `BR_CHUNKED`)
+	and transitions the state to `S_BODY` (or handles the request immediately if there is no body).
+
+
+
+###4.2 Body Parsing (Incremental)
+	If the state is `S_BODY`, the specific body consumer function is called:
+		* **`consume_body_content_length`:** Reads until `readBuffer` contains exactly `Content-Length` bytes.
+		* **`consume_body_chunked`:** Implements a state machine (`CS_SIZE`, `CS_DATA`, `CS_TRAILERS`) to decode hex-formatted chunks.
+
+**Completion:** Once the full body is valid and present in `request.body`, the code proceeds to Request Handling.
+
+---
+
+##5) Request -> Response Bridge	**Location:** `ServerRunner::handleRequest(Connection& connection)`
+
+This is the handover point from the Network Core to the Application Logic.
+
+1. **Application Processing:**
+* Calls `::handleRequest(connection.request, _servers)`.
+* Generates an `HTTP_Response` object (containing status, headers, body).
+
+
+2. **Serialization:**
+* `http::serialize_response()` converts the response object into raw bytes (`connection.writeBuffer`).
+* It automatically adds missing headers like `Content-Length`, `Date`, and `Server`.
+
+
+3. **State Transition:**
+* Connection state changes to `S_WRITE`.
+* **Poll Flip:** The interest in `_fds` is changed from `POLLIN` to **`POLLOUT`**.
+* *Concept:* We now ask the kernel to wake us only when the network card buffer has space to accept outgoing data.
+
+
+
+---
+
+##6) Writing Responses	**Location:** `ServerRunner::writeToClient(clientFd)`
+
+Triggered when `poll` returns `POLLOUT`.
+
+###6.1 Non-Blocking Write Loop
+	The function uses a `while` loop and a `writeOffset` tracker to send the `writeBuffer`.
+
+ssize_t n = write(clientFd, buf + offset, remaining);
+
+* **Partial Writes:** Because the socket is non-blocking, `write` might send fewer bytes than requested
+	(or fail with `EAGAIN` if the kernel buffer fills up).
+* **Logic:** The loop continues as long as `n > 0`. If `n == -1` (EAGAIN), the function returns and waits for the next `POLLOUT` event.
+
+###6.2 Completion and Keep-Alive
+	Only when `writeOffset == writeBuffer.size()` (all bytes sent):
+
+**Check Keep-Alive:**
+* If `request.keep_alive` is **false**: `closeConnection()`.
+* If `request.keep_alive` is **true**:
+* Reset buffers and request objects.
+* Set state back to `S_HEADERS`.
+* Flip poll interest back to **`POLLIN`**.
+* Record `kaIdleStartMs` for timeout logic.
+
+
+
+---
+
+##7) Timeouts and Cleanup	**Location:** `ServerRunner::housekeeping()`
+
+This runs every event loop tick (approx. 250ms). It iterates over all connections to ensure reliability.
+
+* **Header Timeout:** If `S_HEADERS` and inactive for > 15s.
+* **Body/Write Timeout:** If `S_BODY` or `S_WRITE` and inactive for > 30s.
+* **Keep-Alive Idle:** If waiting for a new request for > 5s (configurable).
+
+**`closeConnection(fd)`:** Safely closes the socket, removes it from the `_fds` vector (using the "swap and pop" idiom for efficiency),
+	and cleans up the `Connection` object map.
