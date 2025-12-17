@@ -31,6 +31,28 @@ namespace   {
         return trimRight(trimLeft(s));
     }
 
+    void    normalize_slashes(std::string& path)    {
+        if (path.empty() || path[0] != '/')
+            return ;
+
+        std::string out;
+        out.reserve(path.size());
+
+        bool    prevSlash = false;
+        for (size_t i = 0; i < path.size(); ++i)    {
+            char    c = path[i];
+            if (c == '/')   {
+                if (prevSlash)
+                    continue;
+                prevSlash = true;
+            }
+            else
+                prevSlash = false;
+            out.push_back(c);
+        }
+        path.swap(out);
+    }
+
     bool    fail(int status, const char* reason, int& outStatus, std::string& outReason)    {
         outStatus = status;
         outReason = reason;
@@ -350,6 +372,8 @@ namespace http  {
             return false;
         if (!parseHeadersBlock(headersBlock, request, status, reason))
             return false;
+
+        normalize_slashes(request.path);
         
         return true;
     }

@@ -545,7 +545,16 @@ void	ServerRunner::handleRequest(Connection& connection) {
 	// Serialize to wire format (use request version if present)
     const std::string httpVersion = connection.request.version;
     connection.writeBuffer = http::serialize_response(appRes, httpVersion);
-    connection.writeOffset = 0;
+    
+	// HEAD method must send headers only (no body bytes)
+	if (connection.request.method == "HEAD")	{
+		const std::string	crlf = "\r\n\r\n";
+		size_t				position = connection.writeBuffer.find(crlf);
+		if (position != std::string::npos)
+			connection.writeBuffer.erase(position + crlf.size());
+	}
+
+	connection.writeOffset = 0;
     connection.response = appRes;
     connection.state = S_WRITE;
 

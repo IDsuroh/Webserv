@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   App.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
+/*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/16 16:26:50 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2025/12/17 19:13:41 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -510,39 +510,30 @@ namespace {
 	Maps the logical URL path directly under the effective root directory.
 	EffectiveConfig::root is expected to already reflect server/location merging.
 	*/
-	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
+	std::string	makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path)	{
 		
-		std::string fs = cfg.root;		// ex: "./www"
+		std::string	locationPath = (cfg.location ? cfg.location->path : "");
+		std::string	subPath;
 
-		if (!fs.empty() && fs[fs.size() - 1] == '/' &&
-			!path.empty() && path[0] == '/')
-			fs.erase(fs.size() - 1);
+		// If there is a matched location, strip its prefix from the URI
+		if (!locationPath.empty() && path.compare(0, locationPath.size(), locationPath) == 0)
+			subPath = path.substr(locationPath.size());
+		else
+			subPath = path;
 
-		fs += path;						// "./www" + "/files/file1.txt"
-		
-		return fs;						// "./www/files/file1.txt"
+		// Ensure we always join root + "/something"
+		if (subPath.empty())
+			subPath = "/";
+
+		// Join root and subPath with exactly one '/'
+		if (!cfg.root.empty() && cfg.root[cfg.root.size() - 1] == '/' && !subPath.empty() && subPath[0] == '/')
+			return (cfg.root.substr(0, cfg.root.size() - 1) + subPath);
+
+		if (!subPath.empty() && subPath[0] == '/')
+			return (cfg.root + subPath);
+
+		return (cfg.root + "/" + subPath);
 	}
-
-
-	// /*
-	//  Maps a URL path to a filesystem path by removing the location prefix and
-	//  appending the remainder to the configured root directory.
-	// */
-	// std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path) {
-
-	// 	std::string			locationPath = cfg.location ? cfg.location->path : "/";		// location may be NULL
-	// 	std::string			subPath;
-
-	// 	if (path.compare(0, locationPath.size(), locationPath) == 0)
-	// 		subPath = path.substr(locationPath.size());
-	// 	else
-	// 		subPath = path;
-
-	// 	if (!subPath.empty() && subPath[0] == '/')
-	// 		return cfg.root + subPath;
-	// 	else
-	// 		return cfg.root + '/' + subPath;
-	// }
 
 	/*
 	 Validates and canonicalizes a filesystem path relative to the given root.
@@ -611,7 +602,7 @@ namespace {
 	*/
 	RequestKind classifyRequest(const EffectiveConfig& cfg, const std::string& path, const std::string& fsPath, const HTTP_Request& req) {
 
-		const bool cgi = isCgiRequest(cfg, path);
+		const bool cgi = (req.method == "POST") && isCgiRequest(cfg, path);
 		
 		if (req.method == "POST" && !cfg.uploadStore.empty() && !cgi)	// Uploads take precedence when POST targets an upload_store and is not CGI
 			return RK_UPLOAD;
@@ -887,7 +878,7 @@ namespace {
 			return res;
 		}
 
-		return makeErrorResponse(403, &cfg);							// No index and autoindex is disabled
+		return makeErrorResponse(404, &cfg);							// No index and autoindex is disabled
 	}
 
 
@@ -2089,7 +2080,8 @@ HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 		return res;
 	}
 
-	// 5.2) Check if the method is allowed (405)
+	// 5.2) Check if the method is allowed (405)";
+	
 	if (!isMethodAllowed(cfg, req.method)) {
 		HTTP_Response res = make405(cfg);
 		applyConnectionHeader(req, res);
@@ -2133,15 +2125,7 @@ HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 			break;
 
 		case RK_DIRECTORY:
-			if (path.empty() || path[path.size() - 1] != '/') {			// Redirect /dir → /dir/
-				std::string redirectUrl = path + '/';	
-				if (!query.empty()) {
-					redirectUrl += '?';
-					redirectUrl += query;
-				}
-				res = makeRedirectResponse(301, redirectUrl);			// Typical for directory redirects — 301 is standard; 302 is fine too.
-			} else
-				res = handleDirectoryRequest(req, cfg, fsPath, path);
+			res = handleDirectoryRequest(req, cfg, fsPath, path);
 			break;
 
 		case RK_STATIC_FILE:
@@ -2160,12 +2144,8 @@ HTTP_Response	handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 			res = makeErrorResponse(404, &cfg);
 			break;
 	}
-	
-	// 10) Handle HEAD request - send headers only, no body.
-	if (req.method == "HEAD")
-		res.body.clear();
-	
-	// 11) Apply Connection / keep-alive header based on the request
+
+	// 10) Apply Connection / keep-alive header based on the request
 	applyConnectionHeader(req, res);
 
 	return res;
