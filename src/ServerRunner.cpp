@@ -580,6 +580,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 	// 1) Drain readable bytes into readBuffer (non-blocking)
 	char	buffer[4096];
 	ssize_t	n = read(clientFd, buffer, sizeof(buffer));
+
 	if (n > 0)	{	// number of bytes read
 		connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
 		connection.lastActiveMs = _nowMs;	// refresh activity on data
@@ -639,7 +640,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 		connection.headersComplete = true;
 
-		size_t	limit = 1048576;	// default 1 MiB	priority of the limit goes as:
+		size_t	limit = std::numeric_limits<size_t>::max();	// default: no limit unless configured
 		bool	fromLoc = false;
 		if (connection.srv)	{
 			if (const Location*	loc = longestPrefixMatch(*connection.srv, connection.request.path))	{
@@ -694,9 +695,38 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			return ;
 		}
 		if (result == http::BODY_ERROR)	{
+
+			// Debugging - TESTER
+			std::cerr << "[Debug] BODY_ERROR status = " << status
+					<< " reason = '" << reason << "'"
+					<< " keep_alive(before) = " << (connection.request.keep_alive ? "1" : "0")
+					<< " rb = " << connection.readBuffer.size()
+					<< " body_recv = " << connection.request.body_received
+					<< " CL = " << connection.request.content_length
+					<< std::endl;
+
 			const Server&	active = connection.srv ? *connection.srv : _servers[0];
 
+			connection.request.keep_alive = false;
+
 			connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
+			
+			// Debugging - TESTER
+			size_t	eol = connection.writeBuffer.find("\r\n");
+			std::string	firstLine = (eol == std::string::npos) ? connection.writeBuffer
+																: connection.writeBuffer.substr(0, eol);
+			std::cerr << "[Debug] response first-line: " << firstLine << std::endl;
+
+			// Debugging - TESTER
+			size_t	connPos = connection.writeBuffer.find("Connection:");
+			if (connPos != std::string::npos)	{
+				size_t	connEnd = connection.writeBuffer.find("\r\n", connPos);
+				std::cerr << "[Debug] response header: "
+						<< connection.writeBuffer.substr(connPos, connEnd - connPos) << std::endl;
+			}
+			else
+				std::cerr << "[Debug] response header: (no Connection header)\n";
+
 			connection.writeOffset = 0;
 			
 			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
@@ -748,6 +778,10 @@ void	ServerRunner::writeToClient(int clientFd)	{
 		return ;	// Stop if the socket cannot accept more
 	}
 
+	// Debugging - TESTER
+	std::cerr << "[Debug] write finished. keep_alive = " << (connection.request.keep_alive ? "1" : "0")
+			<< " sent_bytes = " << connection.writeBuffer.size() << std::endl;
+
 	// Finished sending the full response
 	const bool	keep = connection.request.keep_alive;
 	if (keep)	{
@@ -765,7 +799,6 @@ void	ServerRunner::writeToClient(int clientFd)	{
 		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
     	if (pit != _fdIndex.end())
 			_fds[pit->second].events = POLLIN;
-
 	}
 	else
 		closeConnection(clientFd);

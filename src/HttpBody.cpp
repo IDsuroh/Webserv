@@ -82,9 +82,17 @@ namespace http  {
         HTTP_Request&   request = connection.request;
 
         // if CL itself exceeds limit, reject immediately
-        if (request.content_length > max_body)
+        if (request.content_length > max_body)  {
             return body_fail(413, "Payload Too Large", status, reason);
-
+            
+            // Debugging - TESTER
+            std::cerr << "[Debug] BODY CL reject: CL = " << request.content_length
+                    << " max = " << max_body
+                    << " have = " << request.body_received
+                    << " rb = " << connection.readBuffer.size()
+                    << std::endl;
+        }
+        
         const std::size_t   have = request.body_received;
         if (have >= request.content_length)
             return BODY_COMPLETE;
@@ -96,6 +104,13 @@ namespace http  {
 
         std::size_t avail = connection.readBuffer.size();
         std::size_t take = (avail < need) ? avail : need;
+
+        // Debugging - TESTER
+        std::cerr << "[Debug] BODY stream reject: have = " << have
+                << " take = " << take
+                << " max = " << max_body
+                << " rb = " << connection.readBuffer.size()
+                << std::endl;
 
         if (have + take > max_body)
             return body_fail(413, "Payload Too Large", status, reason);
