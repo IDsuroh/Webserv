@@ -175,6 +175,19 @@ namespace   {
     * - Set keep_alive, content_length, transfer_encoding, body_reader_state.
     */
     bool    parseHeadersBlock(const std::string& block, HTTP_Request& request, int& outStatus, std::string& outReason)  {
+        
+        // Reset derived fields for this request -> for keep-alive reuse
+        request.keep_alive = (request.version == "HTTP/1.1");
+        request.expectContinue = false;
+        request.host.clear();
+        request.transfer_encoding.clear();
+        request.content_length = 0;
+        request.body_reader_state = BR_NONE;
+        request.body_received = 0;
+        request.chunk_bytes_left = 0;
+        request.chunk_state = CS_SIZE;
+        request.body.clear();
+        
         std::string lastKey;
 
         for (std::size_t i = 0, start = 0; ; )  {
@@ -248,11 +261,6 @@ namespace   {
 
         // Connection: default keep-alive in HTTP/1.1
         std::map<std::string, std::string>::const_iterator chit = request.headers.find("connection");
-        if (request.version == "HTTP/1.1")
-            request.keep_alive = true;   // default in HTTP/1.1
-        else if (request.version == "HTTP/1.0")
-            request.keep_alive = false; // default in HTTP/1.0
-
         if (chit != request.headers.end())  {
             std::istringstream  iss(toLowerCopy(chit->second));
             std::string         token;
@@ -332,6 +340,17 @@ namespace   {
 
             // Normalize to a canonical marker
             request.transfer_encoding = "chunked";
+        }
+
+        // If header exists: Expect: 100-continue
+        request.expectContinue = false;
+        std::map<std::string, std::string>::const_iterator it = request.headers.find("expect");
+        if (it != request.headers.end())    {
+            std::string v = toLowerCopy(trim(it->second));
+            if (v == "100-continue")
+                request.expectContinue = true;
+            else
+                request.expectContinue = false;
         }
 
         // Decide body reader mode

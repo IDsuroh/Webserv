@@ -477,12 +477,13 @@ void	ServerRunner::acceptNewClient(int listenFd, const Server* srv)	{
 		connection.readBuffer.clear();				// incoming data buffer is resetted
 		connection.writeBuffer.clear();				// outgoing data buffer as well
 		connection.headersComplete = false;			// haven't finished reading headers
+		connection.sentContinue = false;
 		connection.state = S_HEADERS;				// where to start
 		connection.request.body.clear();			// no body yet
 		connection.request.chunk_state = CS_SIZE;
 		connection.request.chunk_bytes_left = 0;
 		connection.writeOffset = 0;					// nothing written yet
-		connection.clientMaxBodySize = (1u << 20);	// 1Mib limit for body
+		connection.clientMaxBodySize = std::numeric_limits<size_t>::max();
 		connection.kaIdleStartMs = 0;				// not in idle keep-alive
 		connection.lastActiveMs = _nowMs;			// The last time there was activity on this connection.
 			// Bit shift: 1u (unsigned 1) shifted 20 bits → 1,048,576 bytes (1 MiB) default.
@@ -568,7 +569,6 @@ void	ServerRunner::handleRequest(Connection& connection) {
         _fds[pit->second].events = POLLOUT;
 }
 
-
 void	ServerRunner::readFromClient(int clientFd)	{
 
 	std::map<int, Connection>::iterator it = _connections.find(clientFd);
@@ -587,10 +587,12 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		if (connection.state == S_HEADERS && connection.kaIdleStartMs != 0)
 			connection.kaIdleStartMs = 0;
 	}
-	if (n == 0)	{ // peer closed - EOF (no more bytes)
+	else if (n == 0)	{ // peer closed - EOF (no more bytes)
 		closeConnection(clientFd);
 		return ;
 	}
+	else
+		return ;
 
 	// 2) If we are in HEADERS state, try to parse the head block
 	if (connection.state == S_HEADERS)	{
@@ -626,6 +628,9 @@ void	ServerRunner::readFromClient(int clientFd)	{
 				throw	std::runtime_error("Internal bug: connection.srv is NULL");
 			}
 			const Server&	active = *connection.srv;
+
+			if (status == 413)
+				connection.request.keep_alive = false;
 			
 			connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
 			connection.writeOffset = 0;
@@ -642,17 +647,180 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 		size_t	limit = std::numeric_limits<size_t>::max();	// default: no limit unless configured
 		bool	fromLoc = false;
+		const Location*	loc = NULL;
+		
 		if (connection.srv)	{
-			if (const Location*	loc = longestPrefixMatch(*connection.srv, connection.request.path))	{
+			if ((loc = longestPrefixMatch(*connection.srv, connection.request.path)))	{
+
 				if (loc->directives.count("client_max_body_size"))	{	// #1
 					limit = parseSize(loc->directives.find("client_max_body_size")->second);
 					fromLoc = true;
 				}
 			}
+
 			if (!fromLoc && connection.srv->directives.count("client_max_body_size"))	// #2
 				limit = parseSize(connection.srv->directives.find("client_max_body_size")->second);
 		}
+
 		connection.clientMaxBodySize = limit;	// #3
+
+		{	// Early check scope
+			const Server&	active = connection.srv ? *connection.srv : _servers[0];
+
+			bool 		isCgiRequest = false;
+			std::string matchedExt;
+			std::string interpreterPath;
+
+			if (loc && loc->directives.count("cgi_pass"))	{
+				
+				const std::string&	cgiVal = loc->directives.find("cgi_pass")->second;
+
+				// tokenize by whitespace (C++98, no stringstream requirement)
+				std::vector<std::string>	tokens;
+				std::string 				current;
+				for (size_t i = 0; i <= cgiVal.size(); ++i)	{
+					char	c = (i < cgiVal.size()) ? cgiVal[i] : ' ';
+					if (!std::isspace(static_cast<unsigned char>(c)))
+					    current += c;
+					else if (!current.empty())	{
+					    tokens.push_back(current);
+					    current.clear();
+					}
+				}
+
+				const std::string&	p = connection.request.path;
+
+				for (size_t i = 0; i + 1 < tokens.size(); i += 2)	{
+					const std::string&	ext = tokens[i];
+					const std::string&	bin = tokens[i + 1];
+
+					if (!ext.empty() && p.size() >= ext.size()
+						&& p.compare(p.size() - ext.size(), ext.size(), ext) == 0)	{
+						isCgiRequest = true;
+						matchedExt = ext;
+						interpreterPath = bin;
+						break;
+					}
+				}
+			}
+
+			// Helper: compute CGI script fs path the SAME way you should later exec it.
+			// NOTE: This assumes "root + (uri minus location prefix)" mapping.
+			std::string	scriptFsPath;
+			if (isCgiRequest)	{
+				std::string	root = ".";
+				if (loc && loc->directives.count("root"))
+					root = loc->directives.find("root")->second;
+				else if (connection.srv && connection.srv->directives.count("root"))
+					root = connection.srv->directives.find("root")->second;
+
+				std::string	subPath = connection.request.path;
+				if (loc)	{
+					const std::string&	lp = loc->path; // "/directory"
+					if (subPath.size() >= lp.size() && subPath.compare(0, lp.size(), lp) == 0)
+						subPath = subPath.substr(lp.size());
+				}
+				if (subPath.empty())
+					subPath = "/";
+
+				if (!root.empty() && root[root.size() - 1] == '/' && !subPath.empty() && subPath[0] == '/')
+					scriptFsPath = root.substr(0, root.size() - 1) + subPath;
+				else if (!subPath.empty() && subPath[0] == '/')
+					scriptFsPath = root + subPath;
+				else
+					scriptFsPath = root + "/" + subPath;
+			}
+
+			// (1) Early 413: known CL too large
+			if (connection.request.body_reader_state == BR_CONTENT_LENGTH
+				&& connection.request.content_length > connection.clientMaxBodySize)	{
+				
+				connection.request.keep_alive = false;
+				connection.request.expectContinue = false;
+				connection.sentContinue = false;
+
+				connection.writeBuffer = http::build_error_response(active, 413, "Payload Too Large", false);
+				connection.writeOffset = 0;
+
+				std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+				if (pit != _fdIndex.end())
+					_fds[pit->second].events = POLLOUT;
+
+				connection.state = S_WRITE;
+				return ;
+			}
+
+			// (2) Early 405: method not allowed (token-based; avoids "POST" substring pitfalls)
+			const std::string*	methodsStr = NULL;
+			if (loc && loc->directives.count("methods"))
+				methodsStr = &loc->directives.find("methods")->second;
+			else if (connection.srv && connection.srv->directives.count("methods"))
+				methodsStr = &connection.srv->directives.find("methods")->second;
+
+			if (methodsStr)	{
+				std::string	reqM = connection.request.method;
+				for (size_t i = 0; i < reqM.size(); ++i)
+					reqM[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(reqM[i])));
+
+				bool		allowed = false;
+				std::string	tok;
+
+				for (size_t i = 0; i <= methodsStr->size(); ++i)	{
+					char	c = (i < methodsStr->size()) ? (*methodsStr)[i] : ' ';
+					if (std::isalpha(static_cast<unsigned char>(c)))
+						tok += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+					else if (!tok.empty())	{
+						if (tok == reqM)	{
+							allowed = true;
+							break;
+						}
+						tok.clear();
+					}
+				}
+
+				if (!allowed)	{
+					connection.request.keep_alive = false;
+					connection.request.expectContinue = false;
+					connection.sentContinue = false;
+
+					connection.writeBuffer = http::build_error_response(active, 405, "Method Not Allowed", false);
+					connection.writeOffset = 0;
+
+					std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+					if (pit != _fdIndex.end())
+						_fds[pit->second].events = POLLOUT;
+
+					connection.state = S_WRITE;
+					return ;
+                }
+            }
+
+			// Debugging - early
+			std::cerr << "[DBG][early 404] cgi ext=" << matchedExt
+					<< " scriptFsPath=" << scriptFsPath << std::endl;
+
+
+			// (3) Early 404: CGI script missing (runs for GET/POST/etc — not only “has body”)
+			if (isCgiRequest)	{
+				struct stat	st;
+				if (stat(scriptFsPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode))	{
+					// Close always: prevents client from uploading huge body into a doomed request.
+					connection.request.keep_alive = false;
+					connection.request.expectContinue = false;
+					connection.sentContinue = false;
+
+					connection.writeBuffer = http::build_error_response(active, 404, "Not Found", false);
+					connection.writeOffset = 0;
+
+					std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+					if (pit != _fdIndex.end())
+						_fds[pit->second].events = POLLOUT;
+
+					connection.state = S_WRITE;
+					return ;
+				}
+			}
+		}
 
 		// Transition depending on body presence
 		if (connection.request.body_reader_state == BR_NONE)	{ // has no body to read
@@ -661,9 +829,23 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 			return ;
 		}
-		else	{
-			connection.state = S_BODY; // still need to read the body
+
+		// --- EXPECT: 100-CONTINUE HANDSHAKE ---
+		if (connection.request.expectContinue == true)	{
+
+			connection.writeBuffer = "HTTP/1.1 100 Continue\r\n\r\n";
+			connection.writeOffset = 0;
+			connection.sentContinue = true;
+
+			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+			if (pit != _fdIndex.end())
+				_fds[pit->second].events = POLLOUT;
+
+			connection.state = S_WRITE;
+			return ;
 		}
+
+		connection.state = S_BODY;
 	}
 
 	// 3) If we are in BODY state, consume body incrementally
@@ -707,7 +889,8 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 			const Server&	active = connection.srv ? *connection.srv : _servers[0];
 
-			connection.request.keep_alive = false;
+			if (status == 413)
+				connection.request.keep_alive = false;
 
 			connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
 			
@@ -782,6 +965,21 @@ void	ServerRunner::writeToClient(int clientFd)	{
 	std::cerr << "[Debug] write finished. keep_alive = " << (connection.request.keep_alive ? "1" : "0")
 			<< " sent_bytes = " << connection.writeBuffer.size() << std::endl;
 
+	// If we just sent "100 Continue", continue reading the same request body.
+	if (connection.sentContinue)	{
+		connection.sentContinue = false;
+		connection.writeBuffer.clear();
+		connection.writeOffset = 0;
+
+		connection.state = S_BODY;
+
+		std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+		if (pit != _fdIndex.end())
+			_fds[pit->second].events = POLLIN;
+
+		return ;
+	}
+
 	// Finished sending the full response
 	const bool	keep = connection.request.keep_alive;
 	if (keep)	{
@@ -789,6 +987,7 @@ void	ServerRunner::writeToClient(int clientFd)	{
 		connection.writeOffset = 0;
 		connection.readBuffer.clear();
 		connection.headersComplete = false;
+		connection.sentContinue = false;
 		connection.request = HTTP_Request();
 		connection.response = HTTP_Response();
 		connection.state = S_HEADERS;

@@ -41,6 +41,7 @@ enum ChunkState	{
 
 struct HTTP_Request	{
 	bool								keep_alive;
+	bool								expectContinue;
 	std::string							method;
 	std::string							target;
 	std::string							path;
@@ -58,6 +59,7 @@ struct HTTP_Request	{
 
 	HTTP_Request()
 	:	keep_alive(true)
+	,	expectContinue(false)
 	,	method()
 	,	target()
 	,	path()
@@ -105,6 +107,7 @@ struct Connection   {
     std::string     readBuffer;
     std::string     writeBuffer;
     bool            headersComplete;
+	bool			sentContinue;
 	ConnectionState	state;
 	HTTP_Request	request;
 	HTTP_Response	response;
@@ -120,11 +123,12 @@ struct Connection   {
 	,	readBuffer()
 	,	writeBuffer()
 	,	headersComplete(false)
+	,	sentContinue(false)
 	,	state(S_HEADERS)
 	,	request()
 	,	response()
 	,	writeOffset(0)
-	,	clientMaxBodySize(1048576)	// default 1 MiB; override from config
+	,	clientMaxBodySize(std::numeric_limits<size_t>::max())	// default: unlimited unless configured
 	,	kaIdleStartMs()
 	,	lastActiveMs()
 	{}

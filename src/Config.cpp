@@ -419,6 +419,20 @@ static void parseLocationBlock(const std::vector<std::string>& tokens, std::size
 			++i;
 			loc.directives["return"] = status + " " + uri;
 		}
+		else if (key == "cgi_pass")	{
+			// cgi_pass <extension> <executable>
+			if (i + 1 >= tokens.size() || tokens[i] == ";" || tokens[i] == "{" || tokens[i] == "}")
+				throw	std::runtime_error("Location: cgi_pass: Missing <extension> <executable>");
+			
+			const std::string	ext = tokens[i++];
+			const std::string	bin = tokens[i++];
+
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Location: cgi_pass: Missing ';'");
+			++i;
+
+			loc.directives["cgi_pass"] = ext + " " + bin;
+		}
 
 		// ------- Fallback: generic directive "key arg1 arg2 ... ;" -------
 		else	{
@@ -499,6 +513,19 @@ static void handleGenericDirective(Server& srv, const std::string& key, const st
 				throw	std::runtime_error("Server: client_max_body_size: Missing ';'");
 			++i;
 			srv.directives["client_max_body_size"] = value;
+		}
+		else if (key == "cgi_pass")	{
+			if (i + 1 >= tokens.size() || tokens[i] == ";" || tokens[i] == "{" || tokens[i] == "}")
+				throw	std::runtime_error("Server: cgi_pass: Missing <extension> <executable>");
+
+			const std::string	ext = tokens[i++];
+			const std::string	bin = tokens[i++];
+
+			if (i >= tokens.size() || tokens[i] != ";")
+				throw	std::runtime_error("Server: cgi_pass: Missing ';'");
+			++i;
+
+			srv.directives["cgi_pass"] = ext + " " + bin;
 		}
 		else
 			throw	std::runtime_error("Server: Unknown directive '" + key + "'");
