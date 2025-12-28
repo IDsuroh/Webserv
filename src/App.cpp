@@ -6,7 +6,7 @@
 /*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/28 15:37:16 by suroh            ###   ########.fr       */
+/*   Updated: 2025/12/28 15:44:26 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1055,8 +1055,8 @@ namespace {
 			env.push_back("CONTENT_TYPE=" + itCT->second);
 		
 		// SERVER_NAME / SERVER_PORT
-		std::string			serverPort;
-		size_t				serverCPos = req.host.find(':');
+		std::string	serverPort;
+		size_t		serverCPos = req.host.find(':');
 		if (serverCPos != std::string::npos)
 			serverPort = req.host.substr(serverCPos + 1);
 		else if (!cfg.server->listen.empty())	{
