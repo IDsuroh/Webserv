@@ -694,8 +694,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 					const std::string&	ext = tokens[i];
 					const std::string&	bin = tokens[i + 1];
 
-					if (!ext.empty() && p.size() >= ext.size()
-						&& p.compare(p.size() - ext.size(), ext.size(), ext) == 0)	{
+					if (!ext.empty() && p.size() >= ext.size() && p.compare(p.size() - ext.size(), ext.size(), ext) == 0)	{
 						isCgiRequest = true;
 						matchedExt = ext;
 						interpreterPath = bin;
