@@ -781,11 +781,16 @@ void	ServerRunner::readFromClient(int clientFd)	{
 				}
 
 				if (!allowed)	{
-					connection.request.keep_alive = false;
-					connection.request.expectContinue = false;
+
+					bool	keep = connection.request.keep_alive;
+
+					if (connection.request.body_reader_state != BR_NONE && !connection.request.expectContinue)
+						keep = false;
+
+					connection.request.keep_alive = keep;
 					connection.sentContinue = false;
 
-					connection.writeBuffer = http::build_error_response(active, 405, "Method Not Allowed", false);
+					connection.writeBuffer = http::build_error_response(active, 405, "Method Not Allowed", keep);
 					connection.writeOffset = 0;
 
 					std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
@@ -801,12 +806,16 @@ void	ServerRunner::readFromClient(int clientFd)	{
 			if (isCgiRequest)	{
 				struct stat	st;
 				if (stat(scriptFsPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode))	{
-					// Close always: prevents client from uploading huge body into a doomed request.
-					connection.request.keep_alive = false;
-					connection.request.expectContinue = false;
+					
+					bool	keep = connection.request.keep_alive;
+					// If a body might arrive, only keep-alive if Expect: 100-continue was used.
+					if (connection.request.body_reader_state != BR_NONE && !connection.request.expectContinue)
+						keep = false;
+
+					connection.request.keep_alive = keep;
 					connection.sentContinue = false;
 
-					connection.writeBuffer = http::build_error_response(active, 404, "Not Found", false);
+					connection.writeBuffer = http::build_error_response(active, 404, "Not Found", keep);
 					connection.writeOffset = 0;
 
 					std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
