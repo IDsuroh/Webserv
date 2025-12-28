@@ -795,11 +795,6 @@ void	ServerRunner::readFromClient(int clientFd)	{
                 }
             }
 
-			// Debugging - early
-			std::cerr << "[DBG][early 404] cgi ext=" << matchedExt
-					<< " scriptFsPath=" << scriptFsPath << std::endl;
-
-
 			// (3) Early 404: CGI script missing (runs for GET/POST/etc — not only “has body”)
 			if (isCgiRequest)	{
 				struct stat	st;
@@ -878,38 +873,12 @@ void	ServerRunner::readFromClient(int clientFd)	{
 		}
 		if (result == http::BODY_ERROR)	{
 
-			// Debugging - TESTER
-			std::cerr << "[Debug] BODY_ERROR status = " << status
-					<< " reason = '" << reason << "'"
-					<< " keep_alive(before) = " << (connection.request.keep_alive ? "1" : "0")
-					<< " rb = " << connection.readBuffer.size()
-					<< " body_recv = " << connection.request.body_received
-					<< " CL = " << connection.request.content_length
-					<< std::endl;
-
 			const Server&	active = connection.srv ? *connection.srv : _servers[0];
 
 			if (status == 413)
 				connection.request.keep_alive = false;
 
 			connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
-			
-			// Debugging - TESTER
-			size_t	eol = connection.writeBuffer.find("\r\n");
-			std::string	firstLine = (eol == std::string::npos) ? connection.writeBuffer
-																: connection.writeBuffer.substr(0, eol);
-			std::cerr << "[Debug] response first-line: " << firstLine << std::endl;
-
-			// Debugging - TESTER
-			size_t	connPos = connection.writeBuffer.find("Connection:");
-			if (connPos != std::string::npos)	{
-				size_t	connEnd = connection.writeBuffer.find("\r\n", connPos);
-				std::cerr << "[Debug] response header: "
-						<< connection.writeBuffer.substr(connPos, connEnd - connPos) << std::endl;
-			}
-			else
-				std::cerr << "[Debug] response header: (no Connection header)\n";
-
 			connection.writeOffset = 0;
 			
 			std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
@@ -960,10 +929,6 @@ void	ServerRunner::writeToClient(int clientFd)	{
 
 		return ;	// Stop if the socket cannot accept more
 	}
-
-	// Debugging - TESTER
-	std::cerr << "[Debug] write finished. keep_alive = " << (connection.request.keep_alive ? "1" : "0")
-			<< " sent_bytes = " << connection.writeBuffer.size() << std::endl;
 
 	// If we just sent "100 Continue", continue reading the same request body.
 	if (connection.sentContinue)	{

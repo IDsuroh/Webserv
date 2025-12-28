@@ -6,7 +6,7 @@
 /*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/26 14:01:55 by suroh            ###   ########.fr       */
+/*   Updated: 2025/12/28 12:24:08 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -967,24 +967,14 @@ namespace {
 		
 		std::map<std::string, std::string>::const_iterator it = cfg.cgiPass.find(ext);
 		if (it == cfg.cgiPass.end())	{
-			// Debugging - curl test
-			std::cerr << "[CGI DEBUG] no mapping for ext '" << ext << std::endl;
 			return false;
 		}
-
-		// Debugging - curl test
-		std::cerr << "[CGI DEBUG] mapping: ext='" << ext << "' bin='" << it->second << std::endl;
 		
 		if (it->second.empty())	{
-			// Debugging - curl test
-			std::cerr << "[CGI DEBUG] bin path is empty\n";
 			return false;
 		}
 		
 		if (access(it->second.c_str(), X_OK) != 0)	{
-			// Debugging - curl test
-			std::cerr << "[CGI DEBUG] access(X_OK) failed for '" << it->second
-            		<< "': errno=" << errno << " (" << std::strerror(errno) << ")\n";
 			return false;
 		}
 
@@ -1224,19 +1214,6 @@ namespace {
 				cEnvp.push_back(const_cast<char*>(env[i].c_str()));
 			cEnvp.push_back(NULL);
 
-			// Debugging
-			std::cerr << "[CGI ENV CHECK]\n";
-			for (size_t i = 0; i < env.size(); ++i) {
-				if (env[i].find("SCRIPT_NAME=") == 0
-					|| env[i].find("PATH_INFO=") == 0
-					|| env[i].find("PATH_TRANSLATED=") == 0
-					|| env[i].find("REQUEST_URI=") == 0
-					|| env[i].find("SCRIPT_FILENAME=") == 0
-					|| env[i].find("DOCUMENT_ROOT=") == 0)	{
-						std::cerr << "  " << env[i] << "\n";
-					}
-			}
-
 			execve(cArgv[0], &cArgv[0], &cEnvp[0]);
 			_exit(1);
 		}
@@ -1276,14 +1253,6 @@ namespace {
 		const int	sliceMs = 200;	// Use poll slices + idle accumulator
 		int			idleMs = 0;
 
-		// Debugging
-		std::cerr << "[CGI IO] start: bodySize=" << requestBody.size()
-				<< " timeoutMs=" << timeoutMs
-				<< " stdinFd=" << pipes.stdinParent
-				<< " stdoutFd=" << pipes.stdoutParent
-				<< " pid=" << pipes.pid << std::endl;
-
-
 		// Make stdin non-blocking
 		int	flagsIn = fcntl(pipes.stdinParent, F_GETFL, 0);
 		if (flagsIn != -1)
@@ -1303,9 +1272,6 @@ namespace {
 
 		// IMPORTANT: if there is no body, close stdin immediately so CGI sees EOF
 		if (total == 0 && !stdinClosed)	{
-			
-			// Debugging
-			std::cerr << "[CGI IO] closing CGI stdin (EOF). totalWrittenDone\n";
 			
 			stdinClosed = true;
 			close(pipes.stdinParent);
@@ -1369,16 +1335,10 @@ namespace {
 							cgiOutput.data.append(buf, static_cast<size_t>(n));
 							progressed = true;
 
-							// Debugging
-							std::cerr << "[CGI IO] read progress: outSize=" << cgiOutput.data.size() << std::endl;
 							continue;
 						}
 						
 						if (n == 0)	{
-							
-							// Debugging
-							std::cerr << "[CGI IO] stdout EOF reached\n";
-
 							eof = true;
 						}
 
@@ -1406,10 +1366,6 @@ namespace {
 						if (n > 0)	{
 							written += static_cast<size_t>(n);
 							progressed = true;
-
-							// Debugging
-							if ((written % (1024 * 1024)) < 4096)
-								std::cerr << "[CGI IO] write progress: written=" << written << "/" << total << std::endl;
 						
 							continue;
 						}
@@ -1417,14 +1373,7 @@ namespace {
 						break;
 					}
 
-					// Debugging
-					std::cerr << "[CGI IO] write state: written=" << written << "/" << total << std::endl;
-
 					if (!stdinClosed && written == total)	{
-						
-						// Debugging
-						std::cerr << "[CGI IO] closing CGI stdin (EOF). totalWrittenDone\n";
-
 						stdinClosed = true;
 						close(pipes.stdinParent);
 					}
