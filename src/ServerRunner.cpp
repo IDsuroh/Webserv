@@ -722,9 +722,12 @@ void	ServerRunner::readFromClient(int clientFd)	{
 				if (subPath.empty())
 					subPath = "/";
 
-				if (!root.empty() && root[root.size() - 1] == '/' && !subPath.empty() && subPath[0] == '/')
+				bool	rootEnds = (!root.empty() && root[root.size() -1] == '/');
+				bool	subStarts = (!subPath.empty() && subPath[0] == '/');
+
+				if (rootEnds && subStarts)
 					scriptFsPath = root.substr(0, root.size() - 1) + subPath;
-				else if (!subPath.empty() && subPath[0] == '/')
+				else if (rootEnds ^ subStarts)	// bitwise XOR: if just one of them is true.
 					scriptFsPath = root + subPath;
 				else
 					scriptFsPath = root + "/" + subPath;
@@ -762,18 +765,18 @@ void	ServerRunner::readFromClient(int clientFd)	{
 					reqM[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(reqM[i])));
 
 				bool		allowed = false;
-				std::string	tok;
+				std::string	token;
 
 				for (size_t i = 0; i <= methodsStr->size(); ++i)	{
 					char	c = (i < methodsStr->size()) ? (*methodsStr)[i] : ' ';
 					if (std::isalpha(static_cast<unsigned char>(c)))
-						tok += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-					else if (!tok.empty())	{
-						if (tok == reqM)	{
+						token += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+					else if (!token.empty())	{
+						if (token == reqM)	{
 							allowed = true;
 							break;
 						}
-						tok.clear();
+						token.clear();
 					}
 				}
 
