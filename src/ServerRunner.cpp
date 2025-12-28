@@ -782,14 +782,20 @@ void	ServerRunner::readFromClient(int clientFd)	{
 
 				if (!allowed)	{
 
+					// Important: even for errors, HTTP/1.1 can keep the TCP connection alive.
 					bool	keep = connection.request.keep_alive;
 
 					if (connection.request.body_reader_state != BR_NONE && !connection.request.expectContinue)
 						keep = false;
+					// If the request has a body and the client did NOT use Expect: 100-continue,
+					// the client may already be streaming a large body.
+					// If we keep the connection alive *without draining* that body, leftover bytes can desync the next request.
+					// So in this case we force Connection: close.
 
 					connection.request.keep_alive = keep;
 					connection.sentContinue = false;
 
+					// This enables: 405 responses that can remain keep-alive (nginx-like) when safe.
 					connection.writeBuffer = http::build_error_response(active, 405, "Method Not Allowed", keep);
 					connection.writeOffset = 0;
 
