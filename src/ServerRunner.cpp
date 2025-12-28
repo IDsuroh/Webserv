@@ -703,7 +703,7 @@ void	ServerRunner::readFromClient(int clientFd)	{
 				}
 			}
 
-			// Helper: compute CGI script fs path the SAME way you should later exec it.
+			// Helper: compute CGI script fs path the SAME way we should later exec it.
 			// NOTE: This assumes "root + (uri minus location prefix)" mapping.
 			std::string	scriptFsPath;
 			if (isCgiRequest)	{
