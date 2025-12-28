@@ -6,7 +6,7 @@
 /*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2025/12/28 15:44:26 by suroh            ###   ########.fr       */
+/*   Updated: 2025/12/28 15:51:03 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1729,17 +1729,17 @@ namespace {
 	    struct stat st;
 	
 	    if (stat(fsPath.c_str(), &st) != 0) { // Doesn't exist
-	        std::cerr << "[CGI DEBUG] 404: stat() failed for " << fsPath << "\n";
+	        std::cerr << "[CGI DEBUG] 404: stat() failed for " << fsPath << std::endl;
 	        return makeErrorResponse(404, &cfg);
 	    }
 	
 	    if (!S_ISREG(st.st_mode)) {
-	        std::cerr << "[CGI DEBUG] 403: not a regular file: " << fsPath << "\n";
+	        std::cerr << "[CGI DEBUG] 403: not a regular file: " << fsPath << std::endl;
 	        return makeErrorResponse(403, &cfg);
 	    }
 	
 	    if (access(fsPath.c_str(), R_OK) != 0) {
-	        std::cerr << "[CGI DEBUG] 403: no read permission on " << fsPath << "\n";
+	        std::cerr << "[CGI DEBUG] 403: no read permission on " << fsPath << std::endl;
 	        return makeErrorResponse(403, &cfg);
 	    }
 	
@@ -1748,13 +1748,12 @@ namespace {
 	
 	    if (!prepareCgiExecutor(cfg, fsPath, interpreter, argv)) {
 	        std::cerr << "[CGI DEBUG] 500: prepareCgiExecutor failed for " << fsPath
-	                  << " (cgiPass size=" << cfg.cgiPass.size() << ")\n";
+					<< " (cgiPass size=" << cfg.cgiPass.size() << ")\n";
 	        forceClose = true;
 			return makeErrorResponse(500, &cfg);
 	    }
 	
-	    std::cerr << "[CGI DEBUG] interpreter=" << interpreter
-	              << " script=" << fsPath << "\n";
+	    std::cerr << "[CGI DEBUG] interpreter=" << interpreter << " script=" << fsPath << std::endl;
 	
 	    std::vector<std::string> envp = buildCgiEnv(req, cfg, fsPath);
 	
@@ -1772,7 +1771,7 @@ namespace {
 	    }
 	
 	    std::cerr << "[CGI DEBUG] CGI exitStatus=" << raw.exitStatus
-	              << " data.size=" << raw.data.size() << "\n";
+				<< " data.size=" << raw.data.size() << std::endl;
 	
 	    if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {
 	        std::cerr << "[CGI DEBUG] 500: bad exit status and no data\n";
