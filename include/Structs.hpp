@@ -21,6 +21,7 @@ struct Server   {
 enum ConnectionState	{
 	S_HEADERS,
 	S_BODY,
+	S_DRAIN,   // NOVO: drenar body antes de enviar resposta early
 	S_WRITE,
 	S_CLOSED
 };	// Per-connection state for the HTTP parser
@@ -116,6 +117,10 @@ struct Connection   {
 	long			kaIdleStartMs;
 	long			lastActiveMs;
 
+	bool            draining;        // estamos a drenar body?
+	std::size_t     drainedBytes;    // quantos bytes já drenámos (para limite/diagnóstico)
+
+
 	Connection()
 	:	fd(-1)
 	,	listenFd(-1)
@@ -131,7 +136,12 @@ struct Connection   {
 	,	clientMaxBodySize(std::numeric_limits<size_t>::max())	// default: unlimited unless configured
 	,	kaIdleStartMs()
 	,	lastActiveMs()
+	, draining(false)
+	, drainedBytes(0)
 	{}
 };
+
+
+
 
 #endif

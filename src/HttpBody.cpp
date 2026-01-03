@@ -190,4 +190,120 @@ namespace http  {
         }
     }
 
+    BodyResult  consume_body_content_length_drain(Connection& connection, std::size_t max_body, int& status, std::string& reason) {
+
+        HTTP_Request& request = connection.request;
+
+        // if CL itself exceeds limit, reject immediately
+        if (request.content_length > max_body)  {
+            return body_fail(413, "Payload Too Large", status, reason);
+        }
+
+        const std::size_t have = request.body_received;
+        if (have >= request.content_length)
+            return BODY_COMPLETE;
+
+        const std::size_t need = request.content_length - have;
+
+        if (connection.readBuffer.empty())
+            return BODY_INCOMPLETE;
+
+        std::size_t avail = connection.readBuffer.size();
+        std::size_t take = (avail < need) ? avail : need;
+
+        if (have + take > max_body)
+            return body_fail(413, "Payload Too Large", status, reason);
+
+        // DRAIN: do NOT append to request.body
+        request.body_received += take;
+        connection.readBuffer.erase(0, take);
+
+        return (request.body_received == request.content_length) ? BODY_COMPLETE : BODY_INCOMPLETE;
+    }
+
+    BodyResult  consume_body_chunked_drain(Connection& connection, std::size_t max_body, int& status, std::string& reason) {
+
+        HTTP_Request& request = connection.request;
+
+        static const std::size_t MAX_LINE = 16 * 1024;
+
+        for (;;) {
+            switch (request.chunk_state) {
+
+                case CS_SIZE: {
+                    std::size_t position = connection.readBuffer.find("\r\n");
+                    if (position == std::string::npos) {
+                        if (connection.readBuffer.size() > MAX_LINE)
+                            return body_fail(413, "Payload Too Large", status, reason);
+                        return BODY_INCOMPLETE;
+                    }
+                    if (position > MAX_LINE)
+                        return body_fail(413, "Payload Too Large", status, reason);
+
+                    std::string line = connection.readBuffer.substr(0, position);
+                    connection.readBuffer.erase(0, position + 2);
+
+                    std::size_t size = 0;
+                    if (!parse_hex_size(line, size))
+                        return body_fail(400, "Bad Request", status, reason);
+
+                    // enforce max body
+                    if (size > 0 && size > max_body - request.body_received)
+                        return body_fail(413, "Payload Too Large", status, reason);
+
+                    request.chunk_bytes_left = size;
+                    request.chunk_state = (size == 0) ? CS_TRAILERS : CS_DATA;
+                    break;
+                }
+
+                case CS_DATA: {
+                    if (connection.readBuffer.empty())
+                        return BODY_INCOMPLETE;
+
+                    std::size_t avail = connection.readBuffer.size();
+                    std::size_t take = (avail < request.chunk_bytes_left) ? avail : request.chunk_bytes_left;
+
+                    if (take > max_body - request.body_received)
+                        return body_fail(413, "Payload Too Large", status, reason);
+
+                    // DRAIN: do NOT append to request.body
+                    request.body_received += take;
+                    request.chunk_bytes_left -= take;
+
+                    connection.readBuffer.erase(0, take);
+
+                    if (request.chunk_bytes_left == 0)
+                        request.chunk_state = CS_DATA_CRLF;
+                    break;
+                }
+
+                case CS_DATA_CRLF: {
+                    if (connection.readBuffer.size() < 2)
+                        return BODY_INCOMPLETE;
+                    if (!(connection.readBuffer[0] == '\r' && connection.readBuffer[1] == '\n'))
+                        return body_fail(400, "Bad Request", status, reason);
+
+                    connection.readBuffer.erase(0, 2);
+                    request.chunk_state = CS_SIZE;
+                    break;
+                }
+
+                case CS_TRAILERS: {
+                    BodyResult trail = consume_all_trailers(connection.readBuffer, MAX_LINE, status, reason);
+
+                    if (trail != BODY_COMPLETE)
+                        return trail; // BODY_INCOMPLETE or BODY_ERROR
+
+                    request.chunk_state = CS_DONE;
+                    return BODY_COMPLETE;
+                }
+
+                case CS_DONE:
+                    return BODY_COMPLETE;
+            }
+        }
+    }
+
+
+
 } // namespace http
