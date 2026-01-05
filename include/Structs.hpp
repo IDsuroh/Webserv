@@ -120,6 +120,7 @@ struct Connection   {
 	bool            draining;        // estamos a drenar body?
 	std::size_t     drainedBytes;    // quantos bytes já drenámos (para limite/diagnóstico)
 
+	bool            peerClosedRead;   // <-- NOVO: peer fez half-close (shutdown(SHUT_WR)) / EOF no read()
 
 	Connection()
 	:	fd(-1)
@@ -136,8 +137,9 @@ struct Connection   {
 	,	clientMaxBodySize(std::numeric_limits<size_t>::max())	// default: unlimited unless configured
 	,	kaIdleStartMs()
 	,	lastActiveMs()
-	, draining(false)
-	, drainedBytes(0)
+	,	draining(false)			// <-- NOVO
+	,	drainedBytes(0)			// <-- NOVO
+	,	peerClosedRead(false)        // <-- NOVO
 	{}
 };
 
