@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/03 20:07:32 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/06 12:49:32 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -87,11 +87,11 @@ static void logReqLine(const char* tag,
 
     // Se quiseres, mostra também TE/CL (muito útil nestes testes)
     std::map<std::string,std::string>::const_iterator it;
-    it = req.headers.find("Transfer-Encoding");
+    it = req.headers.find("transfer-encoding");
     if (it != req.headers.end())
         std::cerr << " TE=" << it->second;
 
-    it = req.headers.find("Content-Length");
+    it = req.headers.find("content-length");
     if (it != req.headers.end())
         std::cerr << " CL=" << it->second;
 
@@ -664,115 +664,54 @@ static void logReqLine(const char* tag,
 	//  Classifies the request as upload, CGI, directory, static file, forbidden,
 	//  or not found based on the effective configuration and filesystem state.
 	// */
-	// RequestKind classifyRequest(const EffectiveConfig& cfg, const std::string& path, const std::string& fsPath, const HTTP_Request& req) {
 
-	// 	const bool cgi = (req.method == "POST") && isCgiRequest(cfg, path);
-		
-	// 	if (req.method == "POST" && !cfg.uploadStore.empty() && !cgi)	// Uploads take precedence when POST targets an upload_store and is not CGI
+
+	// RequestKind classifyRequest(const EffectiveConfig& cfg,
+	// 							const std::string& path,
+	// 							const std::string& fsPath,
+	// 							const HTTP_Request& req)
+	// {
+	// 	(void)fsPath;
+
+	// 	// 1) Upload tem prioridade em POST quando existe upload_store
+	// 	if (req.method == "POST" && !cfg.uploadStore.empty())
 	// 		return RK_UPLOAD;
 
+	// 	// 2) Se a extensão bater num cgi_pass => é CGI (independente de existir)
+	// 	if (isCgiRequest(cfg, path))
+	// 		return RK_CGI;
+
+	// 	// 3) Restante: filesystem normal
 	// 	struct stat st;
-	// 	if (stat(fsPath.c_str(), &st) != 0) {							// File does not exist or cannot be stat'ed
+	// 	if (stat(fsPath.c_str(), &st) != 0) {
 	// 		if (errno == EACCES)
-	// 			return RK_FORBIDDEN;									// Permission denied by the filesystem
-	// 		return RK_NOT_FOUND;										// Any other stat failure - treat as missing
-	// 	}
-		
-	// 	if (S_ISDIR(st.st_mode))
-	// 		return RK_DIRECTORY;										// Directory path
-		
-	// 	if (S_ISREG(st.st_mode)) {										// Regular file
-	// 		if (cgi)
-	// 			return RK_CGI;											// File should be executed as CGI
-	// 		return RK_STATIC_FILE;										// Otherwise serve as static content
+	// 			return RK_FORBIDDEN;
+	// 		return RK_NOT_FOUND;
 	// 	}
 
-	// 	return RK_FORBIDDEN;											// Other filesystem objects are not allowed
+	// 	if (S_ISDIR(st.st_mode))
+	// 		return RK_DIRECTORY;
+
+	// 	if (S_ISREG(st.st_mode))
+	// 		return RK_STATIC_FILE;
+
+	// 	return RK_FORBIDDEN;
 	// }
 
-	
-// 	RequestKind classifyRequest(const EffectiveConfig& cfg,
-//                             const std::string& path,
-//                             const std::string& fsPath,
-//                             const HTTP_Request& req)
-// {
-//     const bool cgi = (req.method == "POST") && isCgiRequest(cfg, path);
-
-//     // ✅ CGI não depende da existência do fsPath do target
-//     if (cgi)
-//         return RK_CGI;
-
-//     if (req.method == "POST" && !cfg.uploadStore.empty())
-//         return RK_UPLOAD;
-
-//     struct stat st;
-//     if (stat(fsPath.c_str(), &st) != 0) {
-//         if (errno == EACCES)
-//             return RK_FORBIDDEN;
-//         return RK_NOT_FOUND;
-//     }
-
-//     if (S_ISDIR(st.st_mode))
-//         return RK_DIRECTORY;
-
-//     if (S_ISREG(st.st_mode))
-//         return RK_STATIC_FILE;
-
-//     return RK_FORBIDDEN;
-// }
-
-// RequestKind classifyRequest(const EffectiveConfig& cfg,
-//                             const std::string& path,
-//                             const std::string& fsPath,
-//                             const HTTP_Request& req)
-// {
-//     // 1) Upload tem prioridade em POST se há upload_store
-//     // (assim /directory/youpla.bla pode ser um upload e não CGI)
-//     if (req.method == "POST" && !cfg.uploadStore.empty())
-//         return RK_UPLOAD;
-
-//     // 2) CGI só se aplica se a extensão bater E o ficheiro existir como regular file
-//     if (isCgiRequest(cfg, path)) {
-//         struct stat st;
-//         if (stat(fsPath.c_str(), &st) == 0 && S_ISREG(st.st_mode))
-//             return RK_CGI;
-//         // se não existe -> não é CGI, é NOT_FOUND (ou FORBIDDEN se EACCES)
-//         if (errno == EACCES)
-//             return RK_FORBIDDEN;
-//         return RK_NOT_FOUND;
-//     }
-
-//     // 3) Restante: filesystem normal
-//     struct stat st;
-//     if (stat(fsPath.c_str(), &st) != 0) {
-//         if (errno == EACCES)
-//             return RK_FORBIDDEN;
-//         return RK_NOT_FOUND;
-//     }
-
-//     if (S_ISDIR(st.st_mode))
-//         return RK_DIRECTORY;
-
-//     if (S_ISREG(st.st_mode))
-//         return RK_STATIC_FILE;
-
-//     return RK_FORBIDDEN;
-// }
-
-RequestKind classifyRequest(const EffectiveConfig& cfg,
+	RequestKind classifyRequest(const EffectiveConfig& cfg,
                             const std::string& path,
                             const std::string& fsPath,
                             const HTTP_Request& req)
 {
     (void)fsPath;
 
-    // 1) Upload tem prioridade em POST quando existe upload_store
-    if (req.method == "POST" && !cfg.uploadStore.empty())
-        return RK_UPLOAD;
-
-    // 2) Se a extensão bater num cgi_pass => é CGI (independente de existir)
+    // 1) CGI primeiro se bater na extensão (não depende de existir ficheiro já no FS)
     if (isCgiRequest(cfg, path))
         return RK_CGI;
+
+    // 2) Upload depois (quando existe upload_store)
+    if (req.method == "POST" && !cfg.uploadStore.empty())
+        return RK_UPLOAD;
 
     // 3) Restante: filesystem normal
     struct stat st;
@@ -790,6 +729,7 @@ RequestKind classifyRequest(const EffectiveConfig& cfg,
 
     return RK_FORBIDDEN;
 }
+
 
 
 
@@ -1299,67 +1239,6 @@ RequestKind classifyRequest(const EffectiveConfig& cfg,
 		env.push_back("REDIRECT_STATUS=200");
 		return env;
 	}
-	// std::vector<std::string> buildCgiEnv(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
-		
-	// 	std::vector<std::string> env;
-	// 	env.reserve(32);													// Arbitrary but large enough to avoid reallocations
-
-	// 	std::string::size_type qPos = req.target.find('?');
-	// 	std::string query = (qPos == std::string::npos) ? "" : req.target.substr(qPos + 1);
-	// 	std::string scriptName = (qPos == std::string::npos) ? req.target : req.target.substr(0, qPos);
-
-	// 	env.push_back("GATEWAY_INTERFACE=CGI/1.1");
-	// 	env.push_back("REQUEST_METHOD=" + req.method);
-	// 	env.push_back("SCRIPT_FILENAME=" + fsPath);
-	// 	env.push_back("REQUEST_URI=" + req.target);
-	// 	env.push_back("SERVER_PROTOCOL=" + req.version);
-	// 	env.push_back("QUERY_STRING=" + query);
-	// 	env.push_back("SCRIPT_NAME=" + scriptName);
-	// 	env.push_back("PATH_INFO=");
-	// 	env.push_back("PATH_TRANSLATED=");
-
-	// 	if (req.content_length > 0)
-	// 		env.push_back("CONTENT_LENGTH=" + toString(req.content_length));
-
-	// 	std::string serverPort;
-	// 	std::string::size_type serverCPos = req.host.find(':');
-
-	// 	if (serverCPos != std::string::npos) {
-	// 		serverPort = req.host.substr(serverCPos + 1);					// Prefer port explicitly given in Host header
-	// 	} else if (!cfg.server->listen.empty()) {
-	// 		const std::string& listenDirective = cfg.server->listen[0];
-	// 		std::string::size_type listenCPos = listenDirective.find(':');
-	// 		if (listenCPos != std::string::npos)
-	// 			serverPort = listenDirective.substr(listenCPos + 1);		// Otherwise extract port from first listen directive (host:port)
-	// 		else
-	// 			serverPort = listenDirective;								// Listen contains only a port number
-	// 	} else
-	// 		serverPort = "80";												// Final fallback: standard HTTP port
-
-	// 	std::string serverName = (serverCPos == std::string::npos ? req.host : req.host.substr(0, serverCPos));
-	// 	if (serverName.empty())
-	// 		serverName = "localhost";										// Reasonable fallback for missing Host header
-			
-	// 	env.push_back("SERVER_PORT=" + serverPort);
-	// 	env.push_back("SERVER_NAME=" + serverName);
-	// 	env.push_back("REMOTE_ADDR=127.0.0.1"); 							// Default loopback address when real client IP isn't available (common in NGINX/Apache local setups)	
-
-	// 	for (std::map<std::string, std::string>::const_iterator it = req.headers.begin(); it != req.headers.end(); ++ it) {	
-			
-	// 		if (it->first == "content-type") {
-	// 			env.push_back("CONTENT_TYPE=" + it->second);
-	// 			continue;
-	// 		}
-				
-	// 		std::string envHeader = formatCgiEnvHeader(it->first);
-	// 		if (!envHeader.empty())
-	// 			env.push_back(envHeader + "=" + it->second);
-	// 	}
-
-	// 	env.push_back("REDIRECT_STATUS=200");
-		
-	// 	return env;
-	// }
 
 	/*
 	 Internal structure holding the pipe file descriptors used by the CGI process.
@@ -1622,121 +1501,7 @@ RequestKind classifyRequest(const EffectiveConfig& cfg,
 		return cgiOutput;
 		
 	}
-	// 	if (!requestBody.empty()) {													// 1. Write the request body into the CGI's stdin
 
-	// 		size_t		written = 0;
-	// 		size_t		remaining = requestBody.size();
-	// 		const char*	data = requestBody.data();
-
-	// 		while (remaining > 0) {
-	// 			ssize_t n = write(pipes.stdinParent, data + written, remaining);
-
-	// 			if (n > 0) {
-	// 				written += n;
-	// 				remaining -= n;
-	// 				continue;
-	// 			}
-
-	// 			break;																// (n <= 0) pipe closed or write error (we cannot inspect errno after read/write rule) - stop writing immediately
-	// 		}
-	// 	}
-	// 	close(pipes.stdinParent);													// Close stdin so the CGI knows the request body has ended
-		
-	// 	int flags = fcntl(pipes.stdoutParent, F_GETFL, 0);							// 2. Make the CGI stdout pipe non-blocking
-	// 	if (flags != -1)
-	// 		fcntl(pipes.stdoutParent, F_SETFL, flags | O_NONBLOCK);
-
-	// 	struct timeval start;														// 3. Build a timeout deadline using gettimeofday
-	// 	gettimeofday(&start, NULL);
-	// 	int64_t deadlineMs = (static_cast<int64_t>(start.tv_sec) * 1000 ) + (static_cast<int64_t>(start.tv_usec) / 1000) + (static_cast<int64_t>(timeoutSeconds) * 1000);	// int64_t ensures safe millisecond arithmetic on both 32-bit and 64-bit systems
-
-	// 	CgiRawOutput cgiOutput;														// Struct holding the final CGI result (timeout, exit code, data)
-	// 	cgiOutput.timedOut = false;
-	// 	cgiOutput.exitStatus = -1;
-
-	// 	bool eof = false;															// Indicates whether end-of-output (EOF) has been reached
-	// 	int childStatus = 0;														// Stores the child's exit status for waitpid()
-
-	// 	while (!eof && !cgiOutput.timedOut) {										// Main loop: read CGI stdout until EOF or timeout
-
-	// 		struct timeval now;														// Check the absolute timeout
-	// 		gettimeofday(&now, NULL);
-	// 		int64_t nowMs = (static_cast<int64_t>(now.tv_sec) * 1000) + (static_cast<int64_t>(now.tv_usec) / 1000);
-
-	// 		int64_t remainingMs = deadlineMs - nowMs;
-	// 		if (remainingMs <= 0) {
-	// 			cgiOutput.timedOut = true;
-	// 			break;
-	// 		}
-
-	// 		struct pollfd pfd;														// poll() avoids blocking and detects readable data or EOF
-	// 		pfd.fd = pipes.stdoutParent;
-	// 		pfd.events = POLLIN | POLLHUP | POLLERR;
-	// 		pfd.revents = 0;
-
-	// 		int pollResult = poll(&pfd, 1, static_cast<int>(remainingMs));
-
-	// 		if (pollResult == 0) {													// poll timeout reached
-	// 			cgiOutput.timedOut = true;
-	// 			break;
-	// 		}
-
-	// 		if (pollResult < 0) {
-	// 			if (errno == EINTR)													// Interrupted by signal - retry poll
-	// 				continue;
-	// 			eof = true;															// Permanent poll error (EBADF, EINVAL, ...) - stop reading
-	// 			break;
-	// 		}
-			
-	// 		if (pfd.revents & POLLERR) {											// Fatal error on the file descriptor - no further reads are possible
-	// 			eof = true;
-	// 			continue;
-	// 		}
-
-	// 		if (pfd.revents & POLLIN) {												// There is data available to read
-
-	// 			char buf[4096];														// 4096 = typical memory page size - efficient for pipe I/O
-
-	// 			for (;;) {
-
-	// 				ssize_t n = read(pfd.fd, buf, sizeof(buf));						// ssize_t is required because read() returns -1 on error
-
-	// 				if (n > 0) {
-	// 					cgiOutput.data.append(buf, static_cast<std::size_t>(n));
-	// 					continue;
-	// 				}
-
-	// 				if (n == 0) {													// EOF (pipe is fully drained)
-	// 					eof = true;
-	// 					break;
-	// 				}
-					
-	// 				break;															// n < 0: non-blocking read and nothing available right now (could be EAGAIN / EWOULDBLOCK / EINTR, but we cannot use errno after read)
-	// 			}
-	// 		}
-	// 		else if (pfd.revents & POLLHUP) {										// HUP without POLLIN - Writer side (CGI) closed stdout - definitive EOF and no data signaled
-	// 			eof = true;
-	// 		}
-	// 	} 
-
-	// 	if (cgiOutput.timedOut) {													// 4. Timeout - kill the CGI process
-	// 		kill(pipes.pid, SIGKILL);
-	// 		waitpid(pipes.pid, NULL, 0);
-	// 		close(pipes.stdoutParent);
-	// 		return cgiOutput;
-	// 	}
-
-	// 	if (waitpid(pipes.pid, &childStatus, 0) > 0) {								// Retrieve the final exit status of the CGI
-	// 		if (WIFEXITED(childStatus))
-	// 			cgiOutput.exitStatus = WEXITSTATUS(childStatus);
-	// 		else if (WIFSIGNALED(childStatus))
-	// 			cgiOutput.exitStatus = 128 + WTERMSIG(childStatus);
-	// 	}
-
-	// 	close(pipes.stdoutParent);													// Close the reading end of the pipe
-
-	// 	return cgiOutput;
-	// }
 
 	/*
 	 Container for parsed CGI output, storing status, headers, body and a flag
@@ -1936,259 +1701,119 @@ RequestKind classifyRequest(const EffectiveConfig& cfg,
 	 a timeout, validates CGI headers, and converts the result into an HTTP
 	 response or an appropriate 4xx/5xx error.
 	*/
-// HTTP_Response handleCgiRequest(const HTTP_Request& req,
-//                                const EffectiveConfig& cfg,
-//                                const std::string& fsPath,
-//                                bool& forceClose)
-// {
-//     if (!isCgiMethodAllowed(req, cfg)) {
-//         std::cerr << "[CGI DEBUG] 405: method not allowed for CGI\n";
-//         return makeErrorResponse(405, &cfg);
-//     }
 
-//     struct stat st;
-
-//     if (stat(fsPath.c_str(), &st) != 0) {
-//         if (errno == EACCES) {
-//             std::cerr << "[CGI DEBUG] 403: stat() EACCES for " << fsPath << "\n";
-//             return makeErrorResponse(403, &cfg);
-//         }
-//         std::cerr << "[CGI DEBUG] 404: stat() failed for " << fsPath
-//                   << " errno=" << errno << "\n";
-//         return makeErrorResponse(404, &cfg);
-//     }
-
-//     if (!S_ISREG(st.st_mode)) {
-//         std::cerr << "[CGI DEBUG] 403: not a regular file: " << fsPath << std::endl;
-//         return makeErrorResponse(403, &cfg);
-//     }
-
-//     if (access(fsPath.c_str(), R_OK) != 0) {
-//         std::cerr << "[CGI DEBUG] 403: no read permission on " << fsPath << std::endl;
-//         return makeErrorResponse(403, &cfg);
-//     }
-
-//     std::string interpreter;
-//     std::vector<std::string> argv;
-
-//     if (!prepareCgiExecutor(cfg, fsPath, interpreter, argv)) {
-//         std::cerr << "[CGI DEBUG] 500: prepareCgiExecutor failed for " << fsPath
-//                   << " (cgiPass size=" << cfg.cgiPass.size() << ")\n";
-//         forceClose = true;
-//         return makeErrorResponse(500, &cfg);
-//     }
-
-//     std::cerr << "[CGI DEBUG] interpreter=" << interpreter << " script=" << fsPath << std::endl;
-
-//     std::vector<std::string> envp = buildCgiEnv(req, cfg, fsPath);
-
-//     // Debugging
-//     for (size_t i = 0; i < envp.size(); ++i) {
-//         if (envp[i].find("SCRIPT_NAME=") == 0
-//             || envp[i].find("PATH_INFO=") == 0
-//             || envp[i].find("PATH_TRANSLATED=") == 0
-//             || envp[i].find("SCRIPT_FILENAME=") == 0
-//             || envp[i].find("DOCUMENT_ROOT=") == 0
-//             || envp[i].find("REQUEST_METHOD=") == 0
-//             || envp[i].find("CONTENT_LENGTH=") == 0) {
-//             std::cerr << "[CGI ENV] " << envp[i] << std::endl;
-//         }
-//     }
-
-//     CgiPipes pipes;
-//     if (!spawnCgiProcess(argv, envp, pipes)) {
-//         std::cerr << "[CGI DEBUG] 500: spawnCgiProcess failed\n";
-//         return makeErrorResponse(500, &cfg);
-//     }
-
-//     CgiRawOutput raw = readCgiOutput(pipes, cfg.cgiTimeout, req.body);
-
-//     // Debugging
-//     std::string head = raw.data.substr(0, 400);
-//     for (size_t i = 0; i < head.size(); ++i) {
-//         if (head[i] == '\r') head[i] = 'R';
-//         else if (head[i] == '\n') head[i] = 'N';
-//     }
-//     std::cerr << "[CGI DEBUG] raw head(400)=\"" << head << "\"" << std::endl;
-
-//     if (raw.timedOut) {
-//         std::cerr << "[CGI DEBUG] 504: CGI timed out\n";
-//         return makeErrorResponse(504, &cfg);
-//     }
-
-//     std::cerr << "[CGI DEBUG] CGI exitStatus=" << raw.exitStatus
-//               << " data.size=" << raw.data.size() << std::endl;
-
-//     if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {
-//         std::cerr << "[CGI DEBUG] 500: bad exit status and no data\n";
-//         return makeErrorResponse(500, &cfg);
-//     }
-
-//     CgiParsedOutput parsedOutput = parseCgiOutput(raw.data);
-
-//     if (!parsedOutput.headersValid) {
-//         std::cerr << "[CGI DEBUG] 500: headers invalid after parseCgiOutput\n";
-//         return makeErrorResponse(500, &cfg);
-//     }
-
-//     std::map<std::string, std::string>::const_iterator itContentType =
-//         parsedOutput.headers.find("content-type");
-//     std::map<std::string, std::string>::const_iterator itRedirection =
-//         parsedOutput.headers.find("location");
-
-//     if (itContentType == parsedOutput.headers.end() &&
-//         itRedirection == parsedOutput.headers.end()) {
-//         std::cerr << "[CGI DEBUG] 500: no Content-Type or Location in CGI headers\n";
-//         return makeErrorResponse(500, &cfg);
-//     }
-
-//     HTTP_Response res = buildCgiHttpResponse(parsedOutput);
-
-//     if (!req.keep_alive) {
-//         res.close = true;
-//     }
-
-//     std::cerr << "[CGI DEBUG] final http status=" << res.status
-//               << " close=" << res.close
-//               << " body.size=" << res.body.size()
-//               << std::endl;
-
-//     return res;
-// }
-
-HTTP_Response handleCgiRequest(const HTTP_Request& req,
-                               const EffectiveConfig& cfg,
-                               const std::string& fsPath,
-                               bool& forceClose)
-{
-    if (!isCgiMethodAllowed(req, cfg)) {
-        std::cerr << "[CGI DEBUG] 405: method not allowed for CGI\n";
-        return makeErrorResponse(405, &cfg);
-    }
-
-    // struct stat st;
-
-    // if (stat(fsPath.c_str(), &st) != 0) {
-    //     if (errno == EACCES) {
-    //         std::cerr << "[CGI DEBUG] 403: stat() EACCES for " << fsPath << "\n";
-    //         return makeErrorResponse(403, &cfg);
-    //     }
-    //     std::cerr << "[CGI DEBUG] 404: stat() failed for " << fsPath
-    //               << " errno=" << errno << "\n";
-    //     return makeErrorResponse(404, &cfg);
-    // }
-
-    // if (!S_ISREG(st.st_mode)) {
-    //     std::cerr << "[CGI DEBUG] 403: not a regular file: " << fsPath << std::endl;
-    //     return makeErrorResponse(403, &cfg);
-    // }
-
-    // if (access(fsPath.c_str(), R_OK) != 0) {
-    //     std::cerr << "[CGI DEBUG] 403: no read permission on " << fsPath << std::endl;
-    //     return makeErrorResponse(403, &cfg);
-    // }
-
-    std::string interpreter;
-    std::vector<std::string> argv;
-
-    if (!prepareCgiExecutor(cfg, fsPath, interpreter, argv)) {
-        std::cerr << "[CGI DEBUG] 500: prepareCgiExecutor failed for " << fsPath
-                  << " (cgiPass size=" << cfg.cgiPass.size() << ")\n";
-        forceClose = true;
-        return makeErrorResponse(500, &cfg);
-    }
-
-    std::cerr << "[CGI DEBUG] interpreter=" << interpreter << " script=" << fsPath << std::endl;
-
-    std::vector<std::string> envp = buildCgiEnv(req, cfg, fsPath);
-
-    // Debugging
-    for (size_t i = 0; i < envp.size(); ++i) {
-        if (envp[i].find("SCRIPT_NAME=") == 0
-            || envp[i].find("PATH_INFO=") == 0
-            || envp[i].find("PATH_TRANSLATED=") == 0
-            || envp[i].find("SCRIPT_FILENAME=") == 0
-            || envp[i].find("DOCUMENT_ROOT=") == 0
-            || envp[i].find("REQUEST_METHOD=") == 0
-            || envp[i].find("CONTENT_LENGTH=") == 0) {
-            std::cerr << "[CGI ENV] " << envp[i] << std::endl;
-        }
-    }
-
-    CgiPipes pipes;
-    if (!spawnCgiProcess(argv, envp, pipes)) {
-        std::cerr << "[CGI DEBUG] 500: spawnCgiProcess failed\n";
-        return makeErrorResponse(500, &cfg);
-    }
-
-    CgiRawOutput raw = readCgiOutput(pipes, cfg.cgiTimeout, req.body);
-
-    // Debugging
-    std::string head = raw.data.substr(0, 400);
-    for (size_t i = 0; i < head.size(); ++i) {
-        if (head[i] == '\r') head[i] = 'R';
-        else if (head[i] == '\n') head[i] = 'N';
-    }
-    std::cerr << "[CGI DEBUG] raw head(400)=\"" << head << "\"" << std::endl;
-
-    if (raw.timedOut) {
-        std::cerr << "[CGI DEBUG] 504: CGI timed out\n";
-        return makeErrorResponse(504, &cfg);
-    }
-
-    std::cerr << "[CGI DEBUG] CGI exitStatus=" << raw.exitStatus
-              << " data.size=" << raw.data.size() << std::endl;
-
-    // if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {
-    //     std::cerr << "[CGI DEBUG] 500: bad exit status and no data\n";
-    //     return makeErrorResponse(500, &cfg);
-    // }
-
-	if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {
-
-		// Se o CGI não produziu headers/body, tenta mapear o erro de forma sensata
-		if (access(fsPath.c_str(), F_OK) != 0) {
-			if (errno == ENOENT)
-				return makeErrorResponse(404, &cfg);
-			if (errno == EACCES)
-				return makeErrorResponse(403, &cfg);
+	HTTP_Response handleCgiRequest(const HTTP_Request& req,
+								const EffectiveConfig& cfg,
+								const std::string& fsPath,
+								bool& forceClose)
+	{
+		if (!isCgiMethodAllowed(req, cfg)) {
+			std::cerr << "[CGI DEBUG] 405: method not allowed for CGI\n";
+			return makeErrorResponse(405, &cfg);
 		}
 
-		return makeErrorResponse(500, &cfg);
+
+		std::string interpreter;
+		std::vector<std::string> argv;
+
+		if (!prepareCgiExecutor(cfg, fsPath, interpreter, argv)) {
+			std::cerr << "[CGI DEBUG] 500: prepareCgiExecutor failed for " << fsPath
+					<< " (cgiPass size=" << cfg.cgiPass.size() << ")\n";
+			forceClose = true;
+			return makeErrorResponse(500, &cfg);
+		}
+
+		std::cerr << "[CGI DEBUG] interpreter=" << interpreter << " script=" << fsPath << std::endl;
+
+		std::vector<std::string> envp = buildCgiEnv(req, cfg, fsPath);
+
+		// Debugging
+		for (size_t i = 0; i < envp.size(); ++i) {
+			if (envp[i].find("SCRIPT_NAME=") == 0
+				|| envp[i].find("PATH_INFO=") == 0
+				|| envp[i].find("PATH_TRANSLATED=") == 0
+				|| envp[i].find("SCRIPT_FILENAME=") == 0
+				|| envp[i].find("DOCUMENT_ROOT=") == 0
+				|| envp[i].find("REQUEST_METHOD=") == 0
+				|| envp[i].find("CONTENT_LENGTH=") == 0) {
+				std::cerr << "[CGI ENV] " << envp[i] << std::endl;
+			}
+		}
+
+		CgiPipes pipes;
+		if (!spawnCgiProcess(argv, envp, pipes)) {
+			std::cerr << "[CGI DEBUG] 500: spawnCgiProcess failed\n";
+			return makeErrorResponse(500, &cfg);
+		}
+
+		CgiRawOutput raw = readCgiOutput(pipes, cfg.cgiTimeout, req.body);
+
+		// Debugging
+		std::string head = raw.data.substr(0, 400);
+		for (size_t i = 0; i < head.size(); ++i) {
+			if (head[i] == '\r') head[i] = 'R';
+			else if (head[i] == '\n') head[i] = 'N';
+		}
+		std::cerr << "[CGI DEBUG] raw head(400)=\"" << head << "\"" << std::endl;
+
+		if (raw.timedOut) {
+			std::cerr << "[CGI DEBUG] 504: CGI timed out\n";
+			return makeErrorResponse(504, &cfg);
+		}
+
+		std::cerr << "[CGI DEBUG] CGI exitStatus=" << raw.exitStatus
+				<< " data.size=" << raw.data.size() << std::endl;
+
+		// if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {
+		//     std::cerr << "[CGI DEBUG] 500: bad exit status and no data\n";
+		//     return makeErrorResponse(500, &cfg);
+		// }
+
+		if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {
+
+			// Se o CGI não produziu headers/body, tenta mapear o erro de forma sensata
+			if (access(fsPath.c_str(), F_OK) != 0) {
+				if (errno == ENOENT)
+					return makeErrorResponse(404, &cfg);
+				if (errno == EACCES)
+					return makeErrorResponse(403, &cfg);
+			}
+
+			return makeErrorResponse(500, &cfg);
+		}
+
+
+		CgiParsedOutput parsedOutput = parseCgiOutput(raw.data);
+
+		if (!parsedOutput.headersValid) {
+			std::cerr << "[CGI DEBUG] 500: headers invalid after parseCgiOutput\n";
+			return makeErrorResponse(500, &cfg);
+		}
+
+		std::map<std::string, std::string>::const_iterator itContentType =
+			parsedOutput.headers.find("content-type");
+		std::map<std::string, std::string>::const_iterator itRedirection =
+			parsedOutput.headers.find("location");
+
+		if (itContentType == parsedOutput.headers.end() &&
+			itRedirection == parsedOutput.headers.end()) {
+			std::cerr << "[CGI DEBUG] 500: no Content-Type or Location in CGI headers\n";
+			return makeErrorResponse(500, &cfg);
+		}
+
+		HTTP_Response res = buildCgiHttpResponse(parsedOutput);
+
+		if (!req.keep_alive) {
+			res.close = true;
+		}
+
+		std::cerr << "[CGI DEBUG] final http status=" << res.status
+				<< " close=" << res.close
+				<< " body.size=" << res.body.size()
+				<< std::endl;
+
+		return res;
 	}
-
-
-    CgiParsedOutput parsedOutput = parseCgiOutput(raw.data);
-
-    if (!parsedOutput.headersValid) {
-        std::cerr << "[CGI DEBUG] 500: headers invalid after parseCgiOutput\n";
-        return makeErrorResponse(500, &cfg);
-    }
-
-    std::map<std::string, std::string>::const_iterator itContentType =
-        parsedOutput.headers.find("content-type");
-    std::map<std::string, std::string>::const_iterator itRedirection =
-        parsedOutput.headers.find("location");
-
-    if (itContentType == parsedOutput.headers.end() &&
-        itRedirection == parsedOutput.headers.end()) {
-        std::cerr << "[CGI DEBUG] 500: no Content-Type or Location in CGI headers\n";
-        return makeErrorResponse(500, &cfg);
-    }
-
-    HTTP_Response res = buildCgiHttpResponse(parsedOutput);
-
-    if (!req.keep_alive) {
-        res.close = true;
-    }
-
-    std::cerr << "[CGI DEBUG] final http status=" << res.status
-              << " close=" << res.close
-              << " body.size=" << res.body.size()
-              << std::endl;
-
-    return res;
-}
 
 
 
@@ -2339,30 +1964,61 @@ HTTP_Response handleCgiRequest(const HTTP_Request& req,
 	 Handles a simple upload request: validates the filename and upload directory,
 	 checks for conflicts, writes the file, and returns 201 on success.
 	*/
-	HTTP_Response handleUploadRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
+	// HTTP_Response handleUploadRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 
-		if (isMultipart(req))											// Allow only simple uploads (reject multipart/form-data - requires boundary parsing)
-        	return makeErrorResponse(501, &cfg);
+	// 	if (isMultipart(req))											// Allow only simple uploads (reject multipart/form-data - requires boundary parsing)
+    //     	return makeErrorResponse(501, &cfg);
 
-		std::string filename = extractFilename(fsPath);
-		if (filename.empty() || !isSanitizedFilename(filename))			// Filename validation
-			return makeErrorResponse(400, &cfg);
+	// 	std::string filename = extractFilename(fsPath);
+	// 	if (filename.empty() || !isSanitizedFilename(filename))			// Filename validation
+	// 		return makeErrorResponse(400, &cfg);
 			
-		std::string dest = joinPath(cfg.uploadStore, filename);
+	// 	std::string dest = joinPath(cfg.uploadStore, filename);
 
-		if (!isValidUploadDirectory(cfg.uploadStore))
-			return makeErrorResponse(500, &cfg);
+	// 	if (!isValidUploadDirectory(cfg.uploadStore))
+	// 		return makeErrorResponse(500, &cfg);
 
-		int status = getExistingTargetStatus(dest);
-		if (status != 0)
-			return makeErrorResponse(status, &cfg);
+	// 	int status = getExistingTargetStatus(dest);
+	// 	if (status != 0)
+	// 		return makeErrorResponse(status, &cfg);
 
-		int writeStatus = writeUploadedFile(dest, req.body);
-		if (writeStatus != 0)
-			return makeErrorResponse(writeStatus, &cfg);
+	// 	int writeStatus = writeUploadedFile(dest, req.body);
+	// 	if (writeStatus != 0)
+	// 		return makeErrorResponse(writeStatus, &cfg);
 
-		return makeResponse201(req.target);
-	}
+	// 	return makeResponse201(req.target);
+	// }
+
+	HTTP_Response handleUploadRequest(const HTTP_Request& req,
+                                  const EffectiveConfig& cfg,
+                                  const std::string& fsPath)
+{
+    (void)fsPath; // já não precisamos disto para extrair filename
+
+    if (isMultipart(req))                                           // Allow only simple uploads (reject multipart/form-data - requires boundary parsing)
+        return makeErrorResponse(501, &cfg);
+
+    // IMPORTANTE: o filename deve vir do URI (req.path / path), não do fsPath já mapeado
+    std::string filename = extractFilename(req.path);
+    if (filename.empty() || !isSanitizedFilename(filename))         // Filename validation
+        return makeErrorResponse(400, &cfg);
+
+    std::string dest = joinPath(cfg.uploadStore, filename);
+
+    if (!isValidUploadDirectory(cfg.uploadStore))
+        return makeErrorResponse(500, &cfg);
+
+    int status = getExistingTargetStatus(dest);
+    if (status != 0)
+        return makeErrorResponse(status, &cfg);
+
+    int writeStatus = writeUploadedFile(dest, req.body);
+    if (writeStatus != 0)
+        return makeErrorResponse(writeStatus, &cfg);
+
+    return makeResponse201(req.target);
+}
+
 
 
 	// -----------------------------------------
@@ -2393,29 +2049,6 @@ HTTP_Response handleCgiRequest(const HTTP_Request& req,
 		return path;
 	}
 
-
-	// /*
-	//  Resolves the configured error_page URI into a filesystem path by normalizing
-	//  its leading './' or '/' and joining it with the root directory.
-	// */
-	// std::string findErrorPagePath(const EffectiveConfig& cfg, int status) {
-		
-	// 	std::map<int, std::string>::const_iterator it = cfg.errorPages.find(status);
-
-	// 	if (it == cfg.errorPages.end())									// No custom error page for this status
-	// 		return "";
-		
-	// 	std::string path = it->second; 
-
-	// 	if (path.size() >= 2 && path[0] == '.' && path[1] == '/')
-	// 		path.erase(0, 2);											// Strip leading "./"
-	// 	else if (!path.empty() && path[0] == '/')
-	// 		path.erase(0, 1);											// Strip leading "/"
-
-	// 	path = joinPath(cfg.root, path);
-
-	// 	return path;
-	// }
 
 	/*
 	 Returns the standard HTTP reason phrase for a given status code, or
@@ -2530,50 +2163,6 @@ HTTP_Response handleCgiRequest(const HTTP_Request& req,
 		return res;
 	}
 
-	
-
-	// ORIGINAL VERSION //
-	
-	// HTTP_Response makeErrorResponse(int status, const EffectiveConfig* cfg) {
-		
-	// 	std::string	body;
-	// 	const std::string reason = getReasonPhrase(status);
-		
-	// 	if (cfg) {																// Try loading a custom error_page
-	// 		const std::string errorPagePath = findErrorPagePath(*cfg, status);
-	// 		if (!errorPagePath.empty()) {
-	// 			std::ifstream file(errorPagePath.c_str(), std::ios::binary);
-	// 			if (file) {
-	// 				std::ostringstream oss;
-	// 				oss << file.rdbuf();
-	// 				body = oss.str();
-	// 			}
-	// 		}
-	// 	}
-		
-	// 	if (body.empty()) {														// Otherwise, generate default HTML (if no error_page or if reading fails)
-	// 		std::ostringstream oss;
-	// 		oss	<< "<!DOCTYPE html>\n"
-	// 		<< "<html><head><meta charset=\"utf-8\">"
-	// 		<< "<title>" << status << ' ' << reason << "</title>"
-	// 		<< "</head><body>"
-	// 		<< "<h1>" << status << ' ' << reason << "</h1>"
-	// 		<< "</body></html>\n";
-	// 		body = oss.str();
-	// 	}
-		
-	// 	HTTP_Response res;
-
-	// 	res.status = status;													// Fill in the response fields
-	// 	res.reason = reason;
-	// 	res.body = body;
-	// 	res.headers.clear();
-	// 	res.headers["Content-Type"] = "text/html";
-	// 	res.headers["Content-Length"] = toString(body.size());
-
-	// 	return res;
-	// }
-
 
 	// ---------------------------------
 	// --- 14. Redirection responses ---
@@ -2651,163 +2240,21 @@ HTTP_Response handleCgiRequest(const HTTP_Request& req,
 	 or close it based on the client's keep-alive preference.
 	*/
 	void applyConnectionHeader(bool keepAlive, HTTP_Response& res) {
-		
+
+		// Remove qualquer variante anterior (evita duplicados no serializer)
+		res.headers.erase("Connection");
+		res.headers.erase("connection");
+
 		if (keepAlive) {
 			res.close = false;
-			res.headers["Connection"] = "keep-alive";
+			res.headers["connection"] = "keep-alive";
 		} else {
 			res.close = true;
-			res.headers["Connection"] = "close";
+			res.headers["connection"] = "close";
 		}
 	}
+
 }
-
-
-// HTTP_Response handleRequest(const HTTP_Request& req,
-//                             const std::vector<Server>& servers) {
-
-//     bool keepAlive = req.keep_alive;
-
-//     // 0) Safeguard
-//     if (servers.empty()) {
-//         HTTP_Response res = makeErrorResponse(500, NULL);
-//         applyConnectionHeader(keepAlive, res);
-//         return res;
-//     }
-
-//     // 1) Parse target
-//     std::string path;
-//     std::string query;
-//     if (!parseTarget(req, path, query)) {
-//         HTTP_Response res = makeErrorResponse(400, NULL);
-//         applyConnectionHeader(keepAlive, res);
-//         return res;
-//     }
-
-//     // 2) Select server + location
-//     const Server&   srv = selectServer(servers, req);
-//     const Location* loc = matchLocation(srv, path);
-
-//     // 3) Build effective config
-//     EffectiveConfig cfg;
-//     try {
-//         cfg = buildEffectiveConfig(srv, loc);
-//     } catch (...) {
-//         HTTP_Response res = makeErrorResponse(500, NULL);
-//         applyConnectionHeader(keepAlive, res);
-//         return res;
-//     }
-
-//     // 4) Redirections
-//     if (cfg.redirectStatus != 0) {
-//         HTTP_Response res =
-//             makeRedirectResponse(cfg.redirectStatus, cfg.redirectTarget);
-//         applyConnectionHeader(keepAlive, res);
-//         return res;
-//     }
-
-//     // 5.1) Method implemented?
-//     if (req.method != "GET" &&
-//         req.method != "POST" &&
-//         req.method != "DELETE" &&
-//         req.method != "HEAD") {
-
-//         HTTP_Response res = makeErrorResponse(501, &cfg);
-//         applyConnectionHeader(keepAlive, res);
-//         return res;
-//     }
-
-//     // 5.2) Method allowed?
-//     if (!isMethodAllowed(cfg, req.method)) {
-//         HTTP_Response res = make405(cfg);
-//         applyConnectionHeader(keepAlive, res);
-//         return res;
-//     }
-
-//     // 6) Map logical path → filesystem
-//     std::string fsPath = makeFilesystemPath(cfg, path);
-//     if (fsPath.empty()) {
-//         HTTP_Response res = makeErrorResponse(500, &cfg);
-//         applyConnectionHeader(keepAlive, res);
-//         return res;
-//     }
-
-//     // 7) Normalize / anti-traversal
-//     if (!normalizePath(fsPath, cfg.root)) {
-//         HTTP_Response res = makeErrorResponse(403, &cfg);
-//         applyConnectionHeader(keepAlive, res);
-//         return res;
-//     }
-
-//     // 8) Classify request (ANTES de validar body)
-//     RequestKind kind = classifyRequest(cfg, path, fsPath, req);
-
-//     // 🔥 9) PRIORIDADE: CGI inexistente → 404
-//     if (kind == RK_CGI) {
-//         struct stat st;
-//         if (stat(fsPath.c_str(), &st) != 0) {
-//             // CGI script não existe → 404 SEM olhar ao body
-//             keepAlive = false;
-//             HTTP_Response res = makeErrorResponse(404, &cfg);
-//             applyConnectionHeader(keepAlive, res);
-//             return res;
-//         }
-//     }
-
-//     // 10) AGORA sim: validar body (413, etc.)
-//     int  status      = 0;
-//     bool forceClose  = false;
-//     if (!checkRequestBodyAllowed(cfg, req, status, forceClose)) {
-//         if (forceClose)
-//             keepAlive = false;
-//         HTTP_Response res = makeErrorResponse(status, &cfg);
-//         applyConnectionHeader(keepAlive, res);
-//         return res;
-//     }
-
-//     // 11) Dispatch final
-//     HTTP_Response res;
-//     switch (kind) {
-
-//         case RK_UPLOAD:
-//             res = handleUploadRequest(req, cfg, fsPath);
-//             break;
-
-//         case RK_CGI: {
-//             bool cgiForceClose = false;
-//             res = handleCgiRequest(req, cfg, fsPath, cgiForceClose);
-//             if (cgiForceClose)
-//                 keepAlive = false;
-//             break;
-//         }
-
-//         case RK_DIRECTORY:
-//             res = handleDirectoryRequest(req, cfg, fsPath, path);
-//             break;
-
-//         case RK_STATIC_FILE:
-//             if (req.method == "DELETE")
-//                 res = handleDeleteRequest(cfg, fsPath);
-//             else
-//                 res = handleStaticFile(req, cfg, fsPath);
-//             break;
-
-//         case RK_FORBIDDEN:
-//             res = makeErrorResponse(403, &cfg);
-//             break;
-
-//         case RK_NOT_FOUND:
-//         default:
-//             res = makeErrorResponse(404, &cfg);
-//             break;
-//     }
-
-//     // 12) Connection header
-//     applyConnectionHeader(keepAlive, res);
-//     return res;
-// }
-
-
 
 /*
  Main application dispatcher: parses the request target, selects the server
@@ -2820,7 +2267,6 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
     unsigned long long reqId = nextReqId();
     bool keepAlive = req.keep_alive;
 
-    // Carimbo MUITO cedo (antes de qualquer validação falhar)
     std::cerr << "[REQ-IN] t=" << nowMs()
               << " id=" << reqId
               << " " << req.method
@@ -2828,7 +2274,6 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
               << " ka=" << (keepAlive ? "1" : "0")
               << "\n";
 
-    // Helper local: aplica header Connection e carimba saída (em todos os returns)
     struct ReqLog {
         static HTTP_Response out(unsigned long long id, bool ka, const char* tag, HTTP_Response res) {
             std::cerr << "[" << tag << "] t=" << nowMs()
@@ -2841,14 +2286,12 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
         }
     };
 
-    // 0) Minimal safeguard: no servers configured -> 500
     if (servers.empty()) {
         HTTP_Response res = makeErrorResponse(500, NULL);
         applyConnectionHeader(keepAlive, res);
         return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
     }
 
-    // 1) Parse target -> extract path + query
     std::string path;
     std::string query;
     if (!parseTarget(req, path, query)) {
@@ -2857,11 +2300,9 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
         return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
     }
 
-    // 2) Select the Server and the matching Location
     const Server& srv = selectServer(servers, req);
     const Location* loc = matchLocation(srv, path);
 
-    // 3) Build effective configuration (merge Server + Location)
     EffectiveConfig cfg;
     try {
         cfg = buildEffectiveConfig(srv, loc);
@@ -2871,28 +2312,24 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
         return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
     }
 
-    // 4) Handle configured redirections (return directive)
     if (cfg.redirectStatus != 0) {
         HTTP_Response res = makeRedirectResponse(cfg.redirectStatus, cfg.redirectTarget);
         applyConnectionHeader(keepAlive, res);
         return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
     }
 
-    // 5.1) Check if method is implemented at all
     if (req.method != "GET" && req.method != "POST" && req.method != "DELETE" && req.method != "HEAD") {
         HTTP_Response res = makeErrorResponse(501, &cfg);
         applyConnectionHeader(keepAlive, res);
         return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
     }
 
-    // 5.2) Check if the method is allowed (405)
     if (!isMethodAllowed(cfg, req.method)) {
         HTTP_Response res = make405(cfg);
         applyConnectionHeader(keepAlive, res);
         return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
     }
 
-    // 6) Validate body constraints (size, etc.)
     int  status = 0;
     bool forceClose = false;
     if (!checkRequestBodyAllowed(cfg, req, status, forceClose)) {
@@ -2903,26 +2340,21 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
         return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
     }
 
-    // 7) Map logical path -> filesystem
     std::string fsPath = makeFilesystemPath(cfg, path);
-
-    // Log do mapping (mesmo que fsPath venha vazio)
     logReqLine("REQ-MAP", reqId, req, path, fsPath, -1);
 
-    if (fsPath.empty()) { // treat as internal configuration error
+    if (fsPath.empty()) {
         HTTP_Response res = makeErrorResponse(500, &cfg);
         applyConnectionHeader(keepAlive, res);
         return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
     }
 
-    // 8) Normalize and ensure it is within the root (anti-traversal)
     if (!normalizePath(fsPath, cfg.root)) {
         HTTP_Response res = makeErrorResponse(403, &cfg);
         applyConnectionHeader(keepAlive, res);
         return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
     }
 
-    // 9) Classify the request (static file, directory, CGI, upload, etc.)
     RequestKind kind = classifyRequest(cfg, path, fsPath, req);
 
     std::cerr << "[REQ-KIND] t=" << nowMs()
@@ -2981,10 +2413,28 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
             break;
     }
 
-    // 10) Apply Connection / keep-alive header based on the request
+    // ---------- FIX CRÍTICO ----------
+    // Se algum handler marcou close, isso tem prioridade.
+    if (res.close)
+        keepAlive = false;
+
+    // Se algum handler já definiu explicitamente "connection: close", respeitar.
+    {
+        std::map<std::string, std::string>::const_iterator itH;
+        itH = res.headers.find("connection");
+        if (itH == res.headers.end())
+            itH = res.headers.find("Connection");
+
+        if (itH != res.headers.end()) {
+            std::string v = toLowerCopy(itH->second);
+            if (v.find("close") != std::string::npos)
+                keepAlive = false;
+        }
+    }
+    // --------------------------------
+
     applyConnectionHeader(keepAlive, res);
 
-    // Saída final (sempre)
     std::cerr << "[REQ-OUT] t=" << nowMs()
               << " id=" << reqId
               << " kind=" << (int)kind

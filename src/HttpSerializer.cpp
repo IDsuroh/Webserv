@@ -82,42 +82,117 @@ namespace http  {
         return out;
     }
 
+    // std::string serialize_response(const HTTP_Response& res, const std::string& version) {
+    //     std::ostringstream oss;
+    //     oss << version << ' ' << res.status << ' ' << res.reason << "\r\n";
+
+    //     bool hasCL = false;
+    //     bool hasServer = false;
+    //     bool hasDate = false;
+    //     bool hasConnection = false;
+
+    //     for (std::map<std::string, std::string>::const_iterator it = res.headers.begin(); it != res.headers.end(); ++it) {
+    //         const std::string lower = toLowerCopy(it->first);
+    //         if (lower == "content-length")
+    //             hasCL = true;
+    //         else if (lower == "server")
+    //             hasServer = true;
+    //         else if (lower == "date")
+    //             hasDate = true;
+    //         else if (lower == "connection")
+    //             hasConnection = true;
+
+    //         oss << it->first << ": " << it->second << "\r\n";
+    //     }
+
+    //     // Inject defaults only if missing
+    //     if (!hasServer)
+    //         oss << "Server: webserv\r\n";
+    //     if (!hasDate)
+    //         oss << "Date: " << http_date() << "\r\n";
+    //     if (!hasConnection)
+    //         oss << "Connection: " << (res.close ? "close" : "keep-alive") << "\r\n";
+    //     if (!hasCL)
+    //         oss << "Content-Length: " << res.body.size() << "\r\n";
+
+    //     oss << "\r\n";
+    //     oss << res.body;
+    //     return oss.str();
+    // }
+
     std::string serialize_response(const HTTP_Response& res, const std::string& version) {
-        std::ostringstream oss;
-        oss << version << ' ' << res.status << ' ' << res.reason << "\r\n";
+    std::ostringstream oss;
+    oss << version << ' ' << res.status << ' ' << res.reason << "\r\n";
 
-        bool hasCL = false;
-        bool hasServer = false;
-        bool hasDate = false;
-        bool hasConnection = false;
+    bool hasCL = false;
+    bool hasServer = false;
+    bool hasDate = false;
 
-        for (std::map<std::string, std::string>::const_iterator it = res.headers.begin(); it != res.headers.end(); ++it) {
-            const std::string lower = toLowerCopy(it->first);
-            if (lower == "content-length")
-                hasCL = true;
-            else if (lower == "server")
-                hasServer = true;
-            else if (lower == "date")
-                hasDate = true;
-            else if (lower == "connection")
-                hasConnection = true;
+    bool hasConnection = false;
+    bool hasKeepAlive = false;
 
+    // Guardar o valor de Connection caso venha nos headers (qualquer casing)
+    std::string connectionValue;
+
+    for (std::map<std::string, std::string>::const_iterator it = res.headers.begin();
+         it != res.headers.end(); ++it)
+    {
+        const std::string lower = toLowerCopy(it->first);
+
+        if (lower == "content-length") {
+            hasCL = true;
             oss << it->first << ": " << it->second << "\r\n";
         }
-
-        // Inject defaults only if missing
-        if (!hasServer)
-            oss << "Server: webserv\r\n";
-        if (!hasDate)
-            oss << "Date: " << http_date() << "\r\n";
-        if (!hasConnection)
-            oss << "Connection: " << (res.close ? "close" : "keep-alive") << "\r\n";
-        if (!hasCL)
-            oss << "Content-Length: " << res.body.size() << "\r\n";
-
-        oss << "\r\n";
-        oss << res.body;
-        return oss.str();
+        else if (lower == "server") {
+            hasServer = true;
+            oss << it->first << ": " << it->second << "\r\n";
+        }
+        else if (lower == "date") {
+            hasDate = true;
+            oss << it->first << ": " << it->second << "\r\n";
+        }
+        else if (lower == "connection") {
+            // NÃO imprimir já — vamos emitir uma única vez no fim, normalizado
+            hasConnection = true;
+            connectionValue = it->second; // fica o último que aparecer (se houver duplicados)
+        }
+        else if (lower == "keep-alive") {
+            hasKeepAlive = true;
+            oss << it->first << ": " << it->second << "\r\n";
+        }
+        else {
+            // header "normal"
+            oss << it->first << ": " << it->second << "\r\n";
+        }
     }
+
+    // Inject defaults only if missing
+    if (!hasServer)
+        oss << "Server: webserv\r\n";
+    if (!hasDate)
+        oss << "Date: " << http_date() << "\r\n";
+
+    // Connection: emitir exactamente UMA vez
+    if (hasConnection) {
+        // Normaliza casing na linha emitida (mantém valor que veio da app)
+        oss << "Connection: " << connectionValue << "\r\n";
+    } else {
+        oss << "Connection: " << (res.close ? "close" : "keep-alive") << "\r\n";
+    }
+
+    // Se for keep-alive e não houver Keep-Alive definido, injectar (coerente com build_error_response)
+    // Nota: só injectamos quando a ligação deve ficar aberta.
+    // A regra aqui usa res.close, porque é o “source of truth” do core/app.
+    if (!res.close && !hasKeepAlive)
+        oss << "Keep-Alive: timeout=5\r\n";
+
+    if (!hasCL)
+        oss << "Content-Length: " << res.body.size() << "\r\n";
+
+    oss << "\r\n";
+    oss << res.body;
+    return oss.str();
+}
+
 
 }
