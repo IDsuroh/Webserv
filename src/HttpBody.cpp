@@ -190,14 +190,18 @@ namespace http  {
         }
     }
 
-    BodyResult  consume_body_content_length_drain(Connection& connection, std::size_t max_body, int& status, std::string& reason) {
 
+    BodyResult consume_body_content_length_drain(Connection& connection,
+                                                            std::size_t /*max_body*/,
+                                                            int& status,
+                                                            std::string& reason)
+    {
         HTTP_Request& request = connection.request;
 
-        // if CL itself exceeds limit, reject immediately
-        if (request.content_length > max_body)  {
-            return body_fail(413, "Payload Too Large", status, reason);
-        }
+        // Em DRAIN, já decidiste a resposta (ex: 413). Aqui só descartas bytes.
+        // Não reapliques max_body, senão podes bloquear o drain e causar RST.
+        status = 0;
+        reason.clear();
 
         const std::size_t have = request.body_received;
         if (have >= request.content_length)
@@ -211,19 +215,26 @@ namespace http  {
         std::size_t avail = connection.readBuffer.size();
         std::size_t take = (avail < need) ? avail : need;
 
-        if (have + take > max_body)
-            return body_fail(413, "Payload Too Large", status, reason);
-
-        // DRAIN: do NOT append to request.body
+        // DRAIN: não guardar body
         request.body_received += take;
         connection.readBuffer.erase(0, take);
 
         return (request.body_received == request.content_length) ? BODY_COMPLETE : BODY_INCOMPLETE;
     }
 
-    BodyResult  consume_body_chunked_drain(Connection& connection, std::size_t max_body, int& status, std::string& reason) {
 
+
+    BodyResult consume_body_chunked_drain(Connection& connection,
+                                                    std::size_t /*max_body*/,
+                                                    int& status,
+                                                    std::string& reason)
+    {
         HTTP_Request& request = connection.request;
+
+        // Em DRAIN, já decidiste a resposta (ex: 413). Aqui só descartas bytes.
+        // Não reapliques max_body, senão paras antes do fim e levas FIN→RST.
+        status = 0;
+        reason.clear();
 
         static const std::size_t MAX_LINE = 16 * 1024;
 
@@ -233,23 +244,29 @@ namespace http  {
                 case CS_SIZE: {
                     std::size_t position = connection.readBuffer.find("\r\n");
                     if (position == std::string::npos) {
-                        if (connection.readBuffer.size() > MAX_LINE)
-                            return body_fail(413, "Payload Too Large", status, reason);
+                        // Proteção anti-DoS de linha interminável (não é "payload too large" aqui)
+                        if (connection.readBuffer.size() > MAX_LINE) {
+                            // descarta para não crescer sem limite; mantém a ligação a drenar
+                            connection.readBuffer.clear();
+                        }
                         return BODY_INCOMPLETE;
                     }
-                    if (position > MAX_LINE)
-                        return body_fail(413, "Payload Too Large", status, reason);
+                    if (position > MAX_LINE) {
+                        // idem: descarta e continua a drenar
+                        connection.readBuffer.erase(0, position + 2);
+                        return BODY_INCOMPLETE;
+                    }
 
                     std::string line = connection.readBuffer.substr(0, position);
                     connection.readBuffer.erase(0, position + 2);
 
                     std::size_t size = 0;
-                    if (!parse_hex_size(line, size))
-                        return body_fail(400, "Bad Request", status, reason);
-
-                    // enforce max body
-                    if (size > 0 && size > max_body - request.body_received)
-                        return body_fail(413, "Payload Too Large", status, reason);
+                    if (!parse_hex_size(line, size)) {
+                        // Em DRAIN, framing inválido: não substituis a resposta.
+                        // Faz discard best-effort: esvazia o que tens e continua até EOF.
+                        connection.readBuffer.clear();
+                        return BODY_INCOMPLETE;
+                    }
 
                     request.chunk_bytes_left = size;
                     request.chunk_state = (size == 0) ? CS_TRAILERS : CS_DATA;
@@ -263,13 +280,9 @@ namespace http  {
                     std::size_t avail = connection.readBuffer.size();
                     std::size_t take = (avail < request.chunk_bytes_left) ? avail : request.chunk_bytes_left;
 
-                    if (take > max_body - request.body_received)
-                        return body_fail(413, "Payload Too Large", status, reason);
-
-                    // DRAIN: do NOT append to request.body
+                    // DRAIN: não guardar body
                     request.body_received += take;
                     request.chunk_bytes_left -= take;
-
                     connection.readBuffer.erase(0, take);
 
                     if (request.chunk_bytes_left == 0)
@@ -280,8 +293,12 @@ namespace http  {
                 case CS_DATA_CRLF: {
                     if (connection.readBuffer.size() < 2)
                         return BODY_INCOMPLETE;
-                    if (!(connection.readBuffer[0] == '\r' && connection.readBuffer[1] == '\n'))
-                        return body_fail(400, "Bad Request", status, reason);
+
+                    if (!(connection.readBuffer[0] == '\r' && connection.readBuffer[1] == '\n')) {
+                        // framing inválido: discard best-effort
+                        connection.readBuffer.clear();
+                        return BODY_INCOMPLETE;
+                    }
 
                     connection.readBuffer.erase(0, 2);
                     request.chunk_state = CS_SIZE;
@@ -289,10 +306,21 @@ namespace http  {
                 }
 
                 case CS_TRAILERS: {
-                    BodyResult trail = consume_all_trailers(connection.readBuffer, MAX_LINE, status, reason);
+                    // Reusa o teu parser de trailers, mas em drain não queremos "413"
+                    // Se exceder MAX_LINE, ele devolve BODY_ERROR com 413 no teu código.
+                    // Para não fechar cedo, tratamos BODY_ERROR como "continua a drenar".
+                    int st2 = 0;
+                    std::string rs2;
+                    BodyResult trail = consume_all_trailers(connection.readBuffer, MAX_LINE, st2, rs2);
 
-                    if (trail != BODY_COMPLETE)
-                        return trail; // BODY_INCOMPLETE or BODY_ERROR
+                    if (trail == BODY_INCOMPLETE)
+                        return BODY_INCOMPLETE;
+
+                    if (trail == BODY_ERROR) {
+                        // Não fecha já: descarta buffer e continua até EOF.
+                        connection.readBuffer.clear();
+                        return BODY_INCOMPLETE;
+                    }
 
                     request.chunk_state = CS_DONE;
                     return BODY_COMPLETE;
@@ -303,6 +331,7 @@ namespace http  {
             }
         }
     }
+
 
 
 

@@ -175,202 +175,10 @@ namespace   {
     * - Set keep_alive, content_length, transfer_encoding, body_reader_state.
     */
 
-    //
-    // GPT SAID THAT THIS NEXT VERSION WAS OK BUT RECOMENDED OTHER VERSION MORE BULLETPROOF
-    //
 
-    // bool    parseHeadersBlock(const std::string& block, HTTP_Request& request, int& outStatus, std::string& outReason)  {
-        
-    //     // Reset derived fields for this request -> for keep-alive reuse
-    //     request.keep_alive = (request.version == "HTTP/1.1");
-    //     request.expectContinue = false;
-    //     request.host.clear();
-    //     request.transfer_encoding.clear();
-    //     request.content_length = 0;
-    //     request.body_reader_state = BR_NONE;
-    //     request.body_received = 0;
-    //     request.chunk_bytes_left = 0;
-    //     request.chunk_state = CS_SIZE;
-    //     request.body.clear();
-        
-    //     std::string lastKey;
-
-    //     for (std::size_t i = 0, start = 0; ; )  {
-    //         bool    at_crlf = (i + 1 < block.size() && block[i] == '\r' && block[i + 1] == '\n');
-    //         bool    at_end  = (i == block.size());
-    //         if (at_end || at_crlf)  {
-    //             std::string current = (at_end ? block.substr(start) : block.substr(start, i - start));
-
-    //             if (!current.empty())   {
-    //                 if (current[0] == ' ' || current[0] == '\t')    {
-    //                     if (lastKey.empty()) // obs-fold without previous header -> 400
-    //                         return fail(400, "Bad Request", outStatus, outReason);
-
-    //                     // Continuation (obs-fold) of splitted sentence
-    //                     std::string value = trim(current);
-    //                     if (!value.empty()) {
-    //                         if (!request.headers[lastKey].empty())  // if there was previous key value add space.
-    //                             request.headers[lastKey] += ' ';
-    //                         request.headers[lastKey] += value;
-    //                     }
-    //                 }
-    //                 else    {
-    //                     std::size_t colon = current.find(':');
-    //                     if (colon == std::string::npos)
-    //                         return fail(400, "Bad Request", outStatus, outReason);
-
-    //                     std::string key = toLowerCopy(trimRight(current.substr(0, colon)));
-    //                     std::string value = trim(current.substr(colon + 1));
-    //                     if (key.empty())
-    //                         return fail(400, "Bad Request", outStatus, outReason);
-
-    //                     // Validate header-name as ASCII token
-    //                     for (std::size_t j = 0; j < key.size(); ++j)  {
-    //                         if (!istokenChar(static_cast<unsigned char>(key[j]))) // keys should be characters.
-    //                             return fail(400, "Bad Request", outStatus, outReason);
-    //                     }
-
-    //                     // Duplicate Host must have identical values
-    //                     if (key == "host")    {
-    //                         std::map<std::string, std::string>::const_iterator  hprev = request.headers.find("host");
-    //                         if (hprev != request.headers.end()) {
-    //                             if (toLowerCopy(trim(hprev->second)) != toLowerCopy(value))
-    //                                 return fail(400, "Bad Request", outStatus, outReason);
-    //                         }
-    //                     }   // If Host appears more than once, all values must be identical (case-insensitive)
-    //                         // Host: example.com                Host: example.com
-    //                         // Host: EXAMPLE.COM <- allowed.    Host: other.com     <- 400 error
-
-    //                     std::map<std::string, std::string>::iterator    it = request.headers.find(key);
-    //                     if (it != request.headers.end())   {
-    //                         if (!it->second.empty())
-    //                             it->second += ", ";
-    //                         it->second += value; // coalesce duplicates
-    //                     }
-    //                     else
-    //                         request.headers[key] = value;
-    //                     lastKey = key;
-    //                 }
-    //             }
-
-    //             if (at_end)
-    //                 break;
-    //             i += 2; // skip CRLF
-    //             start = i;
-    //         }
-    //         else
-    //             ++i;
-    //     }
-    //         // finished populating request.headers
-    //         // Now time for evaluating and dividing each token of the request.headers to their respective parts.
-
-    //     // Connection: default keep-alive in HTTP/1.1
-    //     std::map<std::string, std::string>::const_iterator chit = request.headers.find("connection");
-    //     if (chit != request.headers.end())  {
-    //         std::istringstream  iss(toLowerCopy(chit->second));
-    //         std::string         token;
-    //         while (std::getline(iss, token, ',')) {
-    //             token = trim(token);
-    //             if (token == "close") {
-    //                 request.keep_alive = false;
-    //                 break;
-    //             }
-    //             else if (token == "keep-alive")
-    //                 request.keep_alive = true;
-    //         }
-    //     }
-
-    //     // Host (required in 1.1)
-    //     std::map<std::string, std::string>::const_iterator hit = request.headers.find("host");
-        
-    //     if (request.version == "HTTP/1.1")  {
-    //         if (hit == request.headers.end() || trim(hit->second).empty())
-    //             return fail(400, "Bad Request", outStatus, outReason);
-    //     }
-
-    //     if (hit != request.headers.end())
-    //         request.host = trim(hit->second);
-
-    //     // Content-Length
-    //     std::map<std::string, std::string>::const_iterator clit = request.headers.find("content-length");
-    //     if (clit != request.headers.end())  {
-    //         // Duplicates were coalesced as "v1, v2, ...": require all identical
-    //         std::string         raw = clit->second;
-    //         std::istringstream  iss(raw);
-    //         std::string         part;
-    //         std::string         first;
-
-    //         while (std::getline(iss, part, ','))    {
-    //             part = trim(part);
-    //             if (part.empty())
-    //                 return fail(400, "Bad Request", outStatus, outReason);
-
-    //             if (first.empty())
-    //                 first = part;
-    //             else if (part != first)
-    //                 return fail(400, "Bad Request", outStatus, outReason);
-    //         }
-
-    //         // Parse agreed value
-    //         char*   endp = 0;
-    //         errno = 0;
-    //         unsigned long   v = std::strtoul(first.c_str(), &endp, 10); // function strtoul gives out errno == ERANGE if overflow
-    //         if (errno == ERANGE)
-    //             return fail(413, "Payload Too Large", outStatus, outReason);
-    //         if (endp == first.c_str() || *endp != '\0')
-    //             return fail(400, "Bad Request", outStatus, outReason);
-
-    //         request.content_length = static_cast<std::size_t>(v);
-    //     }
-
-    //     // Transfer-Encoding
-    //     std::map<std::string, std::string>::const_iterator teit = request.headers.find("transfer-encoding");
-    //     if (teit != request.headers.end())  {
-    //         if (clit != request.headers.end())  // TE + CL → 400 Cannot have both Content-Length and Transfer-Encoding
-    //             return fail(400, "Bad Request", outStatus, outReason);
-
-    //         std::istringstream  iss(toLowerCopy(teit->second));
-    //         std::string         token;
-    //         bool                haveChunk = false;
-    //         while (std::getline(iss, token, ',')) {
-    //             token = trim(token);
-    //             if (token.empty())
-    //                 continue;
-    //             if (token != "chunked")
-    //                 return fail(501, "Not Implemented", outStatus, outReason);
-    //             haveChunk = true;
-    //         }
-    //         if (!haveChunk)
-    //             return fail(400, "Bad Request", outStatus, outReason);
-
-    //         // Normalize to a canonical marker
-    //         request.transfer_encoding = "chunked";
-    //     }
-
-    //     // If header exists: Expect: 100-continue
-    //     request.expectContinue = false;
-    //     std::map<std::string, std::string>::const_iterator it = request.headers.find("expect");
-    //     if (it != request.headers.end())    {
-    //         std::string v = toLowerCopy(trim(it->second));
-    //         if (v == "100-continue")
-    //             request.expectContinue = true;
-    //         else
-    //             request.expectContinue = false;
-    //     }
-
-    //     // Decide body reader mode
-    //     if (!request.transfer_encoding.empty() && request.transfer_encoding == "chunked")
-    //         request.body_reader_state = BR_CHUNKED;
-    //     else if (request.content_length > 0)
-    //         request.body_reader_state = BR_CONTENT_LENGTH;
-    //     else
-    //         request.body_reader_state = BR_NONE;
-        
-    //     return true;
-    // }
 
     bool    parseHeadersBlock(const std::string& block, HTTP_Request& request, int& outStatus, std::string& outReason)  {
-            
+
         // Reset derived fields for this request -> for keep-alive reuse
         request.keep_alive = (request.version == "HTTP/1.1");
         request.expectContinue = false;
@@ -383,7 +191,7 @@ namespace   {
         request.chunk_state = CS_SIZE;
         request.body.clear();
 
-        // ✅ Hardening: garantir que headers não “vazam” entre requests
+        // Hardening: garantir que headers não “vazam” entre requests
         request.headers.clear();
 
         std::string lastKey;
@@ -400,10 +208,9 @@ namespace   {
                         if (lastKey.empty()) // obs-fold without previous header -> 400
                             return fail(400, "Bad Request", outStatus, outReason);
 
-                        // Continuation (obs-fold) of splitted sentence
                         std::string value = trim(current);
                         if (!value.empty()) {
-                            if (!request.headers[lastKey].empty())  // if there was previous key value add space.
+                            if (!request.headers[lastKey].empty())
                                 request.headers[lastKey] += ' ';
                             request.headers[lastKey] += value;
                         }
@@ -420,7 +227,7 @@ namespace   {
 
                         // Validate header-name as ASCII token
                         for (std::size_t j = 0; j < key.size(); ++j)  {
-                            if (!istokenChar(static_cast<unsigned char>(key[j]))) // keys should be characters.
+                            if (!istokenChar(static_cast<unsigned char>(key[j])))
                                 return fail(400, "Bad Request", outStatus, outReason);
                         }
 
@@ -433,11 +240,11 @@ namespace   {
                             }
                         }
 
-                        std::map<std::string, std::string>::iterator    it = request.headers.find(key);
+                        std::map<std::string, std::string>::iterator it = request.headers.find(key);
                         if (it != request.headers.end())   {
                             if (!it->second.empty())
                                 it->second += ", ";
-                            it->second += value; // coalesce duplicates
+                            it->second += value;
                         }
                         else
                             request.headers[key] = value;
@@ -458,38 +265,39 @@ namespace   {
         // Connection: default keep-alive in HTTP/1.1
         std::map<std::string, std::string>::const_iterator chit = request.headers.find("connection");
         if (chit != request.headers.end())  {
-            std::istringstream  iss(toLowerCopy(chit->second));
-            std::string         token;
+            std::istringstream iss(toLowerCopy(chit->second));
+            std::string token;
             while (std::getline(iss, token, ',')) {
                 token = trim(token);
                 if (token == "close") {
                     request.keep_alive = false;
                     break;
                 }
-                else if (token == "keep-alive")
+                else if (token == "keep-alive") {
                     request.keep_alive = true;
+                }
             }
         }
 
         // Host (required in 1.1)
         std::map<std::string, std::string>::const_iterator hit = request.headers.find("host");
-            
         if (request.version == "HTTP/1.1")  {
             if (hit == request.headers.end() || trim(hit->second).empty())
                 return fail(400, "Bad Request", outStatus, outReason);
         }
-
         if (hit != request.headers.end())
             request.host = trim(hit->second);
 
-        // Content-Length
+        // Content-Length (parse, but may be ignored if TE=chunked)
+        bool haveCL = false;
+        std::size_t parsedCL = 0;
+
         std::map<std::string, std::string>::const_iterator clit = request.headers.find("content-length");
         if (clit != request.headers.end())  {
-            // Duplicates were coalesced as "v1, v2, ...": require all identical
-            std::string         raw = clit->second;
-            std::istringstream  iss(raw);
-            std::string         part;
-            std::string         first;
+            std::string raw = clit->second;
+            std::istringstream iss(raw);
+            std::string part;
+            std::string first;
 
             while (std::getline(iss, part, ','))    {
                 part = trim(part);
@@ -502,36 +310,34 @@ namespace   {
                     return fail(400, "Bad Request", outStatus, outReason);
             }
 
-            // Parse agreed value
-            char*   endp = 0;
+            char* endp = 0;
             errno = 0;
-            unsigned long   v = std::strtoul(first.c_str(), &endp, 10);
+            unsigned long v = std::strtoul(first.c_str(), &endp, 10);
             if (errno == ERANGE)
                 return fail(413, "Payload Too Large", outStatus, outReason);
             if (endp == first.c_str() || *endp != '\0')
                 return fail(400, "Bad Request", outStatus, outReason);
 
-            request.content_length = static_cast<std::size_t>(v);
+            parsedCL = static_cast<std::size_t>(v);
+            haveCL = true;
         }
 
         // Transfer-Encoding
+        bool haveChunked = false;
         std::map<std::string, std::string>::const_iterator teit = request.headers.find("transfer-encoding");
         if (teit != request.headers.end())  {
-            if (clit != request.headers.end())
-                return fail(400, "Bad Request", outStatus, outReason);
 
-            std::istringstream  iss(toLowerCopy(teit->second));
-            std::string         token;
-            bool                haveChunk = false;
+            std::istringstream iss(toLowerCopy(teit->second));
+            std::string token;
             while (std::getline(iss, token, ',')) {
                 token = trim(token);
                 if (token.empty())
                     continue;
                 if (token != "chunked")
                     return fail(501, "Not Implemented", outStatus, outReason);
-                haveChunk = true;
+                haveChunked = true;
             }
-            if (!haveChunk)
+            if (!haveChunked)
                 return fail(400, "Bad Request", outStatus, outReason);
 
             request.transfer_encoding = "chunked";
@@ -539,25 +345,32 @@ namespace   {
 
         // Expect: 100-continue
         request.expectContinue = false;
-        std::map<std::string, std::string>::const_iterator it = request.headers.find("expect");
-        if (it != request.headers.end())    {
-            std::string v = toLowerCopy(trim(it->second));
+        std::map<std::string, std::string>::const_iterator eit = request.headers.find("expect");
+        if (eit != request.headers.end())    {
+            std::string v = toLowerCopy(trim(eit->second));
             if (v == "100-continue")
                 request.expectContinue = true;
-            else
-                request.expectContinue = false;
         }
 
         // Decide body reader mode
-        if (!request.transfer_encoding.empty() && request.transfer_encoding == "chunked")
+        if (!request.transfer_encoding.empty() && request.transfer_encoding == "chunked") {
             request.body_reader_state = BR_CHUNKED;
-        else if (request.content_length > 0)
+
+            // ✅ IGNORE Content-Length if TE=chunked
+            request.content_length = 0;
+        }
+        else if (haveCL && parsedCL > 0) {
             request.body_reader_state = BR_CONTENT_LENGTH;
-        else
+            request.content_length = parsedCL;
+        }
+        else {
             request.body_reader_state = BR_NONE;
-            
+            request.content_length = 0;
+        }
+
         return true;
     }
+
     
 
 }   // anonymous namespace

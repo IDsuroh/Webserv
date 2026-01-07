@@ -82,43 +82,6 @@ namespace http  {
         return out;
     }
 
-    // std::string serialize_response(const HTTP_Response& res, const std::string& version) {
-    //     std::ostringstream oss;
-    //     oss << version << ' ' << res.status << ' ' << res.reason << "\r\n";
-
-    //     bool hasCL = false;
-    //     bool hasServer = false;
-    //     bool hasDate = false;
-    //     bool hasConnection = false;
-
-    //     for (std::map<std::string, std::string>::const_iterator it = res.headers.begin(); it != res.headers.end(); ++it) {
-    //         const std::string lower = toLowerCopy(it->first);
-    //         if (lower == "content-length")
-    //             hasCL = true;
-    //         else if (lower == "server")
-    //             hasServer = true;
-    //         else if (lower == "date")
-    //             hasDate = true;
-    //         else if (lower == "connection")
-    //             hasConnection = true;
-
-    //         oss << it->first << ": " << it->second << "\r\n";
-    //     }
-
-    //     // Inject defaults only if missing
-    //     if (!hasServer)
-    //         oss << "Server: webserv\r\n";
-    //     if (!hasDate)
-    //         oss << "Date: " << http_date() << "\r\n";
-    //     if (!hasConnection)
-    //         oss << "Connection: " << (res.close ? "close" : "keep-alive") << "\r\n";
-    //     if (!hasCL)
-    //         oss << "Content-Length: " << res.body.size() << "\r\n";
-
-    //     oss << "\r\n";
-    //     oss << res.body;
-    //     return oss.str();
-    // }
 
     std::string serialize_response(const HTTP_Response& res, const std::string& version) {
     std::ostringstream oss;

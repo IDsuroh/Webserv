@@ -510,19 +510,26 @@ static size_t	parseSize(const std::string& string)	{
 	return static_cast<size_t>(n * mult);
 }
 
-static const Location*	longestPrefixMatch(const Server& srv, const std::string& path)	{	// finds the most specific location
-	const Location*	best = NULL;
-	size_t			bestLen = 0;
-	for (size_t i = 0; i < srv.locations.size(); ++i)	{
-		const Location&	L = srv.locations[i];
-		if (path.compare(0, L.path.size(), L.path) == 0 && L.path.size() > bestLen)	{
-			// Compare path starting at index 0, length L.path.size() with L.path if result is 0, the substrings are equal
-			best = &L;
-			bestLen = L.path.size();
-		}
-	}
-	return best;
+static const Location* longestPrefixMatch(const Server& srv, const std::string& path) {
+    const Location* best = NULL;
+    size_t          bestLen = 0;
+
+    for (size_t i = 0; i < srv.locations.size(); ++i) {
+        const Location&      L  = srv.locations[i];
+        const std::string&   lp = L.path;
+
+        bool match = (path.compare(0, lp.size(), lp) == 0);
+        bool boundary = (path.size() == lp.size()
+                      || (path.size() > lp.size() && path[lp.size()] == '/'));
+
+        if (match && boundary && lp.size() > bestLen) {
+            best = &L;
+            bestLen = lp.size();
+        }
+    }
+    return best;
 }
+
 
 void    ServerRunner::handleRequest(Connection& connection) {
     /*
@@ -584,1097 +591,157 @@ void    ServerRunner::handleRequest(Connection& connection) {
 }
 
 
-// void ServerRunner::readFromClient(int clientFd) {
+    void ServerRunner::readFromClient(int clientFd) {
 
-//     std::map<int, Connection>::iterator it = _connections.find(clientFd);
-//     if (it == _connections.end())
-//         return;
-
-//     Connection& connection = it->second;
-
-//     const std::size_t READ_BUDGET = 256u * 1024u;
-
-//     char buffer[4096];
-//     std::size_t totalRead = 0;
-
-//     // 1) Ler bytes (non-blocking) com cap
-//     for (;;) {
-
-//         if (totalRead >= READ_BUDGET)
-//             break;
-
-//         std::size_t want = sizeof(buffer);
-//         std::size_t remainingBudget = READ_BUDGET - totalRead;
-//         if (remainingBudget < want)
-//             want = remainingBudget;
-
-//         ssize_t n = read(clientFd, buffer, want);
-
-//         if (n > 0) {
-//             connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
-//             totalRead += static_cast<std::size_t>(n);
-
-//             connection.lastActiveMs = _nowMs;
-
-//             if (connection.state == S_HEADERS && connection.kaIdleStartMs != 0)
-//                 connection.kaIdleStartMs = 0;
-
-//             continue;
-//         }
-
-//         if (n == 0) {
-//             // HALF-CLOSE: peer fechou o lado de escrita; NÃO fechar já.
-//             connection.peerClosedRead = true;
-
-//             std::cerr << "[READ-EOF] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " totalRead=" << totalRead
-//                       << " rb=" << connection.readBuffer.size()
-//                       << " state=" << connection.state
-//                       << " wb=" << connection.writeBuffer.size()
-//                       << " off=" << connection.writeOffset
-//                       << "\n";
-
-//             // Desarmar POLLIN (não há mais nada a ler). Manter POLLOUT se houver resposta pendente.
-//             std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//             if (pit != _fdIndex.end()) {
-//                 bool havePendingWrite = (connection.state == S_WRITE)
-//                                      || (connection.writeOffset < connection.writeBuffer.size());
-//                 _fds[pit->second].events = havePendingWrite ? POLLOUT : 0;
-//             }
-
-//             break; // IMPORTANTÍSSIMO: ainda podemos parsear o que já está em readBuffer
-//         }
-
-//         if (errno == EINTR)
-//             continue;
-//         if (errno == EAGAIN || errno == EWOULDBLOCK)
-//             break;
-
-//         std::cerr << "[READ-ERR] t=" << _nowMs
-//                   << " fd=" << clientFd
-//                   << " errno=" << errno
-//                   << " msg=" << std::strerror(errno)
-//                   << " totalRead=" << totalRead
-//                   << " rb=" << connection.readBuffer.size()
-//                   << " state=" << connection.state
-//                   << "\n";
-//         closeConnection(clientFd);
-//         return;
-//     }
-
-//     if (totalRead > 0) {
-//         std::cerr << "[READ] t=" << _nowMs
-//                   << " fd=" << clientFd
-//                   << " got=" << totalRead
-//                   << " rb=" << connection.readBuffer.size()
-//                   << " state=" << connection.state
-//                   << "\n";
-//     }
-
-//     // Se estamos a escrever, não mexer.
-//     if (connection.state == S_WRITE) {
-//         std::cerr << "[READ-SKIP-PARSE] t=" << _nowMs
-//                   << " fd=" << clientFd
-//                   << " rb=" << connection.readBuffer.size()
-//                   << " (state=S_WRITE)\n";
-//         return;
-//     }
-
-//     // ---------------- DRAIN ----------------
-//     if (connection.state == S_DRAIN) {
-
-//         int status = 0;
-//         std::string reason;
-//         http::BodyResult result = http::BODY_INCOMPLETE;
-
-//         const std::size_t maxBody = connection.clientMaxBodySize;
-
-//         if (connection.request.body_reader_state == BR_CONTENT_LENGTH)
-//             result = http::consume_body_content_length_drain(connection, maxBody, status, reason);
-//         else if (connection.request.body_reader_state == BR_CHUNKED)
-//             result = http::consume_body_chunked_drain(connection, maxBody, status, reason);
-//         else
-//             result = http::BODY_COMPLETE;
-
-//         std::cerr << "[DRAIN-CONSUME] t=" << _nowMs
-//                   << " fd=" << clientFd
-//                   << " res=" << result
-//                   << " rb=" << connection.readBuffer.size()
-//                   << " drained=" << connection.drainedBytes
-//                   << "\n";
-
-//         if (result == http::BODY_COMPLETE) {
-//             std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//             if (pit != _fdIndex.end())
-//                 _fds[pit->second].events = POLLOUT;
-
-//             connection.state = S_WRITE;
-
-//             std::cerr << "[DRAIN-DONE->WRITE] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " rb=" << connection.readBuffer.size()
-//                       << "\n";
-//             return;
-//         }
-
-//         if (result == http::BODY_ERROR) {
-//             std::cerr << "[DRAIN-ERR] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " status=" << status
-//                       << " reason=\"" << reason << "\"\n";
-//             closeConnection(clientFd);
-//             return;
-//         }
-
-//         // Se o peer fechou e ainda estamos a drenar/incompleto, não há mais bytes a chegar -> erro
-//         if (connection.peerClosedRead) {
-//             const Server& active = connection.srv ? *connection.srv : _servers[0];
-//             connection.request.keep_alive = false;
-//             connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
-//             connection.writeOffset = 0;
-//             std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//             if (pit != _fdIndex.end())
-//                 _fds[pit->second].events = POLLOUT;
-//             connection.state = S_WRITE;
-//         }
-//         return;
-//     }
-
-//     // 2) Parse loop
-//     for (;;) {
-
-//         // ---------------- HEADERS ----------------
-//         if (connection.state == S_HEADERS) {
-
-//             static const std::size_t MAX_HEADER_BYTES = 16 * 1024;
-//             if (connection.readBuffer.size() > MAX_HEADER_BYTES
-//                 && connection.readBuffer.find("\r\n\r\n") == std::string::npos) {
-
-//                 int st = 431;
-//                 std::string reason = "Request Header Fields Too Large";
-//                 const Server& active = connection.srv ? *connection.srv : _servers[0];
-
-//                 std::cerr << "[HDR-TOO-LARGE] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " rb=" << connection.readBuffer.size()
-//                           << "\n";
-
-//                 connection.writeBuffer = http::build_error_response(active, st, reason, connection.request.keep_alive);
-//                 connection.writeOffset = 0;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//                 return;
-//             }
-
-//             std::string head;
-//             if (!http::extract_next_head(connection.readBuffer, head)) {
-//                 std::cerr << "[HDR-INCOMPLETE] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " rb=" << connection.readBuffer.size()
-//                           << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-//                           << "\n";
-
-//                 // Se o peer fechou e não há head completo -> não vai haver mais bytes -> 400 + close
-//                 if (connection.peerClosedRead) {
-//                     const Server& active = connection.srv ? *connection.srv : _servers[0];
-//                     connection.request.keep_alive = false;
-//                     connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
-//                     connection.writeOffset = 0;
-
-//                     std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                     if (pit != _fdIndex.end())
-//                         _fds[pit->second].events = POLLOUT;
-
-//                     connection.state = S_WRITE;
-//                 }
-//                 return;
-//             }
-
-//             std::cerr << "[HDR-EXTRACT] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " headBytes=" << head.size()
-//                       << " rb_after=" << connection.readBuffer.size()
-//                       << "\n";
-
-//             int status = 0;
-//             std::string reason;
-//             if (!http::parse_head(head, connection.request, status, reason)) {
-
-//                 if (!connection.srv)
-//                     throw std::runtime_error("Internal bug: connection.srv is NULL");
-//                 const Server& active = *connection.srv;
-
-//                 std::cerr << "[HDR-PARSE-FAIL] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " status=" << status
-//                           << " reason=\"" << reason << "\""
-//                           << " ka=" << (connection.request.keep_alive ? 1 : 0)
-//                           << "\n";
-
-//                 if (status == 413)
-//                     connection.request.keep_alive = false;
-
-//                 connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
-//                 connection.writeOffset = 0;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//                 return;
-//             }
-
-//             connection.headersComplete = true;
-
-//             std::cerr << "[HDR-OK] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " m=" << connection.request.method
-//                       << " target=" << connection.request.target
-//                       << " path=" << connection.request.path
-//                       << " br=" << connection.request.body_reader_state
-//                       << " cl=" << connection.request.content_length
-//                       << " te=\"" << connection.request.transfer_encoding << "\""
-//                       << " ka=" << (connection.request.keep_alive ? 1 : 0)
-//                       << " exp=" << (connection.request.expectContinue ? 1 : 0)
-//                       << " rb=" << connection.readBuffer.size()
-//                       << "\n";
-
-//             // ---- client_max_body_size resolution ----
-//             size_t limit = std::numeric_limits<size_t>::max();
-//             bool fromLoc = false;
-//             const Location* loc = NULL;
-
-//             if (connection.srv) {
-//                 if ((loc = longestPrefixMatch(*connection.srv, connection.request.path))) {
-//                     if (loc->directives.count("client_max_body_size")) {
-//                         limit = parseSize(loc->directives.find("client_max_body_size")->second);
-//                         fromLoc = true;
-//                     }
-//                 }
-//                 if (!fromLoc && connection.srv->directives.count("client_max_body_size"))
-//                     limit = parseSize(connection.srv->directives.find("client_max_body_size")->second);
-//             }
-//             connection.clientMaxBodySize = limit;
-
-//             // ---- EARLY CHECKS ----
-//             {
-//                 const Server& active = connection.srv ? *connection.srv : _servers[0];
-
-//                 if (connection.request.body_reader_state == BR_CONTENT_LENGTH
-//                     && connection.request.content_length > connection.clientMaxBodySize) {
-
-//                     std::cerr << "[EARLY-413] t=" << _nowMs
-//                               << " fd=" << clientFd
-//                               << " cl=" << connection.request.content_length
-//                               << " max=" << connection.clientMaxBodySize
-//                               << "\n";
-
-//                     connection.request.keep_alive = false;
-//                     connection.request.expectContinue = false;
-//                     connection.sentContinue = false;
-
-//                     connection.writeBuffer = http::build_error_response(active, 413, "Payload Too Large", false);
-//                     connection.writeOffset = 0;
-
-//                     if (connection.request.body_reader_state != BR_NONE) {
-//                         connection.drainedBytes = 0;
-//                         connection.state = S_DRAIN;
-//                         std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                         if (pit != _fdIndex.end())
-//                             _fds[pit->second].events = POLLIN;
-//                         return;
-//                     }
-
-//                     std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                     if (pit != _fdIndex.end())
-//                         _fds[pit->second].events = POLLOUT;
-
-//                     connection.state = S_WRITE;
-//                     return;
-//                 }
-
-//                 // (resto do teu EARLY-405 fica igual)
-//                 // ...
-//             }
-
-//             // ---- Transition depending on body presence ----
-//             if (connection.request.body_reader_state == BR_NONE) {
-//                 std::cerr << "[DISPATCH-NO-BODY] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " rb=" << connection.readBuffer.size()
-//                           << "\n";
-//                 handleRequest(connection);
-//                 return;
-//             }
-
-//             if (connection.request.expectContinue == true) {
-//                 std::cerr << "[SEND-100] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " rb=" << connection.readBuffer.size()
-//                           << "\n";
-
-//                 connection.writeBuffer = "HTTP/1.1 100 Continue\r\n\r\n";
-//                 connection.writeOffset = 0;
-//                 connection.sentContinue = true;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//                 return;
-//             }
-
-//             connection.state = S_BODY;
-
-//             std::cerr << "[STATE->BODY] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " rb=" << connection.readBuffer.size()
-//                       << "\n";
-//             continue;
-//         }
-
-//         // ---------------- BODY ----------------
-//         if (connection.state == S_BODY) {
-
-//             int status = 0;
-//             std::string reason;
-//             http::BodyResult result = http::BODY_INCOMPLETE;
-
-//             const std::size_t maxBody = connection.clientMaxBodySize;
-
-//             switch (connection.request.body_reader_state) {
-//                 case BR_CONTENT_LENGTH:
-//                     result = http::consume_body_content_length(connection, maxBody, status, reason);
-//                     break;
-//                 case BR_CHUNKED:
-//                     result = http::consume_body_chunked(connection, maxBody, status, reason);
-//                     break;
-//                 default:
-//                     status = 400;
-//                     reason = "Bad Request";
-//                     result = http::BODY_ERROR;
-//             }
-
-//             std::cerr << "[BODY-CONSUME] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " res=" << result
-//                       << " rb=" << connection.readBuffer.size()
-//                       << " body=" << connection.request.body.size()
-//                       << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-//                       << "\n";
-
-//             if (result == http::BODY_COMPLETE) {
-//                 std::cerr << "[DISPATCH-BODY] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " body=" << connection.request.body.size()
-//                           << " rb=" << connection.readBuffer.size()
-//                           << "\n";
-//                 handleRequest(connection);
-//                 return;
-//             }
-
-//             if (result == http::BODY_ERROR) {
-//                 const Server& active = connection.srv ? *connection.srv : _servers[0];
-
-//                 std::cerr << "[BODY-ERR] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " status=" << status
-//                           << " reason=\"" << reason << "\""
-//                           << " ka=" << (connection.request.keep_alive ? 1 : 0)
-//                           << "\n";
-
-//                 if (status == 413)
-//                     connection.request.keep_alive = false;
-
-//                 connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
-//                 connection.writeOffset = 0;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//                 return;
-//             }
-
-//             // INCOMPLETE:
-//             // se o peer já fechou o lado de escrita, nunca mais chega body -> 400 + close
-//             if (connection.peerClosedRead) {
-//                 const Server& active = connection.srv ? *connection.srv : _servers[0];
-//                 connection.request.keep_alive = false;
-//                 connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
-//                 connection.writeOffset = 0;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//             }
-//             return;
-//         }
-
-//         return;
-//     }
-// }
-
-// void ServerRunner::readFromClient(int clientFd) {
-
-//     std::map<int, Connection>::iterator it = _connections.find(clientFd);
-//     if (it == _connections.end())
-//         return;
-
-//     Connection& connection = it->second;
-
-//     const std::size_t READ_BUDGET = 256u * 1024u;
-
-//     char buffer[4096];
-//     std::size_t totalRead = 0;
-
-//     // 1) Ler bytes (non-blocking) com cap
-//     for (;;) {
-
-//         if (totalRead >= READ_BUDGET)
-//             break;
-
-//         std::size_t want = sizeof(buffer);
-//         std::size_t remainingBudget = READ_BUDGET - totalRead;
-//         if (remainingBudget < want)
-//             want = remainingBudget;
-
-//         ssize_t n = read(clientFd, buffer, want);
-
-//         if (n > 0) {
-//             connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
-//             totalRead += static_cast<std::size_t>(n);
-
-//             connection.lastActiveMs = _nowMs;
-
-//             if (connection.state == S_HEADERS && connection.kaIdleStartMs != 0)
-//                 connection.kaIdleStartMs = 0;
-
-//             continue;
-//         }
-
-//         if (n == 0) {
-//             // EOF / half-close do peer (shutdown(SHUT_WR) ou close no lado do cliente).
-//             connection.peerClosedRead = true;
-
-//             std::cerr << "[READ-EOF] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " totalRead=" << totalRead
-//                       << " rb=" << connection.readBuffer.size()
-//                       << " state=" << connection.state
-//                       << " wb=" << connection.writeBuffer.size()
-//                       << " off=" << connection.writeOffset
-//                       << "\n";
-
-//             // ✅ FIX CRÍTICO:
-//             // EOF com rb==0 enquanto estamos em S_HEADERS (keep-alive idle) é fecho limpo.
-//             // NÃO é "header incompleto" -> fechar silenciosamente e sair.
-//             if (connection.state == S_HEADERS && connection.readBuffer.empty()) {
-//                 closeConnection(clientFd);
-//                 return;
-//             }
-
-//             // Caso contrário, mantém-se: pode haver request parcial em buffer e queremos parsear.
-//             // Desarmar POLLIN (não há mais nada a ler). Manter POLLOUT se houver resposta pendente.
-//             std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//             if (pit != _fdIndex.end()) {
-//                 bool havePendingWrite = (connection.state == S_WRITE)
-//                                      || (connection.writeOffset < connection.writeBuffer.size());
-//                 _fds[pit->second].events = havePendingWrite ? POLLOUT : 0;
-//             }
-
-//             break; // IMPORTANTÍSSIMO: ainda podemos parsear o que já está em readBuffer
-//         }
-
-//         if (errno == EINTR)
-//             continue;
-//         if (errno == EAGAIN || errno == EWOULDBLOCK)
-//             break;
-
-//         std::cerr << "[READ-ERR] t=" << _nowMs
-//                   << " fd=" << clientFd
-//                   << " errno=" << errno
-//                   << " msg=" << std::strerror(errno)
-//                   << " totalRead=" << totalRead
-//                   << " rb=" << connection.readBuffer.size()
-//                   << " state=" << connection.state
-//                   << "\n";
-//         closeConnection(clientFd);
-//         return;
-//     }
-
-//     if (totalRead > 0) {
-//         std::cerr << "[READ] t=" << _nowMs
-//                   << " fd=" << clientFd
-//                   << " got=" << totalRead
-//                   << " rb=" << connection.readBuffer.size()
-//                   << " state=" << connection.state
-//                   << "\n";
-//     }
-
-//     // Se estamos a escrever, não mexer.
-//     if (connection.state == S_WRITE) {
-//         std::cerr << "[READ-SKIP-PARSE] t=" << _nowMs
-//                   << " fd=" << clientFd
-//                   << " rb=" << connection.readBuffer.size()
-//                   << " (state=S_WRITE)\n";
-//         return;
-//     }
-
-//     // ---------------- DRAIN ----------------
-//     if (connection.state == S_DRAIN) {
-
-//         int status = 0;
-//         std::string reason;
-//         http::BodyResult result = http::BODY_INCOMPLETE;
-
-//         const std::size_t maxBody = connection.clientMaxBodySize;
-
-//         if (connection.request.body_reader_state == BR_CONTENT_LENGTH)
-//             result = http::consume_body_content_length_drain(connection, maxBody, status, reason);
-//         else if (connection.request.body_reader_state == BR_CHUNKED)
-//             result = http::consume_body_chunked_drain(connection, maxBody, status, reason);
-//         else
-//             result = http::BODY_COMPLETE;
-
-//         std::cerr << "[DRAIN-CONSUME] t=" << _nowMs
-//                   << " fd=" << clientFd
-//                   << " res=" << result
-//                   << " rb=" << connection.readBuffer.size()
-//                   << " drained=" << connection.drainedBytes
-//                   << "\n";
-
-//         if (result == http::BODY_COMPLETE) {
-//             std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//             if (pit != _fdIndex.end())
-//                 _fds[pit->second].events = POLLOUT;
-
-//             connection.state = S_WRITE;
-
-//             std::cerr << "[DRAIN-DONE->WRITE] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " rb=" << connection.readBuffer.size()
-//                       << "\n";
-//             return;
-//         }
-
-//         if (result == http::BODY_ERROR) {
-//             std::cerr << "[DRAIN-ERR] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " status=" << status
-//                       << " reason=\"" << reason << "\"\n";
-//             closeConnection(clientFd);
-//             return;
-//         }
-
-//         // Se o peer fechou e ainda estamos a drenar/incompleto, não há mais bytes a chegar -> erro
-//         if (connection.peerClosedRead) {
-//             const Server& active = connection.srv ? *connection.srv : _servers[0];
-//             connection.request.keep_alive = false;
-//             connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
-//             connection.writeOffset = 0;
-//             std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//             if (pit != _fdIndex.end())
-//                 _fds[pit->second].events = POLLOUT;
-//             connection.state = S_WRITE;
-//         }
-//         return;
-//     }
-
-//     // 2) Parse loop
-//     for (;;) {
-
-//         // ---------------- HEADERS ----------------
-//         if (connection.state == S_HEADERS) {
-
-//             static const std::size_t MAX_HEADER_BYTES = 16 * 1024;
-//             if (connection.readBuffer.size() > MAX_HEADER_BYTES
-//                 && connection.readBuffer.find("\r\n\r\n") == std::string::npos) {
-
-//                 int st = 431;
-//                 std::string reason = "Request Header Fields Too Large";
-//                 const Server& active = connection.srv ? *connection.srv : _servers[0];
-
-//                 std::cerr << "[HDR-TOO-LARGE] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " rb=" << connection.readBuffer.size()
-//                           << "\n";
-
-//                 connection.writeBuffer = http::build_error_response(active, st, reason, connection.request.keep_alive);
-//                 connection.writeOffset = 0;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//                 return;
-//             }
-
-//             std::string head;
-//             if (!http::extract_next_head(connection.readBuffer, head)) {
-//                 std::cerr << "[HDR-INCOMPLETE] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " rb=" << connection.readBuffer.size()
-//                           << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-//                           << "\n";
-
-//                 // ✅ FIX CRÍTICO (segunda defesa):
-//                 // Se o peer fechou e rb==0, isto é keep-alive idle -> fechar silenciosamente.
-//                 if (connection.peerClosedRead && connection.readBuffer.empty()) {
-//                     closeConnection(clientFd);
-//                     return;
-//                 }
-
-//                 // Se o peer fechou e há bytes (header parcial), não vai haver mais -> 400 + close
-//                 if (connection.peerClosedRead) {
-//                     const Server& active = connection.srv ? *connection.srv : _servers[0];
-//                     connection.request.keep_alive = false;
-//                     connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
-//                     connection.writeOffset = 0;
-
-//                     std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                     if (pit != _fdIndex.end())
-//                         _fds[pit->second].events = POLLOUT;
-
-//                     connection.state = S_WRITE;
-//                 }
-//                 return;
-//             }
-
-//             std::cerr << "[HDR-EXTRACT] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " headBytes=" << head.size()
-//                       << " rb_after=" << connection.readBuffer.size()
-//                       << "\n";
-
-//             int status = 0;
-//             std::string reason;
-//             if (!http::parse_head(head, connection.request, status, reason)) {
-
-//                 if (!connection.srv)
-//                     throw std::runtime_error("Internal bug: connection.srv is NULL");
-//                 const Server& active = *connection.srv;
-
-//                 std::cerr << "[HDR-PARSE-FAIL] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " status=" << status
-//                           << " reason=\"" << reason << "\""
-//                           << " ka=" << (connection.request.keep_alive ? 1 : 0)
-//                           << "\n";
-
-//                 if (status == 413)
-//                     connection.request.keep_alive = false;
-
-//                 connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
-//                 connection.writeOffset = 0;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//                 return;
-//             }
-
-//             connection.headersComplete = true;
-
-//             std::cerr << "[HDR-OK] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " m=" << connection.request.method
-//                       << " target=" << connection.request.target
-//                       << " path=" << connection.request.path
-//                       << " br=" << connection.request.body_reader_state
-//                       << " cl=" << connection.request.content_length
-//                       << " te=\"" << connection.request.transfer_encoding << "\""
-//                       << " ka=" << (connection.request.keep_alive ? 1 : 0)
-//                       << " exp=" << (connection.request.expectContinue ? 1 : 0)
-//                       << " rb=" << connection.readBuffer.size()
-//                       << "\n";
-
-//             // ---- client_max_body_size resolution ----
-//             size_t limit = std::numeric_limits<size_t>::max();
-//             bool fromLoc = false;
-//             const Location* loc = NULL;
-
-//             if (connection.srv) {
-//                 if ((loc = longestPrefixMatch(*connection.srv, connection.request.path))) {
-//                     if (loc->directives.count("client_max_body_size")) {
-//                         limit = parseSize(loc->directives.find("client_max_body_size")->second);
-//                         fromLoc = true;
-//                     }
-//                 }
-//                 if (!fromLoc && connection.srv->directives.count("client_max_body_size"))
-//                     limit = parseSize(connection.srv->directives.find("client_max_body_size")->second);
-//             }
-//             connection.clientMaxBodySize = limit;
-
-//             // ---- EARLY CHECKS ----
-//             {
-//                 const Server& active = connection.srv ? *connection.srv : _servers[0];
-
-//                 if (connection.request.body_reader_state == BR_CONTENT_LENGTH
-//                     && connection.request.content_length > connection.clientMaxBodySize) {
-
-//                     std::cerr << "[EARLY-413] t=" << _nowMs
-//                               << " fd=" << clientFd
-//                               << " cl=" << connection.request.content_length
-//                               << " max=" << connection.clientMaxBodySize
-//                               << "\n";
-
-//                     connection.request.keep_alive = false;
-//                     connection.request.expectContinue = false;
-//                     connection.sentContinue = false;
-
-//                     connection.writeBuffer = http::build_error_response(active, 413, "Payload Too Large", false);
-//                     connection.writeOffset = 0;
-
-//                     if (connection.request.body_reader_state != BR_NONE) {
-//                         connection.drainedBytes = 0;
-//                         connection.state = S_DRAIN;
-//                         std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                         if (pit != _fdIndex.end())
-//                             _fds[pit->second].events = POLLIN;
-//                         return;
-//                     }
-
-//                     std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                     if (pit != _fdIndex.end())
-//                         _fds[pit->second].events = POLLOUT;
-
-//                     connection.state = S_WRITE;
-//                     return;
-//                 }
-
-//                 // (resto do teu EARLY-405 fica igual)
-//                 // ...
-//             }
-
-//             // ---- Transition depending on body presence ----
-//             if (connection.request.body_reader_state == BR_NONE) {
-//                 std::cerr << "[DISPATCH-NO-BODY] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " rb=" << connection.readBuffer.size()
-//                           << "\n";
-//                 handleRequest(connection);
-//                 return;
-//             }
-
-//             if (connection.request.expectContinue == true) {
-//                 std::cerr << "[SEND-100] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " rb=" << connection.readBuffer.size()
-//                           << "\n";
-
-//                 connection.writeBuffer = "HTTP/1.1 100 Continue\r\n\r\n";
-//                 connection.writeOffset = 0;
-//                 connection.sentContinue = true;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//                 return;
-//             }
-
-//             connection.state = S_BODY;
-
-//             std::cerr << "[STATE->BODY] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " rb=" << connection.readBuffer.size()
-//                       << "\n";
-//             continue;
-//         }
-
-//         // ---------------- BODY ----------------
-//         if (connection.state == S_BODY) {
-
-//             int status = 0;
-//             std::string reason;
-//             http::BodyResult result = http::BODY_INCOMPLETE;
-
-//             const std::size_t maxBody = connection.clientMaxBodySize;
-
-//             switch (connection.request.body_reader_state) {
-//                 case BR_CONTENT_LENGTH:
-//                     result = http::consume_body_content_length(connection, maxBody, status, reason);
-//                     break;
-//                 case BR_CHUNKED:
-//                     result = http::consume_body_chunked(connection, maxBody, status, reason);
-//                     break;
-//                 default:
-//                     status = 400;
-//                     reason = "Bad Request";
-//                     result = http::BODY_ERROR;
-//             }
-
-//             std::cerr << "[BODY-CONSUME] t=" << _nowMs
-//                       << " fd=" << clientFd
-//                       << " res=" << result
-//                       << " rb=" << connection.readBuffer.size()
-//                       << " body=" << connection.request.body.size()
-//                       << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-//                       << "\n";
-
-//             if (result == http::BODY_COMPLETE) {
-//                 std::cerr << "[DISPATCH-BODY] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " body=" << connection.request.body.size()
-//                           << " rb=" << connection.readBuffer.size()
-//                           << "\n";
-//                 handleRequest(connection);
-//                 return;
-//             }
-
-//             if (result == http::BODY_ERROR) {
-//                 const Server& active = connection.srv ? *connection.srv : _servers[0];
-
-//                 std::cerr << "[BODY-ERR] t=" << _nowMs
-//                           << " fd=" << clientFd
-//                           << " status=" << status
-//                           << " reason=\"" << reason << "\""
-//                           << " ka=" << (connection.request.keep_alive ? 1 : 0)
-//                           << "\n";
-
-//                 if (status == 413)
-//                     connection.request.keep_alive = false;
-
-//                 connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
-//                 connection.writeOffset = 0;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//                 return;
-//             }
-
-//             // INCOMPLETE:
-//             // se o peer já fechou o lado de escrita, nunca mais chega body -> 400 + close
-//             if (connection.peerClosedRead) {
-//                 const Server& active = connection.srv ? *connection.srv : _servers[0];
-//                 connection.request.keep_alive = false;
-//                 connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
-//                 connection.writeOffset = 0;
-
-//                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-//                 if (pit != _fdIndex.end())
-//                     _fds[pit->second].events = POLLOUT;
-
-//                 connection.state = S_WRITE;
-//             }
-//             return;
-//         }
-
-//         return;
-//     }
-// }
-
-void ServerRunner::readFromClient(int clientFd) {
-
-    std::map<int, Connection>::iterator it = _connections.find(clientFd);
-    if (it == _connections.end())
-        return;
-
-    Connection& connection = it->second;
-
-    const std::size_t READ_BUDGET = 256u * 1024u;
-
-    char buffer[4096];
-    std::size_t totalRead = 0;
-
-    // 1) Ler bytes (non-blocking) com cap
-    for (;;) {
-
-        if (totalRead >= READ_BUDGET)
-            break;
-
-        std::size_t want = sizeof(buffer);
-        std::size_t remainingBudget = READ_BUDGET - totalRead;
-        if (remainingBudget < want)
-            want = remainingBudget;
-
-        ssize_t n = read(clientFd, buffer, want);
-
-        if (n > 0) {
-            connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
-            totalRead += static_cast<std::size_t>(n);
-
-            connection.lastActiveMs = _nowMs;
-
-            if (connection.state == S_HEADERS && connection.kaIdleStartMs != 0)
-                connection.kaIdleStartMs = 0;
-
-            continue;
-        }
-
-        if (n == 0) {
-            // EOF / half-close do peer (shutdown(SHUT_WR) ou close no lado do cliente).
-            connection.peerClosedRead = true;
-
-            std::cerr << "[READ-EOF] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " totalRead=" << totalRead
-                      << " rb=" << connection.readBuffer.size()
-                      << " state=" << connection.state
-                      << " wb=" << connection.writeBuffer.size()
-                      << " off=" << connection.writeOffset
-                      << "\n";
-
-            // ✅ FIX CRÍTICO:
-            // EOF com rb==0 enquanto estamos em S_HEADERS (keep-alive idle) é fecho limpo.
-            // NÃO é "header incompleto" -> fechar silenciosamente e sair.
-            if (connection.state == S_HEADERS && connection.readBuffer.empty()) {
-                closeConnection(clientFd);
-                return;
-            }
-
-            // Caso contrário, mantém-se: pode haver request parcial em buffer e queremos parsear.
-            // Desarmar POLLIN (não há mais nada a ler). Manter POLLOUT se houver resposta pendente.
-            std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-            if (pit != _fdIndex.end()) {
-                bool havePendingWrite = (connection.state == S_WRITE)
-                                     || (connection.writeOffset < connection.writeBuffer.size());
-                _fds[pit->second].events = havePendingWrite ? POLLOUT : 0;
-            }
-
-            break; // IMPORTANTÍSSIMO: ainda podemos parsear o que já está em readBuffer
-        }
-
-        if (errno == EINTR)
-            continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            break;
-
-        std::cerr << "[READ-ERR] t=" << _nowMs
-                  << " fd=" << clientFd
-                  << " errno=" << errno
-                  << " msg=" << std::strerror(errno)
-                  << " totalRead=" << totalRead
-                  << " rb=" << connection.readBuffer.size()
-                  << " state=" << connection.state
-                  << "\n";
-        closeConnection(clientFd);
-        return;
-    }
-
-    if (totalRead > 0) {
-        std::cerr << "[READ] t=" << _nowMs
-                  << " fd=" << clientFd
-                  << " got=" << totalRead
-                  << " rb=" << connection.readBuffer.size()
-                  << " state=" << connection.state
-                  << "\n";
-    }
-
-    // Se estamos a escrever, não mexer.
-    if (connection.state == S_WRITE) {
-        std::cerr << "[READ-SKIP-PARSE] t=" << _nowMs
-                  << " fd=" << clientFd
-                  << " rb=" << connection.readBuffer.size()
-                  << " (state=S_WRITE)\n";
-        return;
-    }
-
-    // ---------------- DRAIN ----------------
-    if (connection.state == S_DRAIN) {
-
-        int status = 0;
-        std::string reason;
-        http::BodyResult result = http::BODY_INCOMPLETE;
-
-        const std::size_t maxBody = connection.clientMaxBodySize;
-
-        if (connection.request.body_reader_state == BR_CONTENT_LENGTH)
-            result = http::consume_body_content_length_drain(connection, maxBody, status, reason);
-        else if (connection.request.body_reader_state == BR_CHUNKED)
-            result = http::consume_body_chunked_drain(connection, maxBody, status, reason);
-        else
-            result = http::BODY_COMPLETE;
-
-        std::cerr << "[DRAIN-CONSUME] t=" << _nowMs
-                  << " fd=" << clientFd
-                  << " res=" << result
-                  << " rb=" << connection.readBuffer.size()
-                  << " drained=" << connection.drainedBytes
-                  << "\n";
-
-        if (result == http::BODY_COMPLETE) {
-            std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-            if (pit != _fdIndex.end())
-                _fds[pit->second].events = POLLOUT;
-
-            connection.state = S_WRITE;
-
-            std::cerr << "[DRAIN-DONE->WRITE] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " rb=" << connection.readBuffer.size()
-                      << "\n";
+        std::map<int, Connection>::iterator it = _connections.find(clientFd);
+        if (it == _connections.end())
             return;
-        }
 
-        if (result == http::BODY_ERROR) {
-            std::cerr << "[DRAIN-ERR] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " status=" << status
-                      << " reason=\"" << reason << "\"\n";
+        Connection& connection = it->second;
+
+        const std::size_t READ_BUDGET = 256u * 1024u;
+
+        char buffer[4096];
+        std::size_t totalRead = 0;
+
+        // 1) Ler bytes (non-blocking) com cap
+        for (;;) {
+
+            if (totalRead >= READ_BUDGET)
+                break;
+
+            std::size_t want = sizeof(buffer);
+            std::size_t remainingBudget = READ_BUDGET - totalRead;
+            if (remainingBudget < want)
+                want = remainingBudget;
+
+            ssize_t n = read(clientFd, buffer, want);
+
+            if (n > 0) {
+                connection.readBuffer.append(buffer, static_cast<std::size_t>(n));
+                totalRead += static_cast<std::size_t>(n);
+
+                connection.lastActiveMs = _nowMs;
+
+                if (connection.state == S_HEADERS && connection.kaIdleStartMs != 0)
+                    connection.kaIdleStartMs = 0;
+
+                continue;
+            }
+
+            if (n == 0) {
+                // EOF / half-close do peer
+                connection.peerClosedRead = true;
+
+                std::cerr << "[READ-EOF] t=" << _nowMs
+                        << " fd=" << clientFd
+                        << " totalRead=" << totalRead
+                        << " rb=" << connection.readBuffer.size()
+                        << " state=" << connection.state
+                        << " wb=" << connection.writeBuffer.size()
+                        << " off=" << connection.writeOffset
+                        << "\n";
+
+                if (connection.state == S_HEADERS && connection.readBuffer.empty()) {
+                    closeConnection(clientFd);
+                    return;
+                }
+
+                std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                if (pit != _fdIndex.end()) {
+                    bool havePendingWrite = (connection.writeOffset < connection.writeBuffer.size());
+                    _fds[pit->second].events = havePendingWrite ? POLLOUT : 0;
+                }
+
+                break;
+            }
+
+            if (errno == EINTR)
+                continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                break;
+
+            std::cerr << "[READ-ERR] t=" << _nowMs
+                    << " fd=" << clientFd
+                    << " errno=" << errno
+                    << " msg=" << std::strerror(errno)
+                    << " totalRead=" << totalRead
+                    << " rb=" << connection.readBuffer.size()
+                    << " state=" << connection.state
+                    << "\n";
             closeConnection(clientFd);
             return;
         }
 
-        // Se o peer fechou e ainda estamos a drenar/incompleto, não há mais bytes a chegar -> erro
-        if (connection.peerClosedRead) {
-            const Server& active = connection.srv ? *connection.srv : _servers[0];
-            connection.request.keep_alive = false;
-            connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
-            connection.writeOffset = 0;
-            std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-            if (pit != _fdIndex.end())
-                _fds[pit->second].events = POLLOUT;
-            connection.state = S_WRITE;
+        if (totalRead > 0) {
+            std::cerr << "[READ] t=" << _nowMs
+                    << " fd=" << clientFd
+                    << " got=" << totalRead
+                    << " rb=" << connection.readBuffer.size()
+                    << " state=" << connection.state
+                    << "\n";
         }
-        return;
-    }
 
-    // 2) Parse loop
-    for (;;) {
+        if (connection.state == S_WRITE && !connection.draining) {
+            std::cerr << "[READ-SKIP-PARSE] t=" << _nowMs
+                    << " fd=" << clientFd
+                    << " rb=" << connection.readBuffer.size()
+                    << " (state=S_WRITE)\n";
+            return;
+        }
 
-        // ---------------- HEADERS ----------------
-        if (connection.state == S_HEADERS) {
+        // =================== DRAIN ===================
+        if (connection.state == S_DRAIN || connection.draining) {
 
-            static const std::size_t MAX_HEADER_BYTES = 16 * 1024;
-            if (connection.readBuffer.size() > MAX_HEADER_BYTES
-                && connection.readBuffer.find("\r\n\r\n") == std::string::npos) {
+            int status = 0;
+            std::string reason;
+            http::BodyResult result = http::BODY_INCOMPLETE;
 
-                int st = 431;
-                std::string reason = "Request Header Fields Too Large";
-                const Server& active = connection.srv ? *connection.srv : _servers[0];
+            const std::size_t ignoreMax = std::numeric_limits<std::size_t>::max();
 
-                std::cerr << "[HDR-TOO-LARGE] t=" << _nowMs
-                          << " fd=" << clientFd
-                          << " rb=" << connection.readBuffer.size()
-                          << "\n";
+            if (connection.request.body_reader_state == BR_CONTENT_LENGTH)
+                result = http::consume_body_content_length_drain(connection, ignoreMax, status, reason);
+            else if (connection.request.body_reader_state == BR_CHUNKED)
+                result = http::consume_body_chunked_drain(connection, ignoreMax, status, reason);
+            else
+                result = http::BODY_COMPLETE;
 
-                // ✅ robusto: header gigante -> fechar ligação
-                connection.request.keep_alive = false;
-                connection.request.expectContinue = false;
-                connection.sentContinue = false;
-                connection.peerClosedRead = true; // garante que não esperamos mais requests
+            std::cerr << "[DRAIN-CONSUME] t=" << _nowMs
+                    << " fd=" << clientFd
+                    << " res=" << result
+                    << " rb=" << connection.readBuffer.size()
+                    << " drained=" << connection.drainedBytes
+                    << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
+                    << "\n";
 
-                connection.writeBuffer = http::build_error_response(active, st, reason, false);
-                connection.writeOffset = 0;
+            if (result == http::BODY_COMPLETE) {
+                connection.draining = false;
+
+                if (connection.writeOffset >= connection.writeBuffer.size()) {
+                    closeConnection(clientFd);
+                    return;
+                }
+
+                std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                if (pit != _fdIndex.end())
+                    _fds[pit->second].events = POLLOUT;
+
+                connection.state = S_WRITE;
+
+                std::cerr << "[DRAIN-DONE->WRITE] t=" << _nowMs
+                        << " fd=" << clientFd
+                        << " rb=" << connection.readBuffer.size()
+                        << "\n";
+                return;
+            }
+
+            if (result == http::BODY_ERROR) {
+                if (connection.writeBuffer.empty()) {
+                    const Server& active = connection.srv ? *connection.srv : _servers[0];
+                    connection.request.keep_alive = false;
+                    connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
+                    connection.writeOffset = 0;
+                }
 
                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
                 if (pit != _fdIndex.end())
@@ -1684,22 +751,303 @@ void ServerRunner::readFromClient(int clientFd) {
                 return;
             }
 
-            std::string head;
-            if (!http::extract_next_head(connection.readBuffer, head)) {
-                std::cerr << "[HDR-INCOMPLETE] t=" << _nowMs
-                          << " fd=" << clientFd
-                          << " rb=" << connection.readBuffer.size()
-                          << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-                          << "\n";
-
-                // ✅ FIX CRÍTICO (segunda defesa):
-                // Se o peer fechou e rb==0, isto é keep-alive idle -> fechar silenciosamente.
-                if (connection.peerClosedRead && connection.readBuffer.empty()) {
+            if (connection.peerClosedRead) {
+                if (connection.writeOffset >= connection.writeBuffer.size()) {
                     closeConnection(clientFd);
                     return;
                 }
 
-                // Se o peer fechou e há bytes (header parcial), não vai haver mais -> 400 + close
+                std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                if (pit != _fdIndex.end())
+                    _fds[pit->second].events = POLLOUT;
+                connection.state = S_WRITE;
+            }
+            return;
+        }
+
+        // =================== PARSE LOOP ===================
+        for (;;) {
+
+            // ---------------- HEADERS ----------------
+            if (connection.state == S_HEADERS) {
+
+                static const std::size_t MAX_HEADER_BYTES = 16 * 1024;
+                if (connection.readBuffer.size() > MAX_HEADER_BYTES
+                    && connection.readBuffer.find("\r\n\r\n") == std::string::npos) {
+
+                    int st = 431;
+                    std::string rsn = "Request Header Fields Too Large";
+                    const Server& active = connection.srv ? *connection.srv : _servers[0];
+
+                    std::cerr << "[HDR-TOO-LARGE] t=" << _nowMs
+                            << " fd=" << clientFd
+                            << " rb=" << connection.readBuffer.size()
+                            << "\n";
+
+                    connection.request.keep_alive = false;
+                    connection.request.expectContinue = false;
+                    connection.sentContinue = false;
+
+                    connection.writeBuffer = http::build_error_response(active, st, rsn, false);
+                    connection.writeOffset = 0;
+
+                    std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                    if (pit != _fdIndex.end())
+                        _fds[pit->second].events = POLLOUT;
+
+                    connection.state = S_WRITE;
+                    return;
+                }
+
+                std::string head;
+                if (!http::extract_next_head(connection.readBuffer, head)) {
+
+                    std::cerr << "[HDR-INCOMPLETE] t=" << _nowMs
+                            << " fd=" << clientFd
+                            << " rb=" << connection.readBuffer.size()
+                            << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
+                            << "\n";
+
+                    if (connection.peerClosedRead && connection.readBuffer.empty()) {
+                        closeConnection(clientFd);
+                        return;
+                    }
+
+                    if (connection.peerClosedRead) {
+                        const Server& active = connection.srv ? *connection.srv : _servers[0];
+                        connection.request.keep_alive = false;
+                        connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
+                        connection.writeOffset = 0;
+
+                        std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                        if (pit != _fdIndex.end())
+                            _fds[pit->second].events = POLLOUT;
+
+                        connection.state = S_WRITE;
+                    }
+                    return;
+                }
+
+                std::cerr << "[HDR-EXTRACT] t=" << _nowMs
+                        << " fd=" << clientFd
+                        << " headBytes=" << head.size()
+                        << " rb_after=" << connection.readBuffer.size()
+                        << "\n";
+
+                int status = 0;
+                std::string reason;
+                if (!http::parse_head(head, connection.request, status, reason)) {
+
+                    const Server& active = connection.srv ? *connection.srv : _servers[0];
+
+                    std::cerr << "[HDR-PARSE-FAIL] t=" << _nowMs
+                            << " fd=" << clientFd
+                            << " status=" << status
+                            << " reason=\"" << reason << "\""
+                            << " ka=" << (connection.request.keep_alive ? 1 : 0)
+                            << "\n";
+
+                    if (status == 413)
+                        connection.request.keep_alive = false;
+
+                    connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
+                    connection.writeOffset = 0;
+
+                    std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                    if (pit != _fdIndex.end())
+                        _fds[pit->second].events = POLLOUT;
+
+                    connection.state = S_WRITE;
+                    return;
+                }
+
+                connection.headersComplete = true;
+
+                std::cerr << "[HDR-OK] t=" << _nowMs
+                        << " fd=" << clientFd
+                        << " m=" << connection.request.method
+                        << " target=" << connection.request.target
+                        << " path=" << connection.request.path
+                        << " br=" << connection.request.body_reader_state
+                        << " cl=" << connection.request.content_length
+                        << " te=\"" << connection.request.transfer_encoding << "\""
+                        << " ka=" << (connection.request.keep_alive ? 1 : 0)
+                        << " exp=" << (connection.request.expectContinue ? 1 : 0)
+                        << " rb=" << connection.readBuffer.size()
+                        << "\n";
+
+                // ---- client_max_body_size resolution ----
+                size_t limit = std::numeric_limits<size_t>::max();
+                bool fromLoc = false;
+                const Location* loc = NULL;
+
+                if (connection.srv) {
+                    if ((loc = longestPrefixMatch(*connection.srv, connection.request.path))) {
+                        if (loc->directives.count("client_max_body_size")) {
+                            limit = parseSize(loc->directives.find("client_max_body_size")->second);
+                            fromLoc = true;
+                        }
+                    }
+                    if (!fromLoc && connection.srv->directives.count("client_max_body_size"))
+                        limit = parseSize(connection.srv->directives.find("client_max_body_size")->second);
+                }
+                connection.clientMaxBodySize = limit;
+
+                // ---- EARLY CHECKS (CL > limit) ----
+                {
+                    const Server& active = connection.srv ? *connection.srv : _servers[0];
+
+                    if (connection.request.body_reader_state == BR_CONTENT_LENGTH
+                        && connection.request.content_length > connection.clientMaxBodySize) {
+
+                        std::cerr << "[EARLY-413] t=" << _nowMs
+                                << " fd=" << clientFd
+                                << " cl=" << connection.request.content_length
+                                << " max=" << connection.clientMaxBodySize
+                                << "\n";
+
+                        connection.request.keep_alive = false;
+                        connection.request.expectContinue = false;
+                        connection.sentContinue = false;
+
+                        // Resposta pronta para enviar já
+                        connection.writeBuffer = http::build_error_response(active, 413, "Payload Too Large", false);
+                        connection.writeOffset = 0;
+
+                        // ✅ SEM DRAIN: manda e fecha depois
+                        connection.draining = false;
+                        connection.state = S_WRITE;
+
+                        std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                        if (pit != _fdIndex.end())
+                            _fds[pit->second].events = POLLOUT;
+
+                        return;
+                    }
+
+                    // (o resto do teu EARLY-405/others fica igual)
+                }
+
+                // ---- Transition depending on body presence ----
+                if (connection.request.body_reader_state == BR_NONE) {
+                    std::cerr << "[DISPATCH-NO-BODY] t=" << _nowMs
+                            << " fd=" << clientFd
+                            << " rb=" << connection.readBuffer.size()
+                            << "\n";
+                    handleRequest(connection);
+                    return;
+                }
+
+                if (connection.request.expectContinue == true) {
+
+                    std::cerr << "[SEND-100] t=" << _nowMs
+                            << " fd=" << clientFd
+                            << " rb=" << connection.readBuffer.size()
+                            << "\n";
+
+                    connection.writeBuffer = "HTTP/1.1 100 Continue\r\n\r\n";
+                    connection.writeOffset = 0;
+                    connection.sentContinue = true;
+
+                    std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                    if (pit != _fdIndex.end())
+                        _fds[pit->second].events = POLLOUT;
+
+                    connection.state = S_WRITE;
+                    return;
+                }
+
+                connection.state = S_BODY;
+
+                std::cerr << "[STATE->BODY] t=" << _nowMs
+                        << " fd=" << clientFd
+                        << " rb=" << connection.readBuffer.size()
+                        << "\n";
+                continue;
+            }
+
+            // ---------------- BODY ----------------
+            if (connection.state == S_BODY) {
+
+                int status = 0;
+                std::string reason;
+                http::BodyResult result = http::BODY_INCOMPLETE;
+
+                const std::size_t maxBody = connection.clientMaxBodySize;
+
+                switch (connection.request.body_reader_state) {
+                    case BR_CONTENT_LENGTH:
+                        result = http::consume_body_content_length(connection, maxBody, status, reason);
+                        break;
+                    case BR_CHUNKED:
+                        result = http::consume_body_chunked(connection, maxBody, status, reason);
+                        break;
+                    default:
+                        status = 400;
+                        reason = "Bad Request";
+                        result = http::BODY_ERROR;
+                }
+
+                std::cerr << "[BODY-CONSUME] t=" << _nowMs
+                        << " fd=" << clientFd
+                        << " res=" << result
+                        << " rb=" << connection.readBuffer.size()
+                        << " body=" << connection.request.body.size()
+                        << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
+                        << "\n";
+
+                if (result == http::BODY_COMPLETE) {
+                    std::cerr << "[DISPATCH-BODY] t=" << _nowMs
+                            << " fd=" << clientFd
+                            << " body=" << connection.request.body.size()
+                            << " rb=" << connection.readBuffer.size()
+                            << "\n";
+                    handleRequest(connection);
+                    return;
+                }
+
+                if (result == http::BODY_ERROR) {
+                    const Server& active = connection.srv ? *connection.srv : _servers[0];
+
+                    std::cerr << "[BODY-ERR] t=" << _nowMs
+                            << " fd=" << clientFd
+                            << " status=" << status
+                            << " reason=\"" << reason << "\""
+                            << " ka=" << (connection.request.keep_alive ? 1 : 0)
+                            << "\n";
+
+                    if (status == 413) {
+                        // ✅ 413: responder e fechar SEM DRAIN
+                        connection.request.keep_alive = false;
+                        connection.request.expectContinue = false;
+                        connection.sentContinue = false;
+
+                        connection.writeBuffer = http::build_error_response(active, 413, "Payload Too Large", false);
+                        connection.writeOffset = 0;
+
+                        connection.draining = false;
+                        connection.state = S_WRITE;
+
+                        std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                        if (pit != _fdIndex.end())
+                            _fds[pit->second].events = POLLOUT;
+
+                        return;
+                    }
+
+                    // Outros erros: responder e fechar/KA conforme request.keep_alive
+                    connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
+                    connection.writeOffset = 0;
+
+                    std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+                    if (pit != _fdIndex.end())
+                        _fds[pit->second].events = POLLOUT;
+
+                    connection.state = S_WRITE;
+                    return;
+                }
+
+                // INCOMPLETE:
                 if (connection.peerClosedRead) {
                     const Server& active = connection.srv ? *connection.srv : _servers[0];
                     connection.request.keep_alive = false;
@@ -1715,435 +1063,237 @@ void ServerRunner::readFromClient(int clientFd) {
                 return;
             }
 
-            std::cerr << "[HDR-EXTRACT] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " headBytes=" << head.size()
-                      << " rb_after=" << connection.readBuffer.size()
-                      << "\n";
+            return;
+        }
+    }
 
-            int status = 0;
-            std::string reason;
-            if (!http::parse_head(head, connection.request, status, reason)) {
 
-                // ✅ nunca dar throw aqui: fallback seguro
-                const Server& active = connection.srv ? *connection.srv : _servers[0];
 
-                std::cerr << "[HDR-PARSE-FAIL] t=" << _nowMs
-                          << " fd=" << clientFd
-                          << " status=" << status
-                          << " reason=\"" << reason << "\""
-                          << " ka=" << (connection.request.keep_alive ? 1 : 0)
-                          << "\n";
 
-                if (status == 413)
-                    connection.request.keep_alive = false;
+    static bool containsConnectionClose(const std::string& buf) {
+        // Procura de forma case-insensitive por "\nConnection: close"
+        // (inclui o caso do header vir com \r\n)
+        const std::string needle = "\nconnection: close";
+        std::string lower;
+        lower.reserve(buf.size());
+        for (std::size_t i = 0; i < buf.size(); ++i) {
+            unsigned char c = static_cast<unsigned char>(buf[i]);
+            lower.push_back(static_cast<char>(std::tolower(c)));
+        }
+        return (lower.find(needle) != std::string::npos);
+    }
 
-                connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
-                connection.writeOffset = 0;
 
-                std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-                if (pit != _fdIndex.end())
-                    _fds[pit->second].events = POLLOUT;
+    void ServerRunner::writeToClient(int clientFd) {
 
-                connection.state = S_WRITE;
-                return;
-            }
+        std::map<int, Connection>::iterator it = _connections.find(clientFd);
+        if (it == _connections.end())
+            return;
 
-            connection.headersComplete = true;
+        Connection& connection = it->second;
 
-            std::cerr << "[HDR-OK] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " m=" << connection.request.method
-                      << " target=" << connection.request.target
-                      << " path=" << connection.request.path
-                      << " br=" << connection.request.body_reader_state
-                      << " cl=" << connection.request.content_length
-                      << " te=\"" << connection.request.transfer_encoding << "\""
-                      << " ka=" << (connection.request.keep_alive ? 1 : 0)
-                      << " exp=" << (connection.request.expectContinue ? 1 : 0)
-                      << " rb=" << connection.readBuffer.size()
-                      << "\n";
+        const std::size_t WRITE_BUDGET = 256u * 1024u;
 
-            // ---- client_max_body_size resolution ----
-            size_t limit = std::numeric_limits<size_t>::max();
-            bool fromLoc = false;
-            const Location* loc = NULL;
+        // Se não há nada para enviar, trata como "fim de resposta".
+        if (connection.writeOffset >= connection.writeBuffer.size()) {
+            std::cerr << "[WRITE-DONE-FASTPATH] t=" << _nowMs
+                    << " fd=" << clientFd
+                    << " wb=" << connection.writeBuffer.size()
+                    << " off=" << connection.writeOffset
+                    << " sentContinue=" << (connection.sentContinue ? 1 : 0)
+                    << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
+                    << " draining=" << (connection.draining ? 1 : 0)
+                    << " state=" << connection.state
+                    << "\n";
+        } else {
 
-            if (connection.srv) {
-                if ((loc = longestPrefixMatch(*connection.srv, connection.request.path))) {
-                    if (loc->directives.count("client_max_body_size")) {
-                        limit = parseSize(loc->directives.find("client_max_body_size")->second);
-                        fromLoc = true;
-                    }
+            const char* base = connection.writeBuffer.data();
+            std::size_t sentThisCall = 0;
+
+            while (connection.writeOffset < connection.writeBuffer.size()) {
+
+                if (sentThisCall >= WRITE_BUDGET)
+                    break;
+
+                const char* buf = base + connection.writeOffset;
+                std::size_t remaining = connection.writeBuffer.size() - connection.writeOffset;
+
+                std::size_t remainingBudget = WRITE_BUDGET - sentThisCall;
+                if (remainingBudget < remaining)
+                    remaining = remainingBudget;
+
+                ssize_t n = write(clientFd, buf, remaining);
+
+                if (n > 0) {
+                    connection.writeOffset += static_cast<std::size_t>(n);
+                    sentThisCall += static_cast<std::size_t>(n);
+                    connection.lastActiveMs = _nowMs;
+                    continue;
                 }
-                if (!fromLoc && connection.srv->directives.count("client_max_body_size"))
-                    limit = parseSize(connection.srv->directives.find("client_max_body_size")->second);
-            }
-            connection.clientMaxBodySize = limit;
 
-            // ---- EARLY CHECKS ----
-            {
-                const Server& active = connection.srv ? *connection.srv : _servers[0];
+                if (n < 0 && errno == EINTR)
+                    continue;
 
-                if (connection.request.body_reader_state == BR_CONTENT_LENGTH
-                    && connection.request.content_length > connection.clientMaxBodySize) {
-
-                    std::cerr << "[EARLY-413] t=" << _nowMs
-                              << " fd=" << clientFd
-                              << " cl=" << connection.request.content_length
-                              << " max=" << connection.clientMaxBodySize
-                              << "\n";
-
-                    connection.request.keep_alive = false;
-                    connection.request.expectContinue = false;
-                    connection.sentContinue = false;
-
-                    connection.writeBuffer = http::build_error_response(active, 413, "Payload Too Large", false);
-                    connection.writeOffset = 0;
-
-                    if (connection.request.body_reader_state != BR_NONE) {
-                        connection.drainedBytes = 0;
-                        connection.state = S_DRAIN;
-                        std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-                        if (pit != _fdIndex.end())
-                            _fds[pit->second].events = POLLIN;
-                        return;
-                    }
-
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
                     std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
                     if (pit != _fdIndex.end())
                         _fds[pit->second].events = POLLOUT;
 
-                    connection.state = S_WRITE;
+                    std::cerr << "[WRITE-BLOCK] t=" << _nowMs
+                            << " fd=" << clientFd
+                            << " sent=" << sentThisCall
+                            << " wb=" << connection.writeBuffer.size()
+                            << " off=" << connection.writeOffset
+                            << "\n";
                     return;
                 }
 
-                // (resto do teu EARLY-405 fica igual)
-                // ...
-            }
+                std::cerr << "[WRITE-ERR] t=" << _nowMs
+                        << " fd=" << clientFd
+                        << " errno=" << errno
+                        << " msg=" << std::strerror(errno)
+                        << " sent=" << sentThisCall
+                        << " wb=" << connection.writeBuffer.size()
+                        << " off=" << connection.writeOffset
+                        << "\n";
 
-            // ---- Transition depending on body presence ----
-            if (connection.request.body_reader_state == BR_NONE) {
-                std::cerr << "[DISPATCH-NO-BODY] t=" << _nowMs
-                          << " fd=" << clientFd
-                          << " rb=" << connection.readBuffer.size()
-                          << "\n";
-                handleRequest(connection);
+                closeConnection(clientFd);
                 return;
             }
 
-            if (connection.request.expectContinue == true) {
-                std::cerr << "[SEND-100] t=" << _nowMs
-                          << " fd=" << clientFd
-                          << " rb=" << connection.readBuffer.size()
-                          << "\n";
-
-                connection.writeBuffer = "HTTP/1.1 100 Continue\r\n\r\n";
-                connection.writeOffset = 0;
-                connection.sentContinue = true;
-
+            if (connection.writeOffset < connection.writeBuffer.size()) {
                 std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
                 if (pit != _fdIndex.end())
                     _fds[pit->second].events = POLLOUT;
 
-                connection.state = S_WRITE;
+                std::cerr << "[WRITE-YIELD] t=" << _nowMs
+                        << " fd=" << clientFd
+                        << " sent=" << sentThisCall
+                        << " wb=" << connection.writeBuffer.size()
+                        << " off=" << connection.writeOffset
+                        << "\n";
                 return;
             }
+
+            std::cerr << "[WRITE-DONE] t=" << _nowMs
+                    << " fd=" << clientFd
+                    << " sent=" << sentThisCall
+                    << " wb=" << connection.writeBuffer.size()
+                    << " off=" << connection.writeOffset
+                    << " sentContinue=" << (connection.sentContinue ? 1 : 0)
+                    << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
+                    << " draining=" << (connection.draining ? 1 : 0)
+                    << " state=" << connection.state
+                    << "\n";
+        }
+
+        // ================== FIM DE RESPOSTA (lógica comum) ==================
+
+        // ⚠️ PATCH IMPORTANTE:
+        // Calcula isto ANTES de mexer/limpar no writeBuffer.
+        const bool responseSaysClose = containsConnectionClose(connection.writeBuffer);
+
+        // Caso especial: 100-continue
+        if (connection.sentContinue) {
+
+            connection.sentContinue = false;
+            connection.writeBuffer.clear();
+            connection.writeOffset = 0;
 
             connection.state = S_BODY;
 
-            std::cerr << "[STATE->BODY] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " rb=" << connection.readBuffer.size()
-                      << "\n";
-            continue;
-        }
-
-        // ---------------- BODY ----------------
-        if (connection.state == S_BODY) {
-
-            int status = 0;
-            std::string reason;
-            http::BodyResult result = http::BODY_INCOMPLETE;
-
-            const std::size_t maxBody = connection.clientMaxBodySize;
-
-            switch (connection.request.body_reader_state) {
-                case BR_CONTENT_LENGTH:
-                    result = http::consume_body_content_length(connection, maxBody, status, reason);
-                    break;
-                case BR_CHUNKED:
-                    result = http::consume_body_chunked(connection, maxBody, status, reason);
-                    break;
-                default:
-                    status = 400;
-                    reason = "Bad Request";
-                    result = http::BODY_ERROR;
-            }
-
-            std::cerr << "[BODY-CONSUME] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " res=" << result
-                      << " rb=" << connection.readBuffer.size()
-                      << " body=" << connection.request.body.size()
-                      << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-                      << "\n";
-
-            if (result == http::BODY_COMPLETE) {
-                std::cerr << "[DISPATCH-BODY] t=" << _nowMs
-                          << " fd=" << clientFd
-                          << " body=" << connection.request.body.size()
-                          << " rb=" << connection.readBuffer.size()
-                          << "\n";
-                handleRequest(connection);
-                return;
-            }
-
-            if (result == http::BODY_ERROR) {
-                const Server& active = connection.srv ? *connection.srv : _servers[0];
-
-                std::cerr << "[BODY-ERR] t=" << _nowMs
-                          << " fd=" << clientFd
-                          << " status=" << status
-                          << " reason=\"" << reason << "\""
-                          << " ka=" << (connection.request.keep_alive ? 1 : 0)
-                          << "\n";
-
-                if (status == 413)
-                    connection.request.keep_alive = false;
-
-                connection.writeBuffer = http::build_error_response(active, status, reason, connection.request.keep_alive);
-                connection.writeOffset = 0;
-
-                std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-                if (pit != _fdIndex.end())
-                    _fds[pit->second].events = POLLOUT;
-
-                connection.state = S_WRITE;
-                return;
-            }
-
-            // INCOMPLETE:
-            // se o peer já fechou o lado de escrita, nunca mais chega body -> 400 + close
-            if (connection.peerClosedRead) {
-                const Server& active = connection.srv ? *connection.srv : _servers[0];
-                connection.request.keep_alive = false;
-                connection.writeBuffer = http::build_error_response(active, 400, "Bad Request", false);
-                connection.writeOffset = 0;
-
-                std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-                if (pit != _fdIndex.end())
-                    _fds[pit->second].events = POLLOUT;
-
-                connection.state = S_WRITE;
-            }
-            return;
-        }
-
-        return;
-    }
-}
-
-
-
-static bool containsConnectionClose(const std::string& buf) {
-    // Procura de forma case-insensitive por "\nConnection: close"
-    // (inclui o caso do header vir com \r\n)
-    const std::string needle = "\nconnection: close";
-    std::string lower;
-    lower.reserve(buf.size());
-    for (std::size_t i = 0; i < buf.size(); ++i) {
-        unsigned char c = static_cast<unsigned char>(buf[i]);
-        lower.push_back(static_cast<char>(std::tolower(c)));
-    }
-    return (lower.find(needle) != std::string::npos);
-}
-
-
-void ServerRunner::writeToClient(int clientFd) {
-
-    std::map<int, Connection>::iterator it = _connections.find(clientFd);
-    if (it == _connections.end())
-        return;
-
-    Connection& connection = it->second;
-
-    const std::size_t WRITE_BUDGET = 256u * 1024u;
-
-    // Se não há nada para enviar, trata como "fim de resposta" (não é noop).
-    if (connection.writeOffset >= connection.writeBuffer.size()) {
-        std::cerr << "[WRITE-DONE-FASTPATH] t=" << _nowMs
-                  << " fd=" << clientFd
-                  << " wb=" << connection.writeBuffer.size()
-                  << " off=" << connection.writeOffset
-                  << " sentContinue=" << (connection.sentContinue ? 1 : 0)
-                  << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-                  << "\n";
-    } else {
-
-        const char* base = connection.writeBuffer.data();
-        std::size_t sentThisCall = 0;
-
-        while (connection.writeOffset < connection.writeBuffer.size()) {
-
-            if (sentThisCall >= WRITE_BUDGET)
-                break;
-
-            const char* buf = base + connection.writeOffset;
-            std::size_t remaining = connection.writeBuffer.size() - connection.writeOffset;
-
-            std::size_t remainingBudget = WRITE_BUDGET - sentThisCall;
-            if (remainingBudget < remaining)
-                remaining = remainingBudget;
-
-            ssize_t n = write(clientFd, buf, remaining);
-
-            if (n > 0) {
-                connection.writeOffset += static_cast<std::size_t>(n);
-                sentThisCall += static_cast<std::size_t>(n);
-                connection.lastActiveMs = _nowMs;
-                continue;
-            }
-
-            if (n < 0 && errno == EINTR)
-                continue;
-
-            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-                if (pit != _fdIndex.end())
-                    _fds[pit->second].events = POLLOUT;
-
-                std::cerr << "[WRITE-BLOCK] t=" << _nowMs
-                          << " fd=" << clientFd
-                          << " sent=" << sentThisCall
-                          << " wb=" << connection.writeBuffer.size()
-                          << " off=" << connection.writeOffset
-                          << "\n";
-                return;
-            }
-
-            std::cerr << "[WRITE-ERR] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " errno=" << errno
-                      << " msg=" << std::strerror(errno)
-                      << " sent=" << sentThisCall
-                      << " wb=" << connection.writeBuffer.size()
-                      << " off=" << connection.writeOffset
-                      << "\n";
-
-            closeConnection(clientFd);
-            return;
-        }
-
-        if (connection.writeOffset < connection.writeBuffer.size()) {
             std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
             if (pit != _fdIndex.end())
-                _fds[pit->second].events = POLLOUT;
+                _fds[pit->second].events = POLLIN;
 
-            std::cerr << "[WRITE-YIELD] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " sent=" << sentThisCall
-                      << " wb=" << connection.writeBuffer.size()
-                      << " off=" << connection.writeOffset
-                      << "\n";
             return;
         }
 
-        std::cerr << "[WRITE-DONE] t=" << _nowMs
-                  << " fd=" << clientFd
-                  << " sent=" << sentThisCall
-                  << " wb=" << connection.writeBuffer.size()
-                  << " off=" << connection.writeOffset
-                  << " sentContinue=" << (connection.sentContinue ? 1 : 0)
-                  << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-                  << "\n";
-    }
+        // ✅ PATCH (como combinado):
+        // Se estamos em DRAIN, NÃO fechar após enviar a resposta.
+        // Continuar a ler e descartar até ao fim do body (ou EOF).
+        if (connection.draining || connection.state == S_DRAIN) {
 
-    // ================== FIM DE RESPOSTA (lógica comum) ==================
+            // aqui já acabaste de enviar esta resposta inteira,
+            // por isso podes limpar o buffer para não re-enviar.
+            connection.writeBuffer.clear();
+            connection.writeOffset = 0;
 
-    // Caso especial: 100-continue
-    if (connection.sentContinue) {
+            connection.state = S_DRAIN;
 
-        connection.sentContinue = false;
-        connection.writeBuffer.clear();
-        connection.writeOffset = 0;
+            std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+            if (pit != _fdIndex.end())
+                _fds[pit->second].events = POLLIN;
 
-        connection.state = S_BODY;
-
-        std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-        if (pit != _fdIndex.end())
-            _fds[pit->second].events = POLLIN;
-
-        return;
-    }
-
-    // Respeitar a resposta: se ela diz "Connection: close", fecha mesmo que request seja keep-alive.
-    const bool responseSaysClose = containsConnectionClose(connection.writeBuffer);
-
-    const bool keep = connection.request.keep_alive
-                   && !connection.peerClosedRead
-                   && !responseSaysClose;
-
-    if (keep) {
-
-        const std::size_t bufferedNext = connection.readBuffer.size();
-
-        std::cerr << "[KA-RESET-BEGIN] t=" << _nowMs
-                  << " fd=" << clientFd
-                  << " bufferedNext=" << bufferedNext
-                  << " (readBuffer preserved)\n";
-
-        connection.writeBuffer.clear();
-        connection.writeOffset = 0;
-
-        connection.headersComplete = false;
-        connection.sentContinue = false;
-
-        connection.request = HTTP_Request();
-        connection.response = HTTP_Response();
-
-        connection.state = S_HEADERS;
-
-        // reset flags por-request
-        connection.peerClosedRead = false;
-
-        if (bufferedNext == 0)
-            connection.kaIdleStartMs = _nowMs;
-        else
-            connection.kaIdleStartMs = 0;
-
-        connection.lastActiveMs = _nowMs;
-
-        std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-        if (pit != _fdIndex.end())
-            _fds[pit->second].events = POLLIN;
-
-        std::cerr << "[KA-RESET-END] t=" << _nowMs
-                  << " fd=" << clientFd
-                  << " bufferedNext=" << connection.readBuffer.size()
-                  << " state=" << connection.state
-                  << " kaIdle=" << connection.kaIdleStartMs
-                  << "\n";
-
-        if (!connection.readBuffer.empty()) {
-            std::cerr << "[KA-IMMEDIATE-PARSE] t=" << _nowMs
-                      << " fd=" << clientFd
-                      << " rb=" << connection.readBuffer.size()
-                      << "\n";
-            readFromClient(clientFd);
+            return;
         }
 
-        return;
+        const bool keep = connection.request.keep_alive
+                    && !connection.peerClosedRead
+                    && !responseSaysClose;
+
+        if (keep) {
+
+            const std::size_t bufferedNext = connection.readBuffer.size();
+
+            std::cerr << "[KA-RESET-BEGIN] t=" << _nowMs
+                    << " fd=" << clientFd
+                    << " bufferedNext=" << bufferedNext
+                    << " (readBuffer preserved)\n";
+
+            connection.writeBuffer.clear();
+            connection.writeOffset = 0;
+
+            connection.headersComplete = false;
+            connection.sentContinue = false;
+
+            connection.request = HTTP_Request();
+            connection.response = HTTP_Response();
+
+            connection.state = S_HEADERS;
+
+            // reset flags por-request
+            connection.peerClosedRead = false;
+
+            if (bufferedNext == 0)
+                connection.kaIdleStartMs = _nowMs;
+            else
+                connection.kaIdleStartMs = 0;
+
+            connection.lastActiveMs = _nowMs;
+
+            std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+            if (pit != _fdIndex.end())
+                _fds[pit->second].events = POLLIN;
+
+            std::cerr << "[KA-RESET-END] t=" << _nowMs
+                    << " fd=" << clientFd
+                    << " bufferedNext=" << connection.readBuffer.size()
+                    << " state=" << connection.state
+                    << " kaIdle=" << connection.kaIdleStartMs
+                    << "\n";
+
+            if (!connection.readBuffer.empty()) {
+                std::cerr << "[KA-IMMEDIATE-PARSE] t=" << _nowMs
+                        << " fd=" << clientFd
+                        << " rb=" << connection.readBuffer.size()
+                        << "\n";
+                readFromClient(clientFd);
+            }
+
+            return;
+        }
+
+        std::cerr << "[CLOSE-AFTER-RESP] t=" << _nowMs
+                << " fd=" << clientFd
+                << " keep=0"
+                << " respClose=" << (responseSaysClose ? 1 : 0)
+                << "\n";
+
+        closeConnection(clientFd);
     }
 
-    std::cerr << "[CLOSE-AFTER-RESP] t=" << _nowMs
-              << " fd=" << clientFd
-              << " keep=0"
-              << " respClose=" << (responseSaysClose ? 1 : 0)
-              << "\n";
 
-    closeConnection(clientFd);
-}
 
 
 

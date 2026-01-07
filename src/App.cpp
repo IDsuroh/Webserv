@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/06 12:49:32 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/06 17:06:15 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -666,37 +666,6 @@ static void logReqLine(const char* tag,
 	// */
 
 
-	// RequestKind classifyRequest(const EffectiveConfig& cfg,
-	// 							const std::string& path,
-	// 							const std::string& fsPath,
-	// 							const HTTP_Request& req)
-	// {
-	// 	(void)fsPath;
-
-	// 	// 1) Upload tem prioridade em POST quando existe upload_store
-	// 	if (req.method == "POST" && !cfg.uploadStore.empty())
-	// 		return RK_UPLOAD;
-
-	// 	// 2) Se a extensão bater num cgi_pass => é CGI (independente de existir)
-	// 	if (isCgiRequest(cfg, path))
-	// 		return RK_CGI;
-
-	// 	// 3) Restante: filesystem normal
-	// 	struct stat st;
-	// 	if (stat(fsPath.c_str(), &st) != 0) {
-	// 		if (errno == EACCES)
-	// 			return RK_FORBIDDEN;
-	// 		return RK_NOT_FOUND;
-	// 	}
-
-	// 	if (S_ISDIR(st.st_mode))
-	// 		return RK_DIRECTORY;
-
-	// 	if (S_ISREG(st.st_mode))
-	// 		return RK_STATIC_FILE;
-
-	// 	return RK_FORBIDDEN;
-	// }
 
 	RequestKind classifyRequest(const EffectiveConfig& cfg,
                             const std::string& path,
@@ -1964,30 +1933,7 @@ static void logReqLine(const char* tag,
 	 Handles a simple upload request: validates the filename and upload directory,
 	 checks for conflicts, writes the file, and returns 201 on success.
 	*/
-	// HTTP_Response handleUploadRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 
-	// 	if (isMultipart(req))											// Allow only simple uploads (reject multipart/form-data - requires boundary parsing)
-    //     	return makeErrorResponse(501, &cfg);
-
-	// 	std::string filename = extractFilename(fsPath);
-	// 	if (filename.empty() || !isSanitizedFilename(filename))			// Filename validation
-	// 		return makeErrorResponse(400, &cfg);
-			
-	// 	std::string dest = joinPath(cfg.uploadStore, filename);
-
-	// 	if (!isValidUploadDirectory(cfg.uploadStore))
-	// 		return makeErrorResponse(500, &cfg);
-
-	// 	int status = getExistingTargetStatus(dest);
-	// 	if (status != 0)
-	// 		return makeErrorResponse(status, &cfg);
-
-	// 	int writeStatus = writeUploadedFile(dest, req.body);
-	// 	if (writeStatus != 0)
-	// 		return makeErrorResponse(writeStatus, &cfg);
-
-	// 	return makeResponse201(req.target);
-	// }
 
 	HTTP_Response handleUploadRequest(const HTTP_Request& req,
                                   const EffectiveConfig& cfg,
