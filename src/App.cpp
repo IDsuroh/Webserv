@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/06 17:06:15 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/11 20:27:59 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -46,57 +46,57 @@ namespace {
 
 // DEBUG
 
-#include <iostream>
-#include <sstream>
-#include <ctime>
-#include <sys/time.h>
+// #include <iostream>
+// #include <sstream>
+// #include <ctime>
+// #include <sys/time.h>
 
-// Retorna timestamp em ms (bom o suficiente para logs)
-static unsigned long long nowMs() {
-    struct timeval tv;
-    gettimeofday(&tv, 0);
-    return (unsigned long long)tv.tv_sec * 1000ULL + (unsigned long long)tv.tv_usec / 1000ULL;
-}
+// // Retorna timestamp em ms (bom o suficiente para logs)
+// static unsigned long long nowMs() {
+//     struct timeval tv;
+//     gettimeofday(&tv, 0);
+//     return (unsigned long long)tv.tv_sec * 1000ULL + (unsigned long long)tv.tv_usec / 1000ULL;
+// }
 
-// ID incremental por request (process-wide)
-static unsigned long long nextReqId() {
-    static unsigned long long g_id = 0;
-    return ++g_id;
-}
+// // ID incremental por request (process-wide)
+// static unsigned long long nextReqId() {
+//     static unsigned long long g_id = 0;
+//     return ++g_id;
+// }
 
-// Formata log base (C++98)
-static void logReqLine(const char* tag,
-                       unsigned long long id,
-                       const HTTP_Request& req,
-                       const std::string& path,
-                       const std::string& fsPath,
-                       int statusHint /* -1 se não souberes */) {
-    std::cerr
-        << "[" << tag << "] "
-        << "t=" << nowMs()
-        << " id=" << id
-        << " " << req.method
-        << " target=" << req.target
-        << " path=" << path
-        << " fs=" << fsPath;
+// // Formata log base (C++98)
+// static void logReqLine(const char* tag,
+//                        unsigned long long id,
+//                        const HTTP_Request& req,
+//                        const std::string& path,
+//                        const std::string& fsPath,
+//                        int statusHint /* -1 se não souberes */) {
+//     std::cerr
+//         << "[" << tag << "] "
+//         << "t=" << nowMs()
+//         << " id=" << id
+//         << " " << req.method
+//         << " target=" << req.target
+//         << " path=" << path
+//         << " fs=" << fsPath;
 
-    if (statusHint >= 0)
-        std::cerr << " status=" << statusHint;
+//     if (statusHint >= 0)
+//         std::cerr << " status=" << statusHint;
 
-    std::cerr << " ka=" << (req.keep_alive ? "1" : "0");
+//     std::cerr << " ka=" << (req.keep_alive ? "1" : "0");
 
-    // Se quiseres, mostra também TE/CL (muito útil nestes testes)
-    std::map<std::string,std::string>::const_iterator it;
-    it = req.headers.find("transfer-encoding");
-    if (it != req.headers.end())
-        std::cerr << " TE=" << it->second;
+//     // Se quiseres, mostra também TE/CL (muito útil nestes testes)
+//     std::map<std::string,std::string>::const_iterator it;
+//     it = req.headers.find("transfer-encoding");
+//     if (it != req.headers.end())
+//         std::cerr << " TE=" << it->second;
 
-    it = req.headers.find("content-length");
-    if (it != req.headers.end())
-        std::cerr << " CL=" << it->second;
+//     it = req.headers.find("content-length");
+//     if (it != req.headers.end())
+//         std::cerr << " CL=" << it->second;
 
-    std::cerr << "\n";
-}
+//     std::cerr << "\n";
+// }
 
 
 
@@ -2210,184 +2210,134 @@ static void logReqLine(const char* tag,
  */
 HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& servers) {
 
-    unsigned long long reqId = nextReqId();
-    bool keepAlive = req.keep_alive;
+	bool keepAlive = req.keep_alive;
 
-    std::cerr << "[REQ-IN] t=" << nowMs()
-              << " id=" << reqId
-              << " " << req.method
-              << " target=" << req.target
-              << " ka=" << (keepAlive ? "1" : "0")
-              << "\n";
+	if (servers.empty()) {
+		HTTP_Response res = makeErrorResponse(500, NULL);
+		applyConnectionHeader(keepAlive, res);
+		return res;
+	}
 
-    struct ReqLog {
-        static HTTP_Response out(unsigned long long id, bool ka, const char* tag, HTTP_Response res) {
-            std::cerr << "[" << tag << "] t=" << nowMs()
-                      << " id=" << id
-                      << " status=" << res.status
-                      << " close=" << (ka ? "0" : "1")
-                      << " body=" << res.body.size()
-                      << "\n";
-            return res;
-        }
-    };
+	std::string path;
+	std::string query;
+	if (!parseTarget(req, path, query)) {
+		HTTP_Response res = makeErrorResponse(400, NULL);
+		applyConnectionHeader(keepAlive, res);
+		return res;
+	}
 
-    if (servers.empty()) {
-        HTTP_Response res = makeErrorResponse(500, NULL);
-        applyConnectionHeader(keepAlive, res);
-        return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
-    }
+	const Server&   srv = selectServer(servers, req);
+	const Location* loc = matchLocation(srv, path);
 
-    std::string path;
-    std::string query;
-    if (!parseTarget(req, path, query)) {
-        HTTP_Response res = makeErrorResponse(400, NULL);
-        applyConnectionHeader(keepAlive, res);
-        return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
-    }
+	EffectiveConfig cfg;
+	try {
+		cfg = buildEffectiveConfig(srv, loc);
+	} catch (const std::exception&) {
+		HTTP_Response res = makeErrorResponse(500, NULL);
+		applyConnectionHeader(keepAlive, res);
+		return res;
+	}
 
-    const Server& srv = selectServer(servers, req);
-    const Location* loc = matchLocation(srv, path);
+	if (cfg.redirectStatus != 0) {
+		HTTP_Response res = makeRedirectResponse(cfg.redirectStatus, cfg.redirectTarget);
+		applyConnectionHeader(keepAlive, res);
+		return res;
+	}
 
-    EffectiveConfig cfg;
-    try {
-        cfg = buildEffectiveConfig(srv, loc);
-    } catch (const std::exception&) {
-        HTTP_Response res = makeErrorResponse(500, NULL);
-        applyConnectionHeader(keepAlive, res);
-        return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
-    }
+	if (req.method != "GET" && req.method != "POST" && req.method != "DELETE" && req.method != "HEAD") {
+		HTTP_Response res = makeErrorResponse(501, &cfg);
+		applyConnectionHeader(keepAlive, res);
+		return res;
+	}
 
-    if (cfg.redirectStatus != 0) {
-        HTTP_Response res = makeRedirectResponse(cfg.redirectStatus, cfg.redirectTarget);
-        applyConnectionHeader(keepAlive, res);
-        return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
-    }
+	if (!isMethodAllowed(cfg, req.method)) {
+		HTTP_Response res = make405(cfg);
+		applyConnectionHeader(keepAlive, res);
+		return res;
+	}
 
-    if (req.method != "GET" && req.method != "POST" && req.method != "DELETE" && req.method != "HEAD") {
-        HTTP_Response res = makeErrorResponse(501, &cfg);
-        applyConnectionHeader(keepAlive, res);
-        return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
-    }
+	int  status = 0;
+	bool forceClose = false;
+	if (!checkRequestBodyAllowed(cfg, req, status, forceClose)) {
+		if (forceClose)
+			keepAlive = false;
+		HTTP_Response res = makeErrorResponse(status, &cfg);
+		applyConnectionHeader(keepAlive, res);
+		return res;
+	}
 
-    if (!isMethodAllowed(cfg, req.method)) {
-        HTTP_Response res = make405(cfg);
-        applyConnectionHeader(keepAlive, res);
-        return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
-    }
+	std::string fsPath = makeFilesystemPath(cfg, path);
 
-    int  status = 0;
-    bool forceClose = false;
-    if (!checkRequestBodyAllowed(cfg, req, status, forceClose)) {
-        if (forceClose)
-            keepAlive = false;
-        HTTP_Response res = makeErrorResponse(status, &cfg);
-        applyConnectionHeader(keepAlive, res);
-        return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
-    }
+	if (fsPath.empty()) {
+		HTTP_Response res = makeErrorResponse(500, &cfg);
+		applyConnectionHeader(keepAlive, res);
+		return res;
+	}
 
-    std::string fsPath = makeFilesystemPath(cfg, path);
-    logReqLine("REQ-MAP", reqId, req, path, fsPath, -1);
+	if (!normalizePath(fsPath, cfg.root)) {
+		HTTP_Response res = makeErrorResponse(403, &cfg);
+		applyConnectionHeader(keepAlive, res);
+		return res;
+	}
 
-    if (fsPath.empty()) {
-        HTTP_Response res = makeErrorResponse(500, &cfg);
-        applyConnectionHeader(keepAlive, res);
-        return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
-    }
+	RequestKind kind = classifyRequest(cfg, path, fsPath, req);
 
-    if (!normalizePath(fsPath, cfg.root)) {
-        HTTP_Response res = makeErrorResponse(403, &cfg);
-        applyConnectionHeader(keepAlive, res);
-        return ReqLog::out(reqId, keepAlive, "REQ-OUT", res);
-    }
+	HTTP_Response res;
+	switch (kind) {
 
-    RequestKind kind = classifyRequest(cfg, path, fsPath, req);
+		case RK_UPLOAD:
+			res = handleUploadRequest(req, cfg, fsPath);
+			break;
 
-    std::cerr << "[REQ-KIND] t=" << nowMs()
-              << " id=" << reqId
-              << " kind=" << (int)kind
-              << " path=" << path
-              << " fs=" << fsPath
-              << "\n";
+		case RK_CGI: {
+			bool cgiForceClose = false;
+			res = handleCgiRequest(req, cfg, fsPath, cgiForceClose);
+			if (cgiForceClose)
+				keepAlive = false;
+			break;
+		}
 
-    HTTP_Response res;
-    switch (kind) {
+		case RK_DIRECTORY:
+			res = handleDirectoryRequest(req, cfg, fsPath, path);
+			break;
 
-        case RK_UPLOAD:
-            res = handleUploadRequest(req, cfg, fsPath);
-            break;
+		case RK_STATIC_FILE:
+			if (req.method == "DELETE")
+				res = handleDeleteRequest(cfg, fsPath);
+			else
+				res = handleStaticFile(req, cfg, fsPath);
+			break;
 
-        case RK_CGI: {
-            std::cerr << "[CGI-DISPATCH] t=" << nowMs()
-                      << " id=" << reqId
-                      << " target=" << req.target
-                      << " fs=" << fsPath
-                      << "\n";
+		case RK_FORBIDDEN:
+			res = makeErrorResponse(403, &cfg);
+			break;
 
-            bool cgiForceClose = false;
-            res = handleCgiRequest(req, cfg, fsPath, cgiForceClose);
-            if (cgiForceClose)
-                keepAlive = false;
+		case RK_NOT_FOUND:
+		default:
+			res = makeErrorResponse(404, &cfg);
+			break;
+	}
 
-            std::cerr << "[CGI-DONE] t=" << nowMs()
-                      << " id=" << reqId
-                      << " status=" << res.status
-                      << " body=" << res.body.size()
-                      << " close=" << (keepAlive ? "0" : "1")
-                      << "\n";
-            break;
-        }
+	// ---------- FIX CRÍTICO ----------
+	// Se algum handler marcou close, isso tem prioridade.
+	if (res.close)
+		keepAlive = false;
 
-        case RK_DIRECTORY:
-            res = handleDirectoryRequest(req, cfg, fsPath, path);
-            break;
+	// Se algum handler já definiu explicitamente "connection: close", respeitar.
+	{
+		std::map<std::string, std::string>::const_iterator itH;
+		itH = res.headers.find("connection");
+		if (itH == res.headers.end())
+			itH = res.headers.find("Connection");
 
-        case RK_STATIC_FILE:
-            if (req.method == "DELETE")
-                res = handleDeleteRequest(cfg, fsPath);
-            else
-                res = handleStaticFile(req, cfg, fsPath);
-            break;
+		if (itH != res.headers.end()) {
+			std::string v = toLowerCopy(itH->second);
+			if (v.find("close") != std::string::npos)
+				keepAlive = false;
+		}
+	}
+	// --------------------------------
 
-        case RK_FORBIDDEN:
-            res = makeErrorResponse(403, &cfg);
-            break;
-
-        case RK_NOT_FOUND:
-        default:
-            res = makeErrorResponse(404, &cfg);
-            break;
-    }
-
-    // ---------- FIX CRÍTICO ----------
-    // Se algum handler marcou close, isso tem prioridade.
-    if (res.close)
-        keepAlive = false;
-
-    // Se algum handler já definiu explicitamente "connection: close", respeitar.
-    {
-        std::map<std::string, std::string>::const_iterator itH;
-        itH = res.headers.find("connection");
-        if (itH == res.headers.end())
-            itH = res.headers.find("Connection");
-
-        if (itH != res.headers.end()) {
-            std::string v = toLowerCopy(itH->second);
-            if (v.find("close") != std::string::npos)
-                keepAlive = false;
-        }
-    }
-    // --------------------------------
-
-    applyConnectionHeader(keepAlive, res);
-
-    std::cerr << "[REQ-OUT] t=" << nowMs()
-              << " id=" << reqId
-              << " kind=" << (int)kind
-              << " status=" << res.status
-              << " close=" << (keepAlive ? "0" : "1")
-              << " body=" << res.body.size()
-              << "\n";
-
-    return res;
+	applyConnectionHeader(keepAlive, res);
+	return res;
 }
