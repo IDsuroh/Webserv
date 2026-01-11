@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/11 20:27:59 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/11 23:18:39 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -44,114 +44,66 @@
 namespace {
 
 
-// DEBUG
-
-// #include <iostream>
-// #include <sstream>
-// #include <ctime>
-// #include <sys/time.h>
-
-// // Retorna timestamp em ms (bom o suficiente para logs)
-// static unsigned long long nowMs() {
-//     struct timeval tv;
-//     gettimeofday(&tv, 0);
-//     return (unsigned long long)tv.tv_sec * 1000ULL + (unsigned long long)tv.tv_usec / 1000ULL;
-// }
-
-// // ID incremental por request (process-wide)
-// static unsigned long long nextReqId() {
-//     static unsigned long long g_id = 0;
-//     return ++g_id;
-// }
-
-// // Formata log base (C++98)
-// static void logReqLine(const char* tag,
-//                        unsigned long long id,
-//                        const HTTP_Request& req,
-//                        const std::string& path,
-//                        const std::string& fsPath,
-//                        int statusHint /* -1 se não souberes */) {
-//     std::cerr
-//         << "[" << tag << "] "
-//         << "t=" << nowMs()
-//         << " id=" << id
-//         << " " << req.method
-//         << " target=" << req.target
-//         << " path=" << path
-//         << " fs=" << fsPath;
-
-//     if (statusHint >= 0)
-//         std::cerr << " status=" << statusHint;
-
-//     std::cerr << " ka=" << (req.keep_alive ? "1" : "0");
-
-//     // Se quiseres, mostra também TE/CL (muito útil nestes testes)
-//     std::map<std::string,std::string>::const_iterator it;
-//     it = req.headers.find("transfer-encoding");
-//     if (it != req.headers.end())
-//         std::cerr << " TE=" << it->second;
-
-//     it = req.headers.find("content-length");
-//     if (it != req.headers.end())
-//         std::cerr << " CL=" << it->second;
-
-//     std::cerr << "\n";
-// }
-
-
-
-//
-
-
 	// --------------------------------
 	// --- 1. Target (path + query) ---
 	// --------------------------------
 
 	/*
-	 Parses the request target, deriving path and query for origin-form,
-	 absolute-form ("http://…") and the "*" OPTIONS form. Extracts or rebuilds
-	 missing components when needed and returns false on malformed targets.
+	Parses request.target and extracts (path, query) from:
+	- "*" (OPTIONS *)
+	- origin-form: "/path?query"
+	- absolute-form: "http(s)://host/path?query"
+
+	Returns false for malformed/unsupported targets.
 	*/
-	bool parseTarget(const HTTP_Request& request, std::string& path, std::string& query) {
+	bool parseTarget(const HTTP_Request& req, std::string& path, std::string& query) {
 
-		path  = request.path;
-		query = request.query;
+		if (req.target.empty())
+			return false;
 
-		if (request.target == "*") {
+		if (req.target == "*") {                                                // 1) "*" form
 			path = "/";
+			query.clear();
 			return true;
 		}
 
-		if (!path.empty() && path[0] == '/')								// Normal origin-form: "/something"
-			return true;
+		std::string normalizedTarget;                                           // normalized to origin-form: "/path?query"
 
-		const std::string& tgt = request.target;							// Absolute-form: "https://host/path?query"
-		std::string::size_type scheme = tgt.find("://");
-		if (scheme != std::string::npos) {
+		if (req.target[0] == '/') {                                             // 2) origin-form
+			normalizedTarget = req.target;
+		}
+		else {
+			std::string::size_type scheme = req.target.find("://");             // 3) absolute-form
+			if (scheme == std::string::npos)
+				return false;
 
-			std::string::size_type slash = tgt.find('/', scheme + 3);		// Find first '/' after "://"
-			if (slash == std::string::npos) {
+			std::string::size_type slash = req.target.find('/', scheme + 3);
+			if (slash == std::string::npos) {                                   // absolute URI with no path
 				path = "/";
+				query.clear();
 				return true;
 			}
 
-			std::string::size_type q = tgt.find('?', slash);				// Optional query part
-			if (q == std::string::npos) {
-				path = tgt.substr(slash);									// No '?' - everything from slash to end is the path
-			} else {
-				path = tgt.substr(slash, q - slash);						// Path is between first slash and '?'
-
-				if (query.empty() && q + 1 < tgt.size())					// If the core did not populate request.query, reconstruct it here
-					query = tgt.substr(q + 1);
-			}
-
-			return true;
+			normalizedTarget = req.target.substr(slash);                        // "/path?query..."
 		}
 
-		return false;														// Any other form is considered malformed.
+		std::string::size_type questionMark = normalizedTarget.find('?');
+
+		if (questionMark == std::string::npos) {
+			path = normalizedTarget;
+			query.clear();
+		} else {
+			path = normalizedTarget.substr(0, questionMark);
+			query = (questionMark + 1 < normalizedTarget.size()) ? normalizedTarget.substr(questionMark + 1) : "";
+		}
+
+		if (path.empty() || path[0] != '/')
+			return false;
+
+		return true;
 	}
 
-	
+
 	// -----------------------------------
 	// --- 2. Server selection (vhost) ---
 	// -----------------------------------
@@ -175,6 +127,7 @@ namespace {
 		return servers[0];						// Falls back to the first server, matching real-world default vhost behavior (NGINX/Apache).
 	}
 
+	
 	// ----------------------------------------------
 	// --- 3. Location selection (longest prefix) ---
 	// ----------------------------------------------
