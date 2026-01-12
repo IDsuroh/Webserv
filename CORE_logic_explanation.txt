@@ -109,7 +109,10 @@ Once listeners are open, `setupPollFds()` builds the initial monitoring list:
 
 ##3) Connection Lifecycle and State Machine	**Location:** `ServerRunner.cpp` \rightarrow `handleEvents()`
 
-The core loop uses `poll()` to sleep until an event occurs (or a 250ms timeout ticks).
+The core loop uses `poll()` to sleep until an event occurs.
+This runs every loop tick (~250ms). Time accounting uses a relative uptime counter (`_nowMs`)
+derived from `time(NULL)` in milliseconds (1-second granularity).
+
 
 ###3.1 Accepting Clients
 	When `poll` reports `POLLIN` on a **Listening FD**:
@@ -123,11 +126,29 @@ The core loop uses `poll()` to sleep until an event occurs (or a 250ms timeout t
 			* A `Connection` object is created with state `S_HEADERS`.
 			* The Client FD is added to the `_fds` poll list with `POLLIN`.
 
-###3.2 Event Dispatching
-	When `poll` reports activity on a **Client FD**:
-		* If `POLLIN` (Data available to read): Call `readFromClient()`.
-		* If `POLLOUT` (Socket buffer ready to write): Call `writeToClient()`.
-		* If `POLLHUP` or `POLLERR`: Call `closeConnection()`.
+###3.2 Event Dispatching (matches `handleEvents()` order)
+	For each `pollfd` with `revents != 0`:
+
+	1) Determine whether this fd is a **listener** (exists in `_listeners`) or a **client**.
+
+	2) Hard errors:
+		- If `revents` contains `POLLERR` or `POLLNVAL` → `closeConnection(fd)` immediately.
+
+	3) Listener-specific:
+		- If fd is a listener and `revents` contains `POLLHUP` → `closeConnection(fd)`.
+		- If fd is a listener and `revents` contains `POLLIN` → call `acceptNewClient(fd, srv)`.
+
+	4) Client-specific:
+		- If fd is a client and `revents` contains `POLLHUP`:
+			- do **not** close immediately
+			- mark `peerClosedRead = true` (possible half-close)
+			- then continue handling other flags normally
+
+	5) Normal I/O dispatch:
+		- If `revents` contains `POLLIN` → `readFromClient(fd)`
+		- If `revents` contains `POLLOUT` → `writeToClient(fd)`
+
+
 
 ---
 
@@ -137,7 +158,12 @@ This function acts as the "Read Side" of the state machine.
 
 ###4.1 Buffering and Header Parsing
 1. **Reading:** Bytes are read from the socket into `connection.readBuffer`.
-* If `read()` returns 0, the client closed the connection \rightarrow `closeConnection()`.
+* If `read()` returns 0 (EOF / peer half-close):
+  - set `peerClosedRead = true`
+  - if we are in `S_HEADERS` **and** no buffered bytes exist -> close immediately
+  - otherwise continue parsing/handling using whatever is already buffered;
+    keep-alive will be disabled for this connection.
+
 
 2. **State `S_HEADERS`:**
 * The code checks for the Double-CRLF (`\r\n\r\n`) delimiter.
@@ -153,7 +179,17 @@ This function acts as the "Read Side" of the state machine.
 		* **`consume_body_content_length`:** Reads until `readBuffer` contains exactly `Content-Length` bytes.
 		* **`consume_body_chunked`:** Implements a state machine (`CS_SIZE`, `CS_DATA`, `CS_TRAILERS`) to decode hex-formatted chunks.
 
-**Completion:** Once the full body is valid and present in `request.body`, the code proceeds to Request Handling.
+**Completion:** 
+Once the full body is consumed and validated according to the body reader, we proceed to Request Handling.
+
+
+### 4.3 Drain Mode (after errors like 413)
+If we must reject a request (e.g., body > client_max_body_size), we may still need to
+consume and discard the remaining incoming bytes so the TCP stream is in a clean state.
+We:
+- send an error response
+- set `draining = true` / `state = S_DRAIN`
+- keep reading and discarding until body is fully consumed, once the pending response is fully sent, close.
 
 ---
 
@@ -190,19 +226,31 @@ Triggered when `poll` returns `POLLOUT`.
 ssize_t n = write(clientFd, buf + offset, remaining);
 
 * **Partial Writes:** Because the socket is non-blocking, `write` might send fewer bytes than requested
-	(or fail with `EAGAIN` if the kernel buffer fills up).
-* **Logic:** The loop continues as long as `n > 0`. If `n == -1` (EAGAIN), the function returns and waits for the next `POLLOUT` event.
+* **Logic:** The loop continues as long as `n > 0`.
+* Because the socket is non-blocking, `write()` may send fewer bytes than requested.
+* The loop continues while `n > 0`.
+* If `write()` returns `<= 0`, we stop sending for now, keep interest in `POLLOUT`,
+  and rely on the next `poll()` wake-up to retry.
+  (We deliberately do not inspect `errno` in this project version.)
+* The function enforces a WRITE_BUDGET cap per call (prevents starving other sockets).
 
-###6.2 Completion and Keep-Alive
-	Only when `writeOffset == writeBuffer.size()` (all bytes sent):
 
-**Check Keep-Alive:**
-* If `request.keep_alive` is **false**: `closeConnection()`.
-* If `request.keep_alive` is **true**:
-* Reset buffers and request objects.
-* Set state back to `S_HEADERS`.
-* Flip poll interest back to **`POLLIN`**.
-* Record `kaIdleStartMs` for timeout logic.
+###6.2 **Keep-Alive decision (after full response is sent):**
+We keep the connection only if:
+- `request.keep_alive == true`
+- AND `peerClosedRead == false` (peer didn’t half-close)
+- AND the serialized response does not contain `Connection: close`
+
+**Special cases:**
+- If this write was a `100 Continue` response (`sentContinue == true`):
+  - clear writeBuffer, reset offsets
+  - transition to `S_BODY`
+  - switch poll interest back to `POLLIN`
+
+- If we are draining (`draining == true` or `state == S_DRAIN`):
+  - do NOT close after sending the error response
+  - clear writeBuffer and transition to `S_DRAIN`
+  - switch poll interest to `POLLIN` to discard remaining body bytes
 
 
 
@@ -218,3 +266,126 @@ This runs every event loop tick (approx. 250ms). It iterates over all connection
 
 **`closeConnection(fd)`:** Safely closes the socket, removes it from the `_fds` vector (using the "swap and pop" idiom for efficiency),
 	and cleans up the `Connection` object map.
+
+
+
+
+
+
+
+
+_____________________________________________________________________________
+
+App vs Core separation
+
+1. Purpose of the App Layer
+
+The App layer receives a fully parsed HTTP_Request from the Core and returns a fully constructed HTTP_Response.
+It does not manage sockets, poll(), timeouts, chunk parsing, or network I/O.
+The Core handles all of that before and after calling the App.
+
+The App is responsible for:
+- Routing (virtual host + location matching)
+- Method allow-lists
+- Path normalization + secure root mapping
+- Selecting resource type (static file, directory, CGI, upload)
+- Applying error pages and redirects
+- Building and returning the response
+
+2. Routing Overview
+2.1 Virtual Host (Server block) Selection
+- Server is selected by matching Host: header against server_name.
+- First server is used as fallback.
+- Exact-match behaviour (no port stripping) is intentional.
+
+2.2 Location Matching
+- Longest-prefix match on the request path.
+- Location only matches when prefix boundary is valid.
+- If no location matches → server-level defaults apply.
+
+2.3 Allowed Methods → 405
+- Methods come from allowedMethods (location overrides server).
+- Default = GET, POST.
+- If method not allowed:
+  - Respond with 405 Method Not Allowed
+  - Set Allow: header listing valid methods
+
+3. Path Normalization & Filesystem Mapping
+3.1 Target Parsing
+- Origin-form or absolute-form URL parsing (path + query).
+- "*" → treated as path “/”.
+
+3.2 Root Mapping
+- makeFilesystemPath maps location root + request path.
+- normalizePath performs:
+  - Component splitting
+  - Handling of . and ..
+  - Ensuring the path stays inside the configured root
+    → escape attempts return 403 Forbidden
+
+3.3 Notes
+- Percent-decoding (%XX) is intentionally not implemented.
+- This does not affect security because traversal is enforced at filesystem level.
+
+4. Resource Types
+The App classifies requests into these categories:
+
+4.1 Static File
+- Regular file → returned with:
+  - 200 OK
+  - MIME type (simple extension map)
+  - Body = file contents
+- HEAD → same headers, empty body
+
+4.2 Directory
+- Try index files (index directive)
+- If not found:
+  - If autoindex on → return generated directory listing
+  - Else → 403 Forbidden
+
+4.3 CGI
+- Triggered by file extension matching cgi_pass
+- Implementation includes:
+  - Building full CGI environment
+  - fork/exec interpreter + script
+  - timeout handling
+  - capturing stdout
+  - header/body parsing (Content-Type or Location required)
+- Invalid CGI output → 502 Bad Gateway
+- Timeout → 504 Gateway Timeout
+
+4.4 Uploads (Simple)
+- If location has upload_store and request is POST:
+  - Filename extracted from path
+  - Sanitization of filename
+  - Prevent overwriting (409)
+  - Successful upload → 201 Created
+- Multipart/form-data is intentionally not implemented
+  → returns 501 Not Implemented
+
+5. Error Pages
+- error_page mapping supports multiple codes → single URI (NGINX-style)
+- If custom error page exists:
+  - Body replaced with error file contents
+  - Status code is preserved
+- If missing/unreadable → fall back to built-in minimal HTML error page
+
+6. Redirection (return)
+- If a location/server defines: return <status> <target>;
+- App immediately responds with that redirect.
+- Only 3xx statuses are accepted; otherwise fallback to 302.
+
+7. Connection Handling
+- If request uses keep-alive:
+  - Connection: keep-alive
+- Otherwise:
+  - Connection: close
+- HEAD requests remove body and Content-Length.
+
+8. Out-of-Scope Items (Intentionally Not Implemented)
+- multipart/form-data upload parsing
+- percent-decoding of URL path
+- advanced virtual-host port-stripping logic
+- realpath() resolution
+- auto-logging system
+
