@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/11 23:18:39 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/12 21:46:59 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -124,10 +124,10 @@ namespace {
 				return servers[i];
 		}
 
-		return servers[0];						// Falls back to the first server, matching real-world default vhost behavior (NGINX/Apache).
+		return servers[0];				// Falls back to the first server, matching real-world default vhost behavior (NGINX/Apache).
 	}
 
-	
+
 	// ----------------------------------------------
 	// --- 3. Location selection (longest prefix) ---
 	// ----------------------------------------------
@@ -153,7 +153,7 @@ namespace {
 
 		return bestMatchLocation;
 	}
-
+	
 
 	// -----------------------------------------------------
 	// --- 4. Effective config (merge Server + Location) ---
@@ -164,7 +164,7 @@ namespace {
 	/*
 	 Default limits for maximum request body size and CGI execution timeout (default configuration constants).
 	*/
-	const std::size_t	kDefaultClientMaxBodySize =	0;	// 0 means no limit / unlimited unless configured
+	const std::size_t	kDefaultClientMaxBodySize =	0;				// 0 means no limit / unlimited unless configured
 	const std::size_t	kDefaultCgiTimeout = 		30;				// 30 seconds
 
 	/*
@@ -225,25 +225,27 @@ namespace {
 
 	/*
 	 Comma-aware parsing (methods/index/cgi_allowed_methods):
-		- Config currently joins multi-values with commas;
-		- Splitting on comma or space prevents “GET,POST” from being treated as one token
-		  (fixes 405s and missing index files).
+	  - Config currently joins multi-values with commas;
+	  - Splitting on comma or space prevents “GET,POST” from being treated as one token
+	    (fixes 405s and missing index files).
 	*/
 	std::vector<std::string> splitWordsAndCommas(const std::string& input) {
-		std::vector<std::string> out;
-		std::string cur;
+		
+		std::vector<std::string> output;
+		std::string currentWord;
+	
 		for (std::size_t i = 0; i <= input.size(); ++i) {
 			char c = (i == input.size()) ? ' ' : input[i];
 			if (c == ',' || std::isspace(static_cast<unsigned char>(c))) {
-				if (!cur.empty()) {
-					out.push_back(cur);
-					cur.clear();
+				if (!currentWord.empty()) {
+					output.push_back(currentWord);
+					currentWord.clear();
 				}
 			}
 			else
-				cur += c;
+				currentWord += c;
 		}
-		return out;
+		return output;
 	}
 
 	/*
@@ -277,30 +279,55 @@ namespace {
 	 the corresponding size in bytes. Throws on invalid syntax or overflow.
 	*/
 	std::size_t parseSizeWithSuffix(const std::string& str) {
+
 		if (str.empty())
 			throw std::runtime_error("Empty numeric value");
-		
+
 		std::istringstream iss(str);
+
 		unsigned long long value = 0;
-		char suffix = 0;
 		if (!(iss >> value))
 			throw std::runtime_error("Invalid numeric value: " + str);
-		if (iss && !iss.eof())
-			iss >> suffix;
-		
-		unsigned long long mult = 1;
-		if (suffix == 'k' || suffix == 'K')
-			mult = 1024ULL;
-		else if (suffix == 'm' || suffix == 'M')
-			mult = 1024ULL * 1024ULL;
-		else if (suffix == 'g' || suffix == 'G')
-			mult = 1024ULL * 1024ULL * 1024ULL;
-		else if (suffix != 0)
-			throw std::runtime_error("Invalid size suffix in: " + str);
-		
-		unsigned long long result = value * mult;
-		if (result > std::numeric_limits<std::size_t>::max())
+
+		char suffix = 0;
+		if (iss >> suffix) {
+			char extra = 0;
+			if (iss >> extra)
+				throw std::runtime_error("Invalid size suffix in: " + str);
+		}
+
+		unsigned long long multiplier = 1;
+		switch (suffix) {
+			case 0:
+				multiplier = 1;
+				break;
+
+			case 'k':
+			case 'K':
+				multiplier = 1024ULL;
+				break;
+
+			case 'm':
+			case 'M':
+				multiplier = 1024ULL * 1024ULL;
+				break;
+
+			case 'g':
+			case 'G':
+				multiplier = 1024ULL * 1024ULL * 1024ULL;
+				break;
+
+			default:
+				throw std::runtime_error("Invalid size suffix in: " + str);
+		}
+
+		if (multiplier != 0 && value > (std::numeric_limits<unsigned long long>::max)() / multiplier)	// Detect overflow before multiplication
+			throw std::runtime_error("Numeric value overflow: " + str);
+
+		unsigned long long result = value * multiplier;													// unsigned long long to prevent overflow before size_t cast
+		if (result > (std::numeric_limits<std::size_t>::max)())
 			throw std::runtime_error("Numeric value exceeds size_t range: " + str);
+
 		return static_cast<std::size_t>(result);
 	}
 
