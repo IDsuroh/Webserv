@@ -63,66 +63,11 @@ void    ServerRunner::housekeeping() {
                 break;
         }
 
-        if (closeIt) {
-            ++it;
+        ++it;
+        if (closeIt)
             closeConnection(fd);
-        } else {
-            ++it;
-        }
     }
 }
-
-
-
-// #include "../include/Log.hpp" // o header que te dei
-
-
-// void ServerRunner::run() {
-
-//     setupListeners(_servers, _listeners);
-//     setupPollFds();
-
-//     if (_fds.empty()) {
-//         std::cerr << "No listeners configured/opened. \n";
-//         return;
-//     }
-
-//     log_init_clock();
-//     LOG_PCAP_MARK(_nowMs, std::cerr, "server-start"); // opcional, mas útil
-
-//     const int POLL_TICK_MS = 250;
-
-//     long long last_mono = now_mono_ms();
-
-//     while (true) {
-//         int n = poll(_fds.empty() ? 0 : &_fds[0],
-//                      static_cast<nfds_t>(_fds.size()),
-//                      POLL_TICK_MS);
-
-//         if (n < 0) {
-//             if (errno == EINTR)
-//                 continue;
-//             printSocketError("poll");
-//             break;
-//         }
-
-//         // ✅ actualiza _nowMs com tempo real monotónico (ms desde o arranque)
-//         long long cur_mono = now_mono_ms();
-//         long long delta = cur_mono - last_mono;
-//         if (delta < 0) delta = 0;               // por segurança extrema
-//         if (delta > 10 * POLL_TICK_MS) {        // se houve uma pausa enorme (ex.: breakpoints), limita
-//             // podes comentar isto se não quiseres clamp
-//             // delta = 10 * POLL_TICK_MS;
-//         }
-//         _nowMs += static_cast<long>(delta);
-//         last_mono = cur_mono;
-
-//         if (n > 0)
-//             handleEvents();
-
-//         housekeeping();
-//     }
-// }
 
 
 
@@ -141,9 +86,7 @@ void ServerRunner::run() {
     const std::time_t   start = std::time(NULL);
 
     while (true) {
-        int n = poll(_fds.empty() ? 0 : &_fds[0],
-                     static_cast<nfds_t>(_fds.size()),
-                     POLL_TICK_MS);
+        int n = poll(&_fds[0], static_cast<nfds_t>(_fds.size()), POLL_TICK_MS);
 
         if (n < 0) {
             if (errno == EINTR)
@@ -462,9 +405,11 @@ void ServerRunner::handleEvents() {
             if (it != _connections.end())
                 it->second.peerClosedRead = true;
 
-            // Força tentativa de leitura para apanhar read()==0 e avançar estados com o que já houver em buffer.
-            // (Mesmo que não haja POLLIN setado, em TCP isto costuma resultar em read()==0.)
-            readFromClient(fd);
+            // readFromClient(fd); // should not read on POLLHUP.
+            // poll() is a contract with the kernel: read() must be driven by POLLIN and write() by POLLOUT.
+            // POLLHUP is not a “permission to read”; it only signals a hangup/half-close possibility.
+            // We mark peerClosedRead and wait for a real POLLIN event (or finish the response and close).
+
         }
 
         if (re & POLLIN)
@@ -696,23 +641,14 @@ void ServerRunner::readFromClient(int clientFd) {
             break;
         }
 
-        if (errno == EINTR)
-            continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            break;
+        // Subject-compliant: no errno inspection after read().
+        // If read() didn't give bytes (n < 0), just stop for now.
+        // poll() will wake us again when it's readable.
+        break;
 
-        
-
-        closeConnection(clientFd);
-        return;
-    }
-
-    if (totalRead > 0) {
-       
     }
 
     if (connection.state == S_WRITE && !connection.draining) {
-        
         return;
     }
 
@@ -1060,64 +996,49 @@ void ServerRunner::writeToClient(int clientFd) {
 
     const std::size_t WRITE_BUDGET = 256u * 1024u;
 
-    // Se não há nada para enviar, trata como "fim de resposta".
-    if (connection.writeOffset >= connection.writeBuffer.size()) {
-        
-    } else {
+    const char* base = connection.writeBuffer.data();
+    std::size_t sentThisCall = 0;
 
-        const char* base = connection.writeBuffer.data();
-        std::size_t sentThisCall = 0;
+    while (connection.writeOffset < connection.writeBuffer.size()) {
 
-        while (connection.writeOffset < connection.writeBuffer.size()) {
+        if (sentThisCall >= WRITE_BUDGET)
+            break;
 
-            if (sentThisCall >= WRITE_BUDGET)
-                break;
+        const char* buf = base + connection.writeOffset;
+        std::size_t remaining = connection.writeBuffer.size() - connection.writeOffset;
 
-            const char* buf = base + connection.writeOffset;
-            std::size_t remaining = connection.writeBuffer.size() - connection.writeOffset;
+        std::size_t remainingBudget = WRITE_BUDGET - sentThisCall;
+        if (remainingBudget < remaining)
+            remaining = remainingBudget;
 
-            std::size_t remainingBudget = WRITE_BUDGET - sentThisCall;
-            if (remainingBudget < remaining)
-                remaining = remainingBudget;
+        ssize_t n = write(clientFd, buf, remaining);
 
-            ssize_t n = write(clientFd, buf, remaining);
-
-            if (n > 0) {
-                connection.writeOffset += static_cast<std::size_t>(n);
-                sentThisCall += static_cast<std::size_t>(n);
-                connection.lastActiveMs = _nowMs;
-                continue;
-            }
-
-            if (n < 0 && errno == EINTR)
-                continue;
-
-            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-                if (pit != _fdIndex.end())
-                    _fds[pit->second].events = POLLOUT;
-
-                
-                return;
-            }
-
-            
-
-            closeConnection(clientFd);
-            return;
+        if (n > 0) {
+            connection.writeOffset += static_cast<std::size_t>(n);
+            sentThisCall += static_cast<std::size_t>(n);
+            connection.lastActiveMs = _nowMs;
+            continue;
         }
 
-        if (connection.writeOffset < connection.writeBuffer.size()) {
-            std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
-            if (pit != _fdIndex.end())
-                _fds[pit->second].events = POLLOUT;
-
-            
-            return;
-        }
-
-        
+        // n <= 0:
+        // Subject-compliant: do not inspect errno after write().
+        // Just stop writing now and rely on poll(POLLOUT) to wake us again.
+        // If the peer is dead, a future poll() will surface it via POLLERR/POLLHUP/POLLNVAL.
+        std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+        if (pit != _fdIndex.end())
+            _fds[pit->second].events = POLLOUT;
+        return;
     }
+
+    if (connection.writeOffset < connection.writeBuffer.size()) {
+        std::map<int, std::size_t>::iterator pit = _fdIndex.find(clientFd);
+        if (pit != _fdIndex.end())
+            _fds[pit->second].events = POLLOUT;
+
+        
+        return;
+    }
+
 
     // ================== FIM DE RESPOSTA (lógica comum) ==================
 
@@ -1192,10 +1113,10 @@ void ServerRunner::writeToClient(int clientFd) {
 
         
 
-        if (!connection.readBuffer.empty()) {
+        // if (!connection.readBuffer.empty()) {
             
-            readFromClient(clientFd);
-        }
+        //     readFromClient(clientFd);
+        // }
 
         return;
     }
@@ -1233,296 +1154,3 @@ void	ServerRunner::closeConnection(int clientFd)	{
 	_fds.pop_back();	// remove the last index
 	_fdIndex.erase(it);	// remove the index number of where _fds were
 }
-
-/* Big Logic Flow of this pile of functions
-
-1. Startup
-
-./webserv webserv.config → you parse the config.
-
-setupListeners(...) opens the listening sockets (e.g., 127.0.0.1:8080).
-
-setupPollFds() puts those listener fds into _fds with events = POLLIN.
-
-2. Enter the loop
-
-poll(&_fds[0], _fds.size(), -1) goes to sleep in the kernel.
-(Right now, only listener fds are watched.)
-
-3. When a client connects
-
-	// SETUP
-	listen(fd, SOMAXCONN);    // ← Creates queues, then returns immediately
-	                          //   Code continues...
-
-	// LATER: EVENT LOOP
-	poll(&_fds[0], size, -1); // ← Goes to sleep here
-
-	//   ╔═══════════════════════════════════════════╗
-	//   ║  WHILE SLEEPING:                   		 ║
-	//   ║  Kernel handles handshakes automatically  ║  
-	//   ║  - Receives SYN packets                   ║
-	//   ║  - Sends SYN-ACK responses                ║
-	//   ║  - Receives final ACK                     ║
-	//   ║  - Moves connection to accept queue       ║
-	//   ║  - Sets listener fd as readable           ║
-	//   ╚═══════════════════════════════════════════╝
-
-	poll() wakes up           // ← "Hey! New connection ready!"
-	poll() returns; _fds[i].revents for that listener has POLLIN.
-
-
-4. handleEvents() runs
-
-Sees the listener POLLIN → calls accept() (often in a loop), getting new client fd(s).
-
-Adds each client fd to _fds with events = POLLIN and a Connection entry in our connection std::map.
-
-	// HANDLE RESULT
-	accept(listenFd, ...);    // ← Takes the completed connection
-
-
-5. Requests & responses
-
-When request bytes arrive on a client fd, kernel marks it POLLIN → next poll() wakes → readFromClient(fd) appends to readBuffer.
-
-When there is a response ready, change that fd’s events to POLLOUT.
-
-When the socket can take more bytes, kernel sets POLLOUT → writeToClient(fd) sends, and either keep the connection (flip back to POLLIN) or close it.
-
-6. Other wakeups
-
-poll() also wakes for errors/hangups (POLLERR|POLLHUP|POLLNVAL) on any fd, not just new connections.
-*/
-
-/*TCP 3-way handshake
-Purpose: both sides agree to communicate and pick initial sequence numbers for reliable byte streams.
-SYN (Client → Server)
-	“I want to connect, here’s my initial sequence number ISN(c).” ISN => Initial Sequence Number
-	Server puts this half-open attempt in the SYN queue.
-SYN-ACK (Server → Client)
-	“I heard you. Here’s my initial sequence number ISN(s). I’m acknowledging yours.”
-	Still in handshake; not yet in accept queue.
-ACK (Client → Server)
-	“I acknowledge your ISN(s).”
-	Handshake completes → kernel moves the connection to the accept queue (fully established).
-	Now the listener becomes readable (POLLIN). The accept() call pops it off the queue and returns a new client fd.
-
-	SYN = SYNchronize sequence numbers.
-	ACK = ACKnowledgment.
-
-KERNEL QUEUES DURING HANDSHAKES:
-
-Time 0: listen() called
-┌─────────────────┐
-│ SYN Queue: []   │
-│ Accept Queue:[] │  
-└─────────────────┘
-
-Time 1: Client A sends SYN
-┌─────────────────┐
-│ SYN Queue:      │
-│ [A_handshaking] │  ← A is in middle of handshake
-│ Accept Queue:[] │
-└─────────────────┘
-
-Time 2: Client B sends SYN, A completes handshake  
-┌─────────────────┐
-│ SYN Queue:      │
-│ [B_handshaking] │  ← B still handshaking
-│ Accept Queue:   │
-│ [A_ready] ✓     │  ← A ready to accept!
-└─────────────────┘
-                    → Listener becomes POLLIN
-
-Time 3: accept() call
-┌─────────────────┐
-│ SYN Queue:      │
-│ [B_handshaking] │  ← B still in progress
-│ Accept Queue:[] │  ← A taken by app
-└─────────────────┘
-
-
-Error Codes
-
-200 -> Success
-
-400 - Bad Request
-	- Missing or malformed method
-	- Missing or malformed target (URI)
-	- Missing or malformed version
-	- Weird control characters in the the request target
-	- Malformed headers
-
-403 - Forbidden (no permission)
-
-404 - Not Found
-	- File or Location mapping doesn't exist or match
-
-405 - Method Not Allowed (methods directive)
-
-413 - Payload Too Large
-	- If the data trying to upload is too large 
-
-431 - Request Header Fields Too Large
-	- The head is too big
-
-500 - Internal Server Error (runtime errors)
-
-501 - Not Implemented
-	- Self explanatory
-
-502/503/504 (CGI failures - depending on subject scope)
-
-505 - HTTP Version Not Supported
-	- Self explanatory
-
-===================================================================================================================================
-
-HTTP Requests -> has 3 parts. {According to RFC = Request For Comments, official Internet Standards managed by IETF.}
-	1.1) Request Line
-		- METHOD SP REQUEST_TARGET SP HTTP_VERSION CRLF
-		- e.g. = GET /index.html HTTP/1.1\r\n
-
-		A) METHOD <= RFC says methods are case-sensitive
-			- What action the client wants
-			- GET, POST, DELETE, PUT, HEAD, OPTIONS, CONNECT, TRACE
-			
-			1. GET <- Give me this resource
-				- Browser loading a web page
-				- Fetching an image, script, style file, etc.
-				- Usually has no body and retrieves content
-				- GET /index.html HTTP/1.1
-
-			2. POST <- I am sending you some data
-				- HTML forms
-				- JSON uploads
-				- File uploads
-				- 	POST /upload HTTP/1.1
-					Content-Length: 20
-
-					{"name":"hello"}
-			
-			3. DELETE <- Please delete this resource
-				- In Webserv, we should delete files on disk
-
-
-		B) REQUEST_TARGET
-			- What the client wants (the "path")
-			- The Path and Query -> http://example.com/products/search?q=phone&page=2#top
-				- Path -> /products/search
-					- the “directory/file path” on the website
-					- usually maps to a file or route on the server
-				- Query -> q=phone&page=2
-					- Parameters the client send to refine the request
-					- q=phone -> search text
-					- page=2 -> which page of results
-
-			- There are 4 forms (RFC 7230)
-				1. origin-form (most common)		=>	/path/to/resource?query=parameters <= /products/search?q=phone&page=2
-					- give me this resource on the server, at this path, optionally with those query params
-					- Examples:
-            			GET / HTTP/1.1
-            			GET /index.html HTTP/1.1
-            			GET /products/search?q=phone&page=2 HTTP/1.1
-					- Path = "/products/search"
-        			- Query = "q=phone&page=2"
-        			- Used by normal browsers talking directly to a server.
-
-				2. absolute-form (proxies)			=>	http://example.com/path -> "Proxy, please fetch this URL for me."
-					- The full URL in the request line, which includes "http://host/..." -> when talking to a proxy (a middleman)
-					- Example:
-            			GET http://example.com/products/search?q=phone HTTP/1.1
-        			- Client sends full URL in the request line to a proxy.
-						*What is proxy?
-							A proxy server sits between an client and a real server
-							like an enforcer which FILTERS websites, LOGs traffic for auditing, ENFORCE authentication, INJECT security systems,
-							and to CACHE responses. Also HIDES the real client.
-
-				3. authority-form (CONNECT method)	=>	CONNECT example.com:443 HTTP/1.1 -> only for proxies
-					- Example:
-            			CONNECT example.com:443 HTTP/1.1
-        			- Target is "example.com:443".
-        			- Used to create a TCP tunnel via a proxy for HTTPS.
-        			- Not needed for normal Webserv mandatory part.
-
-				4. asterisk-form					=>	OPTIONS * HTTP/1.1
-					- Example:
-            			OPTIONS * HTTP/1.1
-        			- Asks about the server's general capabilities, not a single resource.
-        			- "What methods/features do you support overall?"
-					- can respond with:
-						200 or 204
-						an Allow header listing what is supported (at least GET, POST, DELETE, OPTIONS).
-					e.g.
-						HTTP/1.1 204 No Content
-						Allow: GET, POST, DELETE, OPTIONS
-
-
-		C) HTTP_VERSION
-
-	1.2) Header Section
-		- field-name ":" [optional whitespace] field-value
-		- Field-name is case-insensitive
-		- Can appear multiple times.
-
-		A) Host = Tells the server which hostname the client is trying to reach
-			- Host: example.com
-			- For Virtual host selection
-			- Can appear multiple times; duplicates may be combined with ", "
-
-		B) Content-Length
-			- Content-Length: 1234
-			- Means that the Body is exactly 1234 bytes long.
-			- Used for virtual hosts (one IP → many domains).
-      		- HTTP/1.1: required. Missing Host → 400 Bad Request.
-      		- HTTP/1.0: optional.
-
-		C) Transfer-Encoding: chunked = send the body in chunks (We are only implementing chunked in our project)
-			- when the server doesn't know the body size in advance
-			- must ignore Content-Length when chunked is present
-			- Server MUST read exactly that many bytes after the headers.
-      		- Used for POST/PUT requests with a fixed-size body.
-      		- If it's wrong → broken request or response handling.
-
-		D) Connection: keep-alive or close
-			- Whether to close TCP after response or keep it open for next request
-
-	2) Blank Line -> A single empty line. Marks the end of the headers
-
-	3) Optional Body
-		- There could be 3 situations.
-			1. No body (common for GET method)
-			2. A fixed-length body
-			3. A chunked-encoded body
-
-			1. Request with NO body
-				- 	GET / HTTP/1.1
-					Host: example.com
-				- No Content-Length
-				- No Transfer-Encoding
-
-			2. Fixed-length body (Content-Length)
-				- 	POST /upload HTTP/1.1
-					Host: example.com
-					Content-Length: 12
-
-					Hello World!
-				- Stop reading after exactly 12 bytes
-				- Store those as request.body
-				- if it exceeds client_max_body_size -> 413
-			
-			3. Chunked transfer-encoding
-				- 	POST /submit HTTP/1.1
-					Transfer-Encoding: chunked
-
-					7\r\n
-					Mozilla\r\n
-					9\r\n
-					Developer\r\n
-					7\r\n
-					Network\r\n
-					0\r\n
-					\r\n
-
-*/
