@@ -73,52 +73,58 @@ void    ServerRunner::housekeeping() {
 }
 
 
-// void    ServerRunner::run() {
-    
-// 	setupListeners(_servers, _listeners);
-    
-// 	setupPollFds();
 
-// 	if (_fds.empty())	{
-// 		std::cerr << "No listeners configured/opened. \n";
-// 		return;
-// 	}
-    
-// 	const int	POLL_TICK_MS = 250;
+// #include "../include/Log.hpp" // o header que te dei
 
-// 	while (true)    {
-//         int n = poll(_fds.empty() ? 0 : &_fds[0], static_cast<nfds_t>(_fds.size()), POLL_TICK_MS);	// runs every 0.25s
-// 		// int poll(struct pollfd *fds, nfds_t nfds, int timeout);
-// 		// points to the first entry of _fds.size() entries and blocks for up to POLL_TICK_MS (0.25s) (or until an event arrives).
-//         if (n < 0)  {
-// 			if (errno == EINTR)
-// 				continue;
-// 			printSocketError("poll");
+
+// void ServerRunner::run() {
+
+//     setupListeners(_servers, _listeners);
+//     setupPollFds();
+
+//     if (_fds.empty()) {
+//         std::cerr << "No listeners configured/opened. \n";
+//         return;
+//     }
+
+//     log_init_clock();
+//     LOG_PCAP_MARK(_nowMs, std::cerr, "server-start"); // opcional, mas útil
+
+//     const int POLL_TICK_MS = 250;
+
+//     long long last_mono = now_mono_ms();
+
+//     while (true) {
+//         int n = poll(_fds.empty() ? 0 : &_fds[0],
+//                      static_cast<nfds_t>(_fds.size()),
+//                      POLL_TICK_MS);
+
+//         if (n < 0) {
+//             if (errno == EINTR)
+//                 continue;
+//             printSocketError("poll");
 //             break;
 //         }
 
-// 		_nowMs += POLL_TICK_MS;	// value increases every loop -> 250, 500, 750, 1000, ...
-        
-// 		// Handle events first
-// 		if (n > 0)
-// 			handleEvents();
+//         // ✅ actualiza _nowMs com tempo real monotónico (ms desde o arranque)
+//         long long cur_mono = now_mono_ms();
+//         long long delta = cur_mono - last_mono;
+//         if (delta < 0) delta = 0;               // por segurança extrema
+//         if (delta > 10 * POLL_TICK_MS) {        // se houve uma pausa enorme (ex.: breakpoints), limita
+//             // podes comentar isto se não quiseres clamp
+//             // delta = 10 * POLL_TICK_MS;
+//         }
+//         _nowMs += static_cast<long>(delta);
+//         last_mono = cur_mono;
 
-// 		// Run periodic maintenance once per tick (timeout or after events):
-// 		housekeeping();	// close slow headers/body, idle keep-alive, etc.
+//         if (n > 0)
+//             handleEvents();
+
+//         housekeeping();
 //     }
-// 	// setupListeners(): opens listening sockets (via openAndListen) and fills _listeners.
-// 	//                   It deduplicates equivalent specs so the same IP:port is opened once.
-// 	// setupPollFds(): registers ONE pollfd per unique listening fd in _fds (events=POLLIN).
-// 	// Event loop:
-// 	//   - poll() sleeps up to POLL_TICK_MS, or wakes sooner on I/O.
-// 	//   - if a listener fd is readable, handleEvents() accepts and adds the client fd to _fds.
-// 	//   - if a client needs to write, handleEvents() flips its poll events to POLLOUT.
-// 	//   - housekeeping() runs once per tick to enforce header/body/keep-alive timeouts and
-// 	//     close stale connections (requires lastActiveMs to be updated on activity).
-
 // }
 
-#include "../include/Log.hpp" // o header que te dei
+
 
 void ServerRunner::run() {
 
@@ -130,12 +136,9 @@ void ServerRunner::run() {
         return;
     }
 
-    log_init_clock();
-    LOG_PCAP_MARK(_nowMs, std::cerr, "server-start"); // opcional, mas útil
-
     const int POLL_TICK_MS = 250;
 
-    long long last_mono = now_mono_ms();
+    const std::time_t   start = std::time(NULL);
 
     while (true) {
         int n = poll(_fds.empty() ? 0 : &_fds[0],
@@ -149,16 +152,7 @@ void ServerRunner::run() {
             break;
         }
 
-        // ✅ actualiza _nowMs com tempo real monotónico (ms desde o arranque)
-        long long cur_mono = now_mono_ms();
-        long long delta = cur_mono - last_mono;
-        if (delta < 0) delta = 0;               // por segurança extrema
-        if (delta > 10 * POLL_TICK_MS) {        // se houve uma pausa enorme (ex.: breakpoints), limita
-            // podes comentar isto se não quiseres clamp
-            // delta = 10 * POLL_TICK_MS;
-        }
-        _nowMs += static_cast<long>(delta);
-        last_mono = cur_mono;
+        _nowMs = static_cast<long>((std::time(NULL) - start) * 1000);
 
         if (n > 0)
             handleEvents();
@@ -642,7 +636,7 @@ static const Location* longestPrefixMatch(const Server& srv, const std::string& 
     }
 
 
-#include "Log.hpp" // ajusta o caminho
+
 
 void ServerRunner::readFromClient(int clientFd) {
 
@@ -686,14 +680,7 @@ void ServerRunner::readFromClient(int clientFd) {
             // EOF / half-close do peer
             connection.peerClosedRead = true;
 
-            LOG_LINE(_nowMs, std::cerr,
-                "[READ-EOF] fd=" << clientFd
-                << " totalRead=" << totalRead
-                << " rb=" << connection.readBuffer.size()
-                << " state=" << connection.state
-                << " wb=" << connection.writeBuffer.size()
-                << " off=" << connection.writeOffset
-            );
+            
 
             if (connection.state == S_HEADERS && connection.readBuffer.empty()) {
                 closeConnection(clientFd);
@@ -714,34 +701,18 @@ void ServerRunner::readFromClient(int clientFd) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             break;
 
-        LOG_LINE(_nowMs, std::cerr,
-            "[READ-ERR] fd=" << clientFd
-            << " errno=" << errno
-            << " msg=" << std::strerror(errno)
-            << " totalRead=" << totalRead
-            << " rb=" << connection.readBuffer.size()
-            << " state=" << connection.state
-        );
+        
 
         closeConnection(clientFd);
         return;
     }
 
     if (totalRead > 0) {
-        LOG_LINE(_nowMs, std::cerr,
-            "[READ] fd=" << clientFd
-            << " got=" << totalRead
-            << " rb=" << connection.readBuffer.size()
-            << " state=" << connection.state
-        );
+       
     }
 
     if (connection.state == S_WRITE && !connection.draining) {
-        LOG_LINE(_nowMs, std::cerr,
-            "[READ-SKIP-PARSE] fd=" << clientFd
-            << " rb=" << connection.readBuffer.size()
-            << " (state=S_WRITE)"
-        );
+        
         return;
     }
 
@@ -761,13 +732,7 @@ void ServerRunner::readFromClient(int clientFd) {
         else
             result = http::BODY_COMPLETE;
 
-        LOG_LINE(_nowMs, std::cerr,
-            "[DRAIN-CONSUME] fd=" << clientFd
-            << " res=" << result
-            << " rb=" << connection.readBuffer.size()
-            << " drained=" << connection.drainedBytes
-            << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-        );
+        
 
         if (result == http::BODY_COMPLETE) {
             connection.draining = false;
@@ -783,10 +748,7 @@ void ServerRunner::readFromClient(int clientFd) {
 
             connection.state = S_WRITE;
 
-            LOG_LINE(_nowMs, std::cerr,
-                "[DRAIN-DONE->WRITE] fd=" << clientFd
-                << " rb=" << connection.readBuffer.size()
-            );
+            
             return;
         }
 
@@ -834,10 +796,7 @@ void ServerRunner::readFromClient(int clientFd) {
                 std::string rsn = "Request Header Fields Too Large";
                 const Server& active = connection.srv ? *connection.srv : _servers[0];
 
-                LOG_LINE(_nowMs, std::cerr,
-                    "[HDR-TOO-LARGE] fd=" << clientFd
-                    << " rb=" << connection.readBuffer.size()
-                );
+                
 
                 connection.request.keep_alive = false;
                 connection.request.expectContinue = false;
@@ -857,11 +816,7 @@ void ServerRunner::readFromClient(int clientFd) {
             std::string head;
             if (!http::extract_next_head(connection.readBuffer, head)) {
 
-                LOG_LINE(_nowMs, std::cerr,
-                    "[HDR-INCOMPLETE] fd=" << clientFd
-                    << " rb=" << connection.readBuffer.size()
-                    << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-                );
+                
 
                 if (connection.peerClosedRead && connection.readBuffer.empty()) {
                     closeConnection(clientFd);
@@ -883,11 +838,7 @@ void ServerRunner::readFromClient(int clientFd) {
                 return;
             }
 
-            LOG_LINE(_nowMs, std::cerr,
-                "[HDR-EXTRACT] fd=" << clientFd
-                << " headBytes=" << head.size()
-                << " rb_after=" << connection.readBuffer.size()
-            );
+            
 
             int status = 0;
             std::string reason;
@@ -895,12 +846,7 @@ void ServerRunner::readFromClient(int clientFd) {
 
                 const Server& active = connection.srv ? *connection.srv : _servers[0];
 
-                LOG_LINE(_nowMs, std::cerr,
-                    "[HDR-PARSE-FAIL] fd=" << clientFd
-                    << " status=" << status
-                    << " reason=\"" << reason << "\""
-                    << " ka=" << (connection.request.keep_alive ? 1 : 0)
-                );
+                
 
                 if (status == 413)
                     connection.request.keep_alive = false;
@@ -918,18 +864,7 @@ void ServerRunner::readFromClient(int clientFd) {
 
             connection.headersComplete = true;
 
-            LOG_LINE(_nowMs, std::cerr,
-                "[HDR-OK] fd=" << clientFd
-                << " m=" << connection.request.method
-                << " target=" << connection.request.target
-                << " path=" << connection.request.path
-                << " br=" << connection.request.body_reader_state
-                << " cl=" << connection.request.content_length
-                << " te=\"" << connection.request.transfer_encoding << "\""
-                << " ka=" << (connection.request.keep_alive ? 1 : 0)
-                << " exp=" << (connection.request.expectContinue ? 1 : 0)
-                << " rb=" << connection.readBuffer.size()
-            );
+            
 
             // ---- client_max_body_size resolution ----
             size_t limit = std::numeric_limits<size_t>::max();
@@ -955,11 +890,7 @@ void ServerRunner::readFromClient(int clientFd) {
                 if (connection.request.body_reader_state == BR_CONTENT_LENGTH
                     && connection.request.content_length > connection.clientMaxBodySize) {
 
-                    LOG_LINE(_nowMs, std::cerr,
-                        "[EARLY-413] fd=" << clientFd
-                        << " cl=" << connection.request.content_length
-                        << " max=" << connection.clientMaxBodySize
-                    );
+                    
 
                     connection.request.keep_alive = false;
                     connection.request.expectContinue = false;
@@ -985,20 +916,14 @@ void ServerRunner::readFromClient(int clientFd) {
 
             // ---- Transition depending on body presence ----
             if (connection.request.body_reader_state == BR_NONE) {
-                LOG_LINE(_nowMs, std::cerr,
-                    "[DISPATCH-NO-BODY] fd=" << clientFd
-                    << " rb=" << connection.readBuffer.size()
-                );
+                
                 handleRequest(connection);
                 return;
             }
 
             if (connection.request.expectContinue == true) {
 
-                LOG_LINE(_nowMs, std::cerr,
-                    "[SEND-100] fd=" << clientFd
-                    << " rb=" << connection.readBuffer.size()
-                );
+                
 
                 connection.writeBuffer = "HTTP/1.1 100 Continue\r\n\r\n";
                 connection.writeOffset = 0;
@@ -1014,10 +939,7 @@ void ServerRunner::readFromClient(int clientFd) {
 
             connection.state = S_BODY;
 
-            LOG_LINE(_nowMs, std::cerr,
-                "[STATE->BODY] fd=" << clientFd
-                << " rb=" << connection.readBuffer.size()
-            );
+
             continue;
         }
 
@@ -1043,20 +965,10 @@ void ServerRunner::readFromClient(int clientFd) {
                     result = http::BODY_ERROR;
             }
 
-            LOG_LINE(_nowMs, std::cerr,
-                "[BODY-CONSUME] fd=" << clientFd
-                << " res=" << result
-                << " rb=" << connection.readBuffer.size()
-                << " body=" << connection.request.body.size()
-                << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-            );
+            
 
             if (result == http::BODY_COMPLETE) {
-                LOG_LINE(_nowMs, std::cerr,
-                    "[DISPATCH-BODY] fd=" << clientFd
-                    << " body=" << connection.request.body.size()
-                    << " rb=" << connection.readBuffer.size()
-                );
+                
                 handleRequest(connection);
                 return;
             }
@@ -1064,12 +976,7 @@ void ServerRunner::readFromClient(int clientFd) {
             if (result == http::BODY_ERROR) {
                 const Server& active = connection.srv ? *connection.srv : _servers[0];
 
-                LOG_LINE(_nowMs, std::cerr,
-                    "[BODY-ERR] fd=" << clientFd
-                    << " status=" << status
-                    << " reason=\"" << reason << "\""
-                    << " ka=" << (connection.request.keep_alive ? 1 : 0)
-                );
+                
 
                 if (status == 413) {
                     connection.request.keep_alive = false;
@@ -1141,7 +1048,7 @@ void ServerRunner::readFromClient(int clientFd) {
 
 
 
-#include "Log.hpp" // ajusta o caminho
+
 
 void ServerRunner::writeToClient(int clientFd) {
 
@@ -1155,15 +1062,7 @@ void ServerRunner::writeToClient(int clientFd) {
 
     // Se não há nada para enviar, trata como "fim de resposta".
     if (connection.writeOffset >= connection.writeBuffer.size()) {
-        LOG_LINE(_nowMs, std::cerr,
-            "[WRITE-DONE-FASTPATH] fd=" << clientFd
-            << " wb=" << connection.writeBuffer.size()
-            << " off=" << connection.writeOffset
-            << " sentContinue=" << (connection.sentContinue ? 1 : 0)
-            << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-            << " draining=" << (connection.draining ? 1 : 0)
-            << " state=" << connection.state
-        );
+        
     } else {
 
         const char* base = connection.writeBuffer.data();
@@ -1198,23 +1097,11 @@ void ServerRunner::writeToClient(int clientFd) {
                 if (pit != _fdIndex.end())
                     _fds[pit->second].events = POLLOUT;
 
-                LOG_LINE(_nowMs, std::cerr,
-                    "[WRITE-BLOCK] fd=" << clientFd
-                    << " sent=" << sentThisCall
-                    << " wb=" << connection.writeBuffer.size()
-                    << " off=" << connection.writeOffset
-                );
+                
                 return;
             }
 
-            LOG_LINE(_nowMs, std::cerr,
-                "[WRITE-ERR] fd=" << clientFd
-                << " errno=" << errno
-                << " msg=" << std::strerror(errno)
-                << " sent=" << sentThisCall
-                << " wb=" << connection.writeBuffer.size()
-                << " off=" << connection.writeOffset
-            );
+            
 
             closeConnection(clientFd);
             return;
@@ -1225,25 +1112,11 @@ void ServerRunner::writeToClient(int clientFd) {
             if (pit != _fdIndex.end())
                 _fds[pit->second].events = POLLOUT;
 
-            LOG_LINE(_nowMs, std::cerr,
-                "[WRITE-YIELD] fd=" << clientFd
-                << " sent=" << sentThisCall
-                << " wb=" << connection.writeBuffer.size()
-                << " off=" << connection.writeOffset
-            );
+            
             return;
         }
 
-        LOG_LINE(_nowMs, std::cerr,
-            "[WRITE-DONE] fd=" << clientFd
-            << " sent=" << sentThisCall
-            << " wb=" << connection.writeBuffer.size()
-            << " off=" << connection.writeOffset
-            << " sentContinue=" << (connection.sentContinue ? 1 : 0)
-            << " peerEOF=" << (connection.peerClosedRead ? 1 : 0)
-            << " draining=" << (connection.draining ? 1 : 0)
-            << " state=" << connection.state
-        );
+        
     }
 
     // ================== FIM DE RESPOSTA (lógica comum) ==================
@@ -1291,11 +1164,7 @@ void ServerRunner::writeToClient(int clientFd) {
 
         const std::size_t bufferedNext = connection.readBuffer.size();
 
-        LOG_LINE(_nowMs, std::cerr,
-            "[KA-RESET-BEGIN] fd=" << clientFd
-            << " bufferedNext=" << bufferedNext
-            << " (readBuffer preserved)"
-        );
+        
 
         connection.writeBuffer.clear();
         connection.writeOffset = 0;
@@ -1321,29 +1190,17 @@ void ServerRunner::writeToClient(int clientFd) {
         if (pit != _fdIndex.end())
             _fds[pit->second].events = POLLIN;
 
-        LOG_LINE(_nowMs, std::cerr,
-            "[KA-RESET-END] fd=" << clientFd
-            << " bufferedNext=" << connection.readBuffer.size()
-            << " state=" << connection.state
-            << " kaIdle=" << connection.kaIdleStartMs
-        );
+        
 
         if (!connection.readBuffer.empty()) {
-            LOG_LINE(_nowMs, std::cerr,
-                "[KA-IMMEDIATE-PARSE] fd=" << clientFd
-                << " rb=" << connection.readBuffer.size()
-            );
+            
             readFromClient(clientFd);
         }
 
         return;
     }
 
-    LOG_LINE(_nowMs, std::cerr,
-        "[CLOSE-AFTER-RESP] fd=" << clientFd
-        << " keep=0"
-        << " respClose=" << (responseSaysClose ? 1 : 0)
-    );
+    
 
     closeConnection(clientFd);
 }
