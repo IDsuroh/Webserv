@@ -52,3 +52,12 @@ CURL COMMANDS THAT WE CAN USE
 
 1️⃣1️⃣ Multiple requests on same connection
 	curl -i --http1.1 http://127.0.0.1:8080/ http://127.0.0.1:8080/does-not-exist
+
+
+
+
+After:
+1. Final project merge
+2. Finish static website polish
+3. Finalize curl test COMMANDS
+4. Make a tester of the curl commands if possible
