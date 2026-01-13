@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/12 21:46:59 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/13 21:03:58 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -349,7 +349,7 @@ namespace {
 
 			size_t digit = str[i] - '0';
 
-			if (value > max / 10 || (value == max / 10 && digit > max % 10))
+			if (value > max / 10 || (value == max / 10 && digit > max % 10))					// Prevent overflow before multiplication
 				throw std::runtime_error("Numeric value exceeds size_t range: " + str);
 
 			value = value * 10 + digit;
@@ -464,11 +464,11 @@ namespace {
 		if (getDirectiveValue(loc, srv, "cgi_allowed_methods", value))
 			cfg.cgiAllowedMethods = splitWordsAndCommas(value);
 		else
-			cfg.cgiAllowedMethods = cfg.allowedMethods;
+			cfg.cgiAllowedMethods = cfg.allowedMethods;					// Default: CGI inherits location methods to ensure consistent behaviour
 
-		if (getDirectiveValue(loc, srv, "return", value)) {
+		if (getDirectiveValue(loc, srv, "return", value)) {				// Handle HTTP 3xx redirects via 'return' directive
 			std::vector<std::string> tokens = splitWords(value);
-			if (tokens.size() == 2) {
+			if (tokens.size() == 2) {									// Ignores malformed configurations
 				int status = parseHttpStatus(tokens[0]);
 				if (status >= 300 && status <= 399) {
 					cfg.redirectStatus = status;
@@ -526,22 +526,23 @@ namespace {
 
 	/*
 	 Validates request body size and supported transfer encodings.
-	 Returns true if allowed; otherwise sets status code with the appropriate error.
+	 Returns true if allowed; otherwise sets the appropriate status code
+	 and indicates whether the connection must be closed.
 	*/
 	bool checkRequestBodyAllowed(const EffectiveConfig& cfg, const HTTP_Request& req, int& status, bool& forceClose) {
 
 		forceClose = false;
 		
-		if (cfg.clientMaxBodySize != 0 && req.content_length > cfg.clientMaxBodySize) {					// clientMaxBodySize == 0, means no limit
+		if (cfg.clientMaxBodySize != 0 && req.content_length > cfg.clientMaxBodySize) {			// clientMaxBodySize == 0, means no limit
 			status = 413;
-			forceClose = true;
+			forceClose = true;				// Prevent protocol desynchronization by discarding remaining request body (RFC 9110)
 			return false;
 		}
 
 		if (req.transfer_encoding.empty() || req.transfer_encoding == "chunked")
 			return true;
 
-		status = 501;
+		status = 501;				// Otherwise, not implemented
 		return false;
 	}
 
@@ -551,33 +552,35 @@ namespace {
 	// -----------------------------------------------
 
 	/*
-	Maps the logical URL path directly under the effective root directory.
-	EffectiveConfig::root is expected to already reflect server/location merging.
+	 Resolves a filesystem path from a request URI, taking the matched
+	 location into account by stripping its prefix before mapping the
+	 remaining path under the effective root directory.
+	 EffectiveConfig::root is expected to already reflect server/location merging.
 	*/
-	std::string	makeFilesystemPath(const EffectiveConfig& cfg, const std::string& path)	{
-		
-		std::string	locationPath = (cfg.location ? cfg.location->path : "");
-		std::string	subPath;
+	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& uriPath) {
 
-		// If there is a matched location, strip its prefix from the URI
-		if (!locationPath.empty() && path.compare(0, locationPath.size(), locationPath) == 0)
-			subPath = path.substr(locationPath.size());
+		const std::string locationPrefix = (cfg.location ? cfg.location->path : "");	// ex: "/images" (or "")
+		std::string uriRemainder;
+
+		if (!locationPrefix.empty() &&											// If there is a matched location, strip its prefix from the URI
+			uriPath.compare(0, locationPrefix.size(), locationPrefix) == 0)
+			uriRemainder = uriPath.substr(locationPrefix.size());				// ex: "/images/logo.png" -> "/logo.png"
 		else
-			subPath = path;
+			uriRemainder = uriPath;
 
-		// Ensure we always join root + "/something"
-		if (subPath.empty())
-			subPath = "/";
+		if (uriRemainder.empty())												// Ensure we always join root + "/something"
+			uriRemainder = "/";
 
-		// Join root and subPath with exactly one '/'
-		if (!cfg.root.empty() && cfg.root[cfg.root.size() - 1] == '/' && !subPath.empty() && subPath[0] == '/')
-			return (cfg.root.substr(0, cfg.root.size() - 1) + subPath);
+		if (!cfg.root.empty() && cfg.root[cfg.root.size() - 1] == '/' &&		// Join root + uriRemainder with exactly one '/'
+			!uriRemainder.empty() && uriRemainder[0] == '/')
+			return cfg.root.substr(0, cfg.root.size() - 1) + uriRemainder;
 
-		if (!subPath.empty() && subPath[0] == '/')
-			return (cfg.root + subPath);
+		if (!uriRemainder.empty() && uriRemainder[0] == '/')
+			return cfg.root + uriRemainder;
 
-		return (cfg.root + "/" + subPath);
+		return cfg.root + "/" + uriRemainder;
 	}
+
 
 	/*
 	 Validates and canonicalizes a filesystem path relative to the given root.
@@ -640,46 +643,34 @@ namespace {
 
 	bool isCgiRequest(const EffectiveConfig& cfg, const std::string& path);
 
-	// /*
-	//  Classifies the request as upload, CGI, directory, static file, forbidden,
-	//  or not found based on the effective configuration and filesystem state.
-	// */
+	/*
+	 Classifies the request as CGI, upload, directory, static file, forbidden,
+	 or not found based on request properties, effective configuration,
+	 and filesystem state when applicable.
+	*/
+	RequestKind classifyRequest(const EffectiveConfig& cfg, const std::string& path, const std::string& fsPath, const HTTP_Request& req) {
+		
+		if (isCgiRequest(cfg, path))							// CGI requests are classified first, independently of filesystem state
+			return RK_CGI;
 
+		if (req.method == "POST" && !cfg.uploadStore.empty())	// Upload handling applies to POST requests targeting an upload_store
+			return RK_UPLOAD;
 
+		struct stat st;											// Remaining cases rely on filesystem inspection
+		if (stat(fsPath.c_str(), &st) != 0) {
+			if (errno == EACCES)
+				return RK_FORBIDDEN;		// Permission denied by the filesystem
+			return RK_NOT_FOUND;			// Any other stat failure - treat as missing
+		}
 
-	RequestKind classifyRequest(const EffectiveConfig& cfg,
-                            const std::string& path,
-                            const std::string& fsPath,
-                            const HTTP_Request& req)
-{
-    (void)fsPath;
+		if (S_ISDIR(st.st_mode))
+			return RK_DIRECTORY;			// Directory path
 
-    // 1) CGI primeiro se bater na extensão (não depende de existir ficheiro já no FS)
-    if (isCgiRequest(cfg, path))
-        return RK_CGI;
+		if (S_ISREG(st.st_mode))
+			return RK_STATIC_FILE;			// Regular file - serve as static content
 
-    // 2) Upload depois (quando existe upload_store)
-    if (req.method == "POST" && !cfg.uploadStore.empty())
-        return RK_UPLOAD;
-
-    // 3) Restante: filesystem normal
-    struct stat st;
-    if (stat(fsPath.c_str(), &st) != 0) {
-        if (errno == EACCES)
-            return RK_FORBIDDEN;
-        return RK_NOT_FOUND;
-    }
-
-    if (S_ISDIR(st.st_mode))
-        return RK_DIRECTORY;
-
-    if (S_ISREG(st.st_mode))
-        return RK_STATIC_FILE;
-
-    return RK_FORBIDDEN;
-}
-
-
+		return RK_FORBIDDEN;				// Other filesystem objects are not allowed (symlinks, devices, etc..)
+	}
 
 
 	// ----------------------
@@ -693,9 +684,9 @@ namespace {
 	 Converts a value to a string using stream insertion.
 	*/
 	template<typename T>
-	static std::string toString(T v) {
+	std::string toString(T value) {
 		std::ostringstream oss;
-		oss << v;
+		oss << value;
 		return oss.str();
 	}
 
@@ -710,9 +701,9 @@ namespace {
 		std::ifstream staticFile(fsPath.c_str(), std::ios::binary);
 		if (!staticFile) {
 			if (errno == EACCES)
-				return makeErrorResponse(403, &cfg);
+				return makeErrorResponse(403, &cfg);					// "Forbidden"
 			else
-				return makeErrorResponse(404, &cfg);
+				return makeErrorResponse(404, &cfg);					// "Not Found"
 		}
 		
 		HTTP_Response res;
@@ -782,7 +773,8 @@ namespace {
 
 		return res;
 	}
-	
+
+
 	// -----------------------------------------
 	// --- 10. Directory / index / autoindex ---
 	// -----------------------------------------
