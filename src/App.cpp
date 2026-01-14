@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/13 21:03:58 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/14 23:03:03 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -960,7 +960,7 @@ namespace {
 	*/
 	bool isCgiMethodAllowed(const HTTP_Request& req, const EffectiveConfig& cfg) {
 
-		const std::vector<std::string>& effectiveMethods = !cfg.cgiAllowedMethods.empty() ? cfg.cgiAllowedMethods : cfg.allowedMethods;
+		const std::vector<std::string>& effectiveMethods = !cfg.cgiAllowedMethods.empty() ? cfg.cgiAllowedMethods : cfg.allowedMethods;		// Use safe default methods when CGI-specific ones are not configured
 
 		for (std::vector<std::string>::const_iterator it = effectiveMethods.begin(); it != effectiveMethods.end(); ++it) {
 			if (*it == req.method)
@@ -973,6 +973,7 @@ namespace {
 	/*
 	 Extracts a valid file extension from a filesystem path, ignoring dots in
 	 directory names, trailing dots, and hidden files that start with a dot.
+	 Returns an empty string on failure, to be handled by the caller.
 	*/
 	std::string getFileExtension(const std::string& fsPath) {
 
@@ -1009,17 +1010,14 @@ namespace {
 		ext = '.' + ext;
 		
 		std::map<std::string, std::string>::const_iterator it = cfg.cgiPass.find(ext);
-		if (it == cfg.cgiPass.end())	{
+		if (it == cfg.cgiPass.end())
 			return false;
-		}
 		
-		if (it->second.empty())	{
+		if (it->second.empty())
 			return false;
-		}
 		
-		if (access(it->second.c_str(), X_OK) != 0)	{
+		if (access(it->second.c_str(), X_OK) != 0)
 			return false;
-		}
 
 		interpreter = it->second;
 
@@ -1055,82 +1053,75 @@ namespace {
 	}
 
 	/*
-	 Builds the CGI environment variable list for a given request and script
-	 filesystem path, populating standard CGI variables, server metadata, and
-	 HTTP_* header mappings.
+	 Builds the CGI environment for a request by resolving the CGI script boundary,
+	 deriving SCRIPT_NAME, PATH_INFO, and PATH_TRANSLATED, and populating standard
+	 CGI variables, server metadata, and HTTP_* header mappings.
 	*/
 	std::vector<std::string> buildCgiEnv(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 		
-		std::vector<std::string>	env;
+		std::vector<std::string>	env;												// Arbitrary but large enough to avoid reallocations
 		env.reserve(64);
 
 		// 1) Basic Request Pieces
+		const std::string		requestPath = req.path.empty() ? "/" : req.path;							// requestPath: URL path without query
+		std::string::size_type	qPos = req.target.find('?');
+		const std::string		query = (qPos == std::string::npos) ? "" : req.target.substr(qPos + 1);		// query: without leading '?'
 
-		// requestPath: URL path without query
-		const std::string	requestPath = req.path.empty() ? "/" : req.path;
-		
-		// query: without leading '?'
-		size_t				qPos = req.target.find('?');
-		const std::string	query = (qPos == std::string::npos) ? "" : req.target.substr(qPos + 1);
-
-		// 2) nginx-style split:
-		// Initialize default
+		// 2) nginx-style split (ex, URL: /cgi-bin/app.py/users/42 -> SCRIPT_NAME = /cgi-bin/app.py, PATH_INFO = /users/42)
 		std::string			scriptName = requestPath;
 		std::string			pathInfo = "";
 		std::string			pathTranslated = "";
 
-		bool	foundBoundary = false;
+		bool	foundBoundary = false;										// Track the best matching CGI script boundary 
 		size_t	bestBoundary = 0;
 		size_t	bestExtLen = 0;
 
-		for (std::map<std::string, std::string>::const_iterator it = cfg.cgiPass.begin(); it != cfg.cgiPass.end(); ++it)	{
+		for (std::map<std::string, std::string>::const_iterator it = cfg.cgiPass.begin(); it != cfg.cgiPass.end(); ++it) {		// Iterate over configured CGI extensions
 			const std::string&	ext = it->first;
 			if (ext.empty())
 				continue;
 
-			size_t	pos = requestPath.find(ext);	// find extension in the URL
+			size_t	pos = requestPath.find(ext);																				// Find extension occurrences in the request path
 			while (pos != std::string::npos)	{
-				size_t	boundary = pos + ext.size();
+				size_t	boundary = pos + ext.size();																			// Candidate boundary just after the extension
 
-				if (boundary <= requestPath.size() && (boundary == requestPath.size() || requestPath[boundary] == '/'))	{
-					if (!foundBoundary || ext.size() > bestExtLen)	{
+				if (boundary <= requestPath.size() && (boundary == requestPath.size() || requestPath[boundary] == '/'))	{		// Valid boundary: end of path or followed by '/'
+					if (!foundBoundary || ext.size() > bestExtLen)	{															// Prefer the longest matching extension
 						foundBoundary = true;
 						bestExtLen = ext.size();
 						bestBoundary = boundary;
 					}
 					break;
 				}
-				pos = requestPath.find(ext, pos + 1);
+				pos = requestPath.find(ext, pos + 1);																			// Look for the next occurrence of this extension in URL (ex., /php/test.php/foo.php/bar)
 			}
 		}
 
-		if (foundBoundary)	{
-			scriptName = requestPath.substr(0, bestBoundary);
-			if (bestBoundary < requestPath.size())
-				pathInfo = requestPath.substr(bestBoundary);	// begins with '/'
+		if (foundBoundary) {											// If a valid CGI boundary was found, split script name and extra path
+			scriptName = requestPath.substr(0, bestBoundary);			// Script path up to and including the CGI extension
+			if (bestBoundary < requestPath.size())		
+				pathInfo = requestPath.substr(bestBoundary);			// Remaining path after the script becomes PATH_INFO (begins with '/')
 		}
 
-		// Fallback
-		if (pathInfo.empty())	{
+		if (pathInfo.empty()) {											// Fallback
 			pathInfo = requestPath;
 			pathTranslated = fsPath;
 		}
 
-		// Translate PATH_INFO to filesystem path
-		if (!pathInfo.empty() && pathTranslated.empty())	{
-			const std::string&	docRoot = cfg.root;
-			bool				rootEndsWithSlash = (!docRoot.empty() && docRoot[docRoot.size() - 1] == '/');
-			bool				infoStartsWithSlash = (pathInfo[0] == '/');
+		if (!pathInfo.empty() && pathTranslated.empty()) {				// Translate PATH_INFO to filesystem path (only in case it hasn't been translated yet)
 
-			if (rootEndsWithSlash && infoStartsWithSlash)
-				pathTranslated = docRoot.substr(0, docRoot.size() - 1) + pathInfo;
-			else if (rootEndsWithSlash ^ infoStartsWithSlash)
-				pathTranslated = docRoot + pathInfo;
-			else
-				pathTranslated = docRoot + "/" + pathInfo;
+			bool rootEndsWithSlash = (!cfg.root.empty() && cfg.root[cfg.root.size() - 1] == '/');
+			bool infoStartsWithSlash = (pathInfo[0] == '/');
+
+			if (rootEndsWithSlash && infoStartsWithSlash)								// Both have slash - strip one
+				pathTranslated = cfg.root.substr(0, cfg.root.size() - 1) + pathInfo;
+			else if (rootEndsWithSlash ^ infoStartsWithSlash)							// Exclusive OR (XOR) – true if only one of the operands is true
+				pathTranslated = cfg.root + pathInfo;
+			else																		// None has slash - add one
+				pathTranslated = cfg.root + "/" + pathInfo;
 		}
 
-		// 3) Core CGI Variables	
+		// 3) Core CGI Variables
 		env.push_back("GATEWAY_INTERFACE=CGI/1.1");
 		env.push_back("SERVER_SOFTWARE=webserv");
 		env.push_back("SERVER_PROTOCOL=" + req.version);
@@ -1142,33 +1133,32 @@ namespace {
 		env.push_back("PATH_INFO=" + pathInfo);
 		env.push_back("PATH_TRANSLATED=" + pathTranslated);
 		env.push_back("DOCUMENT_ROOT=" + cfg.root);
-		env.push_back("CONTENT_LENGTH=" + toString(req.content_length));	// Content length should be present even if its 0.
+		env.push_back("CONTENT_LENGTH=" + toString(req.content_length));				// Content length should be present even if its 0.
 		std::map<std::string, std::string>::const_iterator itCT = req.headers.find("content-type");
 		if (itCT != req.headers.end())
 			env.push_back("CONTENT_TYPE=" + itCT->second);
-		
-		// SERVER_NAME / SERVER_PORT
+																						// SERVER_NAME / SERVER_PORT
 		std::string	serverPort;
 		size_t		serverColonPos = req.host.find(':');
 		if (serverColonPos != std::string::npos)
-			serverPort = req.host.substr(serverColonPos + 1);
-		else if (!cfg.server->listen.empty())	{
+			serverPort = req.host.substr(serverColonPos + 1);							// Prefer port explicitly given in Host header
+		else if (!cfg.server->listen.empty()) {											// Otherwise try to extract port from first listen directive (host:port, or only port)
 			const std::string&	listenDirective = cfg.server->listen[0];
 			size_t				listenColonPos = listenDirective.find(':');
 			serverPort = (listenColonPos != std::string::npos) ? listenDirective.substr(listenColonPos + 1) : listenDirective;
-		}
-		else
-			serverPort = "80";
+		} else
+			serverPort = "80";															// Final fallback: standard HTTP port
 		
 		std::string	serverName = (serverColonPos == std::string::npos) ? req.host : req.host.substr(0, serverColonPos);
 		if (serverName.empty())
-			serverName = "localhost";
+			serverName = "localhost";													// Reasonable fallback for missing Host header
 
 		env.push_back("SERVER_PORT=" + serverPort);
 		env.push_back("SERVER_NAME=" + serverName);
-		env.push_back("REMOTE_ADDR=127.0.0.1");
+		env.push_back("REMOTE_ADDR=127.0.0.1");											// Default loopback address when real client IP isn't available (common in NGINX/Apache local setups)
 
 		for (std::map<std::string, std::string>::const_iterator it = req.headers.begin(); it != req.headers.end(); ++it)	{
+
 			if (it->first == "content-type" || it->first == "content-length")
 				continue;
 
@@ -1178,9 +1168,10 @@ namespace {
 		}
 
 		env.push_back("REDIRECT_STATUS=200");
+
 		return env;
 	}
-
+	
 	/*
 	 Internal structure holding the pipe file descriptors used by the CGI process.
 	*/
@@ -1196,7 +1187,7 @@ namespace {
 	struct CgiRawOutput {
 		bool		timedOut;		// true if reading from the child exceeded the timeout
 		int			exitStatus;		// Exit code of the CGI process (or -1 if unavailable)
-		std::string	data;			// tudo o que veio do STDOUT
+		std::string	data;			// everything read from the child's STDOUT
 	};
 
 	/*
@@ -1205,12 +1196,6 @@ namespace {
 	 returns the child's PID and the file descriptors the parent uses to
 	 write to the process and read from it.
 	*/
-	static void	childFail(const char* msg)	{	// avoid iostreams in child after fork
-		write(2, msg, std::strlen(msg));
-		// std::exit(1);  //talvez deverá ser esta por causa do std da escola
-		_exit(1);
-	}
-	
 	bool spawnCgiProcess(const std::vector<std::string>& argv, const std::vector<std::string>& env, CgiPipes& pipes) {
 
 		int pipeStdin[2];
@@ -1233,26 +1218,31 @@ namespace {
 
 		if (pid == 0) {
 
-			if (dup2(pipeStdin[0], STDIN_FILENO) == -1 || dup2(pipeStdout[1], STDOUT_FILENO) == -1)
-				childFail("CGI: dup2() failed");
+			if (dup2(pipeStdin[0], STDIN_FILENO) == -1 || dup2(pipeStdout[1], STDOUT_FILENO) == -1) {
+				const char msg[] = "CGI: dup2() failed\n";
+				write(2, msg, sizeof(msg) - 1);						// After fork, use write() instead of std::cerr to avoid inherited buffer/lock issues
+				_exit(1);
+			}
 
 			close(pipeStdin[0]); close(pipeStdin[1]); close(pipeStdout[0]);	close(pipeStdout[1]);
 
-			std::vector<char*> cArgv;								// Prepare argv in execve-compatible (NULL-terminated) format
+			std::vector<char*> cArgv;								// Prepare  C-style argv in execve-compatible (NULL-terminated) format
 			cArgv.reserve(argv.size() + 1);
 			for (size_t i = 0; i < argv.size(); ++i)
 				cArgv.push_back(const_cast<char*>(argv[i].c_str()));
 			cArgv.push_back(NULL);
 
-			std::vector<char*> cEnvp;								// The same for envp
+			std::vector<char*> cEnvp;								// The same for envp (C-style)
 			cEnvp.reserve(env.size() + 1);
 			for (size_t i = 0; i < env.size(); ++i)
 				cEnvp.push_back(const_cast<char*>(env[i].c_str()));
 			cEnvp.push_back(NULL);
 
 			execve(cArgv[0], &cArgv[0], &cEnvp[0]);
-			// only reached if execve fails
-			childFail("CGI: execve() failed\n");
+			
+			const char msg[] = "CGI: execve() failed\n";			// only reached if execve fails
+			write(2, msg, sizeof(msg) - 1);
+			_exit(1);
 		}
 
 		close(pipeStdin[0]); close(pipeStdout[1]);
@@ -1263,7 +1253,7 @@ namespace {
 
 		int	flags;
 
-		flags = fcntl(pipes.stdinParent, F_GETFL, 0);
+		flags = fcntl(pipes.stdinParent, F_GETFL, 0);					// Make parent-side CGI pipes non-blocking
 		if (flags != -1)
 			fcntl(pipes.stdinParent, F_SETFL, flags | O_NONBLOCK);
 
