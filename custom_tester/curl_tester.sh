@@ -4,6 +4,20 @@ set -euo pipefail
 # -u            Error if using an undefined variable
 # -o pipefail   In pipelines, fail if ANY command fails (not just the last)
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# ${BASH_SOURCE[0]}
+#   path to the current script file.
+# dirname -- "${BASH_SOURCE[0]}"
+#   dirname returns the directory part of a path.
+# -- means “stop parsing options”
+# cd -- "<that directory>"
+#   Change directory into the script’s directory.
+LARGE_FILE="$SCRIPT_DIR/resource/large.bin"
+TEST_ROOT="${SCRIPT_DIR}/curl_www"
+UPLOAD_DIR="${TEST_ROOT}/upload"
+TRASH_DIR="${TEST_ROOT}/trash"
+
+
 BASE="${BASE:-http://127.0.0.1:8080}"   # If BASE is unset/empty, use default
 COMMON=(-sS --http1.1 --max-time 2 --connect-timeout 1)
 # -s                    silent (no progress meter)
@@ -42,14 +56,13 @@ banner() {
 }
 
 cleanup() {
-  rm -f ./www/trash/file.txt
-
-  # remove files created by upload tests
-  rm -f ./www/upload/small.txt
-  rm -f ./www/upload/copy_large.bin
-  rm -f ./www/upload/conflict.txt
-  rm -f ./www/upload/chunked.txt
+  rm -f "${TRASH_DIR}/file.txt"
+  rm -f "${UPLOAD_DIR}/small.txt"
+  rm -f "${UPLOAD_DIR}/copy_large.bin"
+  rm -f "${UPLOAD_DIR}/conflict.txt"
+  rm -f "${UPLOAD_DIR}/chunked.txt"
 }
+
 trap cleanup EXIT INT TERM
     #   EXIT    when scripts ends for any reason
     #   INT     when Ctrl-C
@@ -78,30 +91,40 @@ full() {
   curl "${COMMON[@]}" -i "$@"
 }
 
-show_headers_if_verbose() {
-  local out="$1"
-  if [[ "$VERBOSE" == "1" ]]; then
-    echo
-    echo "[Response headers]"
-    # Print only headers portion (up to the first empty line)
-    awk 'BEGIN{RS="\r\n\r\n|\n\n"} {print $0; exit}' <<<"$out"
-  fi
+# Extract last HTTP status code from a curl -i output (handles 100 Continue + final)
+status_from_full() {
+  grep -Eo '^HTTP/1\.[01] [0-9]{3}' | tail -n1 | awk '{print $2}'
 }
 
-show_body_preview_if_debug() {
-  local out="$1"
-  if [[ "$DEBUG_BODY" == "1" ]]; then
-    echo
-    echo "[Body preview]"
-    # Print after headers separator, first 200 chars
-    python3 - <<'PY' <<<"$out"
-import sys, re
-data=sys.stdin.read()
-# Split headers/body on first blank line
-m=re.split(r"\r?\n\r?\n", data, maxsplit=1)
-body = m[1] if len(m) > 1 else ""
-print(body[:200].replace("\r","\\r").replace("\n","\\n"))
-PY
+# Print ALL header blocks from curl -i output, with NO trailing newline.
+all_header_blocks() {
+  awk '
+    BEGIN { RS="\r\n\r\n|\n\n"; ORS=""; first=1 }
+    $0 ~ /^HTTP\// {
+      # separate header blocks with ONE blank line, but not after the last one
+      if (!first) printf "\n\n"
+      first=0
+      sub(/\r$/, "", $0)       # defensive: strip stray CR
+      printf "%s", $0
+    }
+  '
+}
+
+# Print headers ONLY if VERBOSE=1.
+# IMPORTANT: this function also must NOT end by printing extra newlines.
+print_headers_if_verbose() {
+  local title="$1"
+  local full_out="$2"
+  local mode="${3:-all}"   # all | first
+
+  [[ "$VERBOSE" != "1" ]] && return 0
+
+  printf "\n[%s]\n" "$title"
+
+  if [[ "$mode" == "first" ]]; then
+    awk 'BEGIN{RS="\r\n\r\n|\n\n"; ORS=""} { sub(/\r$/, "", $0); printf "%s", $0; exit }' <<<"$full_out"
+  else
+    printf "%s" "$full_out" | all_header_blocks
   fi
 }
 
@@ -115,7 +138,7 @@ expect_code() {
   if [[ "$VERBOSE" == "1" ]]; then
     # Get headers (and status line) so we can display them
     out="$(curl "${COMMON[@]}" -i "$@" || true)"
-    got="$(grep -m1 -Eo 'HTTP/1\.[01] [0-9]{3}' <<<"$out" | awk '{print $2}')"
+    got="$(printf "%s" "$out" | status_from_full)"
 
     if [[ "$got" == "$expected" ]]; then
       pass "$name ($got)"
@@ -141,22 +164,24 @@ expect_code() {
 expect_header_contains() {
   local name="$1" pattern="$2"
   shift 2
+
+  # Always fetch headers only
   local out
   out="$(headers "$@")"
+
   if echo "$out" | grep -qiE "$pattern"; then
-    # -q    quiet (no output)
-    # -i    case-insensitive
-    # -E    extended regex
     pass "$name"
-    show_headers_if_verbose "$out" || { echo "$out"; fail "$name (missing: $pattern)"; }
+    # Print the headers we actually checked (only if VERBOSE=1)
+    print_headers_if_verbose "Response headers" "$out" first
   else
     echo
     echo "[FAIL DETAILS] missing header pattern: $pattern"
     echo "[Got headers]"
     echo "$out"
-    fail "$name"
+    fail "$name (missing: $pattern)"
   fi
 }
+
 
 echo "BASE=$BASE"
 echo "Tip: run VERBOSE=1 ./curl_tester.sh to print response headers."
@@ -203,15 +228,22 @@ expect_code "4) POST /upload/small.txt small body" 201 -X POST "$BASE/upload/sma
 # 5) Large POST upload (accept 201 or 413)
 banner "5) POST /upload/copy_large.bin (large body)" \
   "Large upload either succeeds (201) or is rejected by max-body-size (413)." \
-  "POST $BASE/upload/copy_large.bin  body=@./www/stress/large.bin"
-large_code="$(code -X POST "$BASE/upload/copy_large.bin" --data-binary @./www/stress/large.bin || true)"
+  "POST $BASE/upload/copy_large.bin  body=@$LARGE_FILE"
+large_out=""
+if [[ "$VERBOSE" == "1" ]]; then
+  large_out="$(full -X POST "$BASE/upload/copy_large.bin" --data-binary @"$LARGE_FILE" || true)"
+  large_code="$(printf "%s" "$large_out" | status_from_full)"
+else
+  large_code="$(code -X POST "$BASE/upload/copy_large.bin" --data-binary @"$LARGE_FILE" || true)"
+fi
 if [[ "$large_code" == "201" || "$large_code" == "413" ]]; then
   pass "5) POST /upload/copy_large.bin large body ($large_code)"
+  print_headers_if_verbose "Response headers (all responses)" "$large_out" all
 else
   echo
-  echo "[FAIL DETAILS] expected 201 or 413 got $large_code"
+  echo "[FAIL DETAILS] expected 201 or 413 got ${large_code:-"(empty)"}"
   echo "[Full response]"
-  full -X POST "$BASE/upload/copy_large.bin" --data-binary @./www/stress/large.bin || true
+  full -X POST "$BASE/upload/copy_large.bin" --data-binary @"$LARGE_FILE" || true
   fail "5) Large upload"
 fi
 
@@ -219,8 +251,8 @@ fi
 banner "6) POST /upload/conflict.txt when exists -> 409" \
   "Conflict handling: server must not overwrite an existing upload target." \
   "POST $BASE/upload/conflict.txt (but file already exists)"
-mkdir -p ./www/upload
-echo "existing" > ./www/upload/conflict.txt
+
+echo "existing" > "$UPLOAD_DIR/conflict.txt"
 expect_code "6) POST /upload/conflict.txt when exists -> 409" 409 \
   -X POST "$BASE/upload/conflict.txt" -H "Content-Type: text/plain" --data "hello again"
 
@@ -229,8 +261,7 @@ expect_code "6) POST /upload/conflict.txt when exists -> 409" 409 \
 banner "7) DELETE /trash/file.txt" \
   "DELETE removes an existing file and returns 204 No Content." \
   "DELETE $BASE/trash/file.txt"
-mkdir -p ./www/trash
-echo "to delete" > ./www/trash/file.txt
+echo "to delete" > "$TRASH_DIR/file.txt"
 expect_code "7) DELETE /trash/file.txt" 204 -X DELETE "$BASE/trash/file.txt"
 
 # 8) DELETE non-existing -> 404
@@ -243,13 +274,29 @@ expect_code "8) DELETE /trash/nope.txt" 404 -X DELETE "$BASE/trash/nope.txt"
 banner "9) Chunked POST /upload/chunked.txt" \
   "HTTP/1.1 chunked transfer decoding works (server reads body correctly)." \
   "POST(chunks) $BASE/upload/chunked.txt  body='hello world'"
-chunk_code="$(
-  printf 'b\r\nhello world\r\n0\r\n\r\n' | \
-  curl "${COMMON[@]}" -o /dev/null -w "%{http_code}" \
-    -X POST "$BASE/upload/chunked.txt" -H "Transfer-Encoding: chunked" --data-binary @- || true
-)"
-[[ "$chunk_code" == "201" ]] && pass "9) Chunked POST ($chunk_code)" \
-  || { echo; echo "[Full response]"; printf 'b\r\nhello world\r\n0\r\n\r\n' | full -X POST "$BASE/upload/chunked.txt" -H "Transfer-Encoding: chunked" --data-binary @- || true; fail "9) Chunked POST expected 201 got $chunk_code"; }
+chunk_out=""
+if [[ "$VERBOSE" == "1" ]]; then
+  chunk_out="$(
+    printf 'b\r\nhello world\r\n0\r\n\r\n' | \
+    full -X POST "$BASE/upload/chunked.txt" -H "Transfer-Encoding: chunked" --data-binary @- || true
+  )"
+  chunk_code="$(printf "%s" "$chunk_out" | status_from_full)"
+else
+  chunk_code="$(
+    printf 'b\r\nhello world\r\n0\r\n\r\n' | \
+    curl "${COMMON[@]}" -o /dev/null -w "%{http_code}" \
+      -X POST "$BASE/upload/chunked.txt" -H "Transfer-Encoding: chunked" --data-binary @- || true
+  )"
+fi
+if [[ "$chunk_code" == "201" ]]; then
+  pass "9) Chunked POST ($chunk_code)"
+  print_headers_if_verbose "Response headers (all responses)" "$chunk_out" all
+else
+  echo
+  echo "[Full response]"
+  printf 'b\r\nhello world\r\n0\r\n\r\n' | full -X POST "$BASE/upload/chunked.txt" -H "Transfer-Encoding: chunked" --data-binary @- || true
+  fail "9) Chunked POST expected 201 got $chunk_code"
+fi
 
 # 10) Connection close header
 banner "10) Connection: close" \
@@ -281,7 +328,7 @@ else
 fi
 
 echo
-cleanup
+#cleanup
 echo
 echo "                              🌟🌟🌟All done🌟🌟🌟"
 echo
