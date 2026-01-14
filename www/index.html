@@ -1,104 +1,88 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Webserv Test</title>
-        <link rel="stylesheet" href="/static/style.css">
-    </head>
-    <body>
-        <header class="site-header">
-            <div class="container">
-                <h1>Webserv</h1>
-                <p class="tagline">A tiny static site to test our HTTP server.</p>
-            </div>
-        </header>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Webserv Demo</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
 
-        <nav class="site-nav">
-            <div class="container">
-                <a href="/">Home</a>
-                <a href="/files/file1.txt">Example File(file1.txt)</a>
-                <a href="/upload/">Upload</a>
-                <a href="/trash/">Trash</a>
-                <a href="/cgi-bin/test.py">CGI Test</a>
-                <a href="/stress/readonly">Stress Readonly</a>
-                <a href="/stress/small.html">Stress Small</a>
-                <a href="/stress/large.bin">Stress Large</a>
-                <a href="/stress/upload">Stress Upload</a>
-            </div>
-        </nav>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <h1>Webserv</h1>
+      </div>
+    </header>
 
-        <main class="container">
-            <section class="intro">
-                <h2>Welcome!</h2>
-                <p>
-                    If you can see this page, the basic <strong>GET</strong> handling and
-                    static file serving are working. Use the tiles below to navigate to
-                    different parts of our Webserv project.
-                </p>
-            </section>
+    <main class="container">
+      <section class="intro">
+        <h2>Welcome!</h2>
+        <p>
+          This website is a simple UI to demonstrate our Webserv features.
+          Each tile leads to a dedicated page.
+        </p>
+      </section>
 
-            <section class="cards">
-                <article class="card">
-                    <h3>Browse Files</h3>
-                    <p>
-                        Lists the contents of <code>www/files/</code>. Great for testing
-                        <strong>autoindex</strong> and directory handling.
-                    </p>
-                    <a class="button" href="/files/">Go to /files/</a>
-                </article>
+      <section class="cards">
+        <article class="card">
+          <h3>GET</h3>
+          <p>Shows a page served by GET (proves GET + static files work).</p>
+          <a class="button" href="/demo/get.html">Open GET demo</a>
+        </article>
 
-                <article class="card">
-                    <h3>Upload Area</h3>
-                    <p>
-                        Endpoint backed by <code>www/upload/</code>. Use it to test
-                        <strong>POST</strong> request and file uploads.
-                    </p>
-                    <a class="button" href="/upload/">Go to /upload/</a>
-                </article>
+        <article class="card">
+          <h3>POST (Create file)</h3>
+          <p>Create a file by POSTing a name + content.</p>
+          <a class="button" href="/demo/post.html">Open POST demo</a>
+        </article>
 
-                <article class="card">
-                    <h3>Trash Area</h3>
-                    <p>
-                        Files under <code>www/trash/</code> can be listed with GET and
-                        removed with <strong>DELETE</strong> requests.
-                    </p>
-                    <a class="button" href="/trash/">Go to /trash/</a>
-                </article>
+        <article class="card">
+          <h3>DELETE</h3>
+          <p>Delete a file and see success vs “not found”.</p>
+          <a class="button" href="/demo/delete.html">Open DELETE demo</a>
+        </article>
 
-                <article class="card">
-                    <h3>CGI Test</h3>
-                    <p>
-                        Runs <code>cgi-bin/test.py</code>. Use this to check our
-                        <strong>CGI</strong> implementation for GET and POST.
-                    </p>
-                    <a class="button" href="/cgi-bin/test.py">Run CGI</a>
-                </article>
+        <article class="card">
+          <h3>UPLOAD</h3>
+          <p>Upload a file to the server.</p>
+          <a class="button" href="/demo/upload.html">Open Upload demo</a>
+        </article>
 
-                <article class="card">
-                    <h3>Readonly Endpoint</h3>
-                    <p>
-                        A simple endpoint to trigger <strong>405 Method Not Alowed</strong>
-                        for POST/DELETE while allowing GET.
-                    </p>
-                    <a class="button" href="/stress/readonly">Go to /stress/readonly</a>
-                </article>
+        <article class="card">
+          <h3>DOWNLOAD</h3>
+          <p>Download a sample file served by Webserv.</p>
+          <a class="button" href="/demo/download.html">Open Download demo</a>
+        </article>
 
-                <article class="card">
-                    <h3>Stress Endpoints</h3>
-                    <p>
-                        Use our Python scripts to test these:
-                        <code>/stress/small</code>, <code>/stress/large</code>,
-                        <code>/stress/upload</code>.
-                    </p>
-                    <a class="button" href="/stress/small">Try /stress/small</a>
-                </article>
-            </section>
-        </main>
+        <article class="card">
+          <h3>AUTOINDEX</h3>
+          <p>Directory listing for a folder.</p>
+          <a class="button" href="/files/">Open /files/</a>
+        </article>
 
-        <footer class="site-footer">
-            <div class="container">
-                <p>Webserv &mdash; 42 project HTTP server.</p>
-            </div>
-        </footer>
-    </body>
+        <article class="card">
+          <h3>REDIRECTION</h3>
+          <p>Test 301/302 redirection.</p>
+          <a class="button" href="/redirect">Go to /redirect</a>
+        </article>
+
+        <article class="card">
+          <h3>ERROR pages</h3>
+          <p>Trigger custom error pages (404, 405, 413...).</p>
+          <a class="button" href="/demo/errors.html">Open Error demo</a>
+        </article>
+
+        <article class="card">
+          <h3>CGI (Dynamic)</h3>
+          <p>Enter a name, CGI replies: “Hello, name!”</p>
+          <a class="button" href="/demo/cgi.html">Open CGI demo</a>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p>Webserv — 42 project HTTP server.</p>
+      </div>
+    </footer>
+  </body>
 </html>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Error Demo</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="container">
+  <h1>Error Pages Demo</h1>
+  <p>These links trigger custom error pages.</p>
+
+  <ul>
+    <li><a class="button" href="/this_should_404">Trigger 404</a></li>
+    <li><a class="button" href="/readonly">Open /readonly (GET)</a></li>
+    <li><button class="button" id="btn405">Trigger 405 (POST /readonly)</button></li>
+  </ul>
+
+  <pre id="out"></pre>
+  <a class="button" href="/">Back</a>
+
+  <script>
+    document.getElementById("btn405").onclick = async () => {
+      const res = await fetch("/readonly", { method: "POST", body: "x" });
+      const text = await res.text().catch(() => "");
+      document.getElementById("out").textContent =
+        "Status: " + res.status + " " + res.statusText + "\n" + text;
+    };
+  </script>
+</body>
+</html>

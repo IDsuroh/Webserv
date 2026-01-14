@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>POST Demo</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="container">
+  <h1>POST Demo (Create file)</h1>
+  <p>Creates a file on the server using POST.</p>
+
+  <form action="/post" method="post">
+    <p>
+      <label>Filename</label><br>
+      <input type="text" name="filename" value="note.txt" required>
+    </p>
+
+    <p>
+      <label>Content</label><br>
+      <textarea name="content" rows="8" required>Hello from POST!</textarea>
+    </p>
+
+    <button class="button" type="submit">Create file</button>
+    <a class="button" href="/">Back</a>
+  </form>
+
+  <p><small>After submitting, Server response page should confirm creation (200/201) or show an error.</small></p>
+</body>
+</html>

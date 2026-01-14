@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>DELETE Demo</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="container">
+  <h1>DELETE Demo</h1>
+  <p>Deletes a file and shows success vs not found.</p>
+
+  <p>
+    <label>Filename to delete</label><br>
+    <input id="delName" type="text" value="note.txt">
+  </p>
+
+  <button class="button" id="delBtn">Delete</button>
+  <a class="button" href="/">Back</a>
+
+  <pre id="out" style="margin-top:12px;"></pre>
+
+  <script>
+    document.getElementById("delBtn").onclick = async () => {
+      const name = document.getElementById("delName").value.trim();
+      if (!name) return;
+
+      const res = await fetch("/delete/" + encodeURIComponent(name), { method: "DELETE" });
+      const text = await res.text().catch(() => "");
+      document.getElementById("out").textContent =
+        "Status: " + res.status + " " + res.statusText + "\n" + text;
+    };
+  </script>
+</body>
+</html>

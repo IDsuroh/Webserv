@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CGI Demo</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="container">
+  <h1>CGI Demo (Dynamic Hello)</h1>
+  <p>Enter a name. CGI replies with “Hello, name!”</p>
+
+  <form action="/cgi-bin/hello.py" method="get">
+    <input type="text" name="name" value="Ada">
+    <button class="button" type="submit">Run CGI</button>
+    <a class="button" href="/">Back</a>
+  </form>
+</body>
+</html>
