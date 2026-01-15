@@ -1,9 +1,1 @@
 This is file1.txt
-
-If this is readable through the browser or with curl:
-- The GET handling is working.
-- The path resolution for /files/file1.txt is working.
-- The autoindex for /files/ are working correctly because file1.txt is placed inside www/files/
-    and autoindex is enabled.
-
-You are testing Webserv. 🙂

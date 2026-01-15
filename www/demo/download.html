@@ -1,19 +1,50 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Download Demo</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="container">
-  <h1>Download Demo</h1>
-  <p>Click a file to download it from the server.</p>
 
-  <ul>
-    <li><a class="button" href="/files/file1.txt">Download file1.txt</a></li>
-    <!-- add more links if you want -->
-  </ul>
+<body class="demo-page">
+  <main class="container demo-wrap">
+    <h1 class="demo-title">Download Demo</h1>
+    <p class="demo-text">
+      Click a filename to download it from the server (static GET).
+    </p>
 
-  <a class="button" href="/">Back</a>
+    <div class="form-actions form-actions-gap">
+      <a class="button" href="/files/">Open /files/ autoindex</a>
+    </div>
+
+    <section class="download-list">
+      <h2 class="demo-subtitle">Image files</h2>
+
+      <div class="form-actions">
+        <a class="button" href="/files/Gibraltar_Airport.jpg" download>Gibraltar_Airport.jpg</a>
+        <a class="button" href="/files/Indian_Ocean_Isle_of_Lamu.jpg" download>Indian_Ocean_Isle_of_Lamu.jpg</a>
+        <a class="button" href="/files/Magdeburg_Water_Bridge_Germany.jpg" download>Magdeburg_Water_Bridge_Germany.jpg</a>
+        <a class="button" href="/files/Mare_France.jpg" download>Mare_France.jpg</a>
+        <a class="button" href="/files/Montana_USA.jpg" download>Montana_USA.jpg</a>
+        <a class="button" href="/files/Morning_Glory_Austrailia.jpg" download>Morning_Glory_Austrailia.jpg</a>
+        <a class="button" href="/files/Restaurant_on_the_Zanzibar.jpg" download>Restaurant_on_the_Zanzibar.jpg</a>
+        <a class="button" href="/files/Skagen_Denmark.jpg" download>Skagen_Denmark.jpg</a>
+        <a class="button" href="/files/Danxia_Landform_china.jpg" download>Danxia_Landform_china.jpg</a>
+      </div>
+    </section>
+
+    <section class="download-list">
+      <h2 class="demo-subtitle">Text files</h2>
+      <div class="form-actions">
+        <a class="button" href="/files/file1.txt" download>file1.txt</a>
+        <a class="button" href="/files/file2.txt" download>file2.txt</a>
+        <a class="button" href="/files/file3.txt" download>file3.txt</a>
+      </div>
+    </section>
+
+    <div class="form-actions form-actions-gap">
+      <a class="button button-lg" href="/">Back</a>
+    </div>
+  </main>
 </body>
 </html>
