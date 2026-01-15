@@ -1,34 +1,63 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>DELETE Demo</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="container">
-  <h1>DELETE Demo</h1>
-  <p>Deletes a file and shows success vs not found.</p>
 
-  <p>
-    <label>Filename to delete</label><br>
-    <input id="delName" type="text" value="note.txt">
-  </p>
+<body class="demo-page">
+  <main class="container demo-wrap">
+    <h1 class="demo-title">DELETE Demo</h1>
 
-  <button class="button" id="delBtn">Delete</button>
-  <a class="button" href="/">Back</a>
+    <p class="demo-text">
+      Delete a file from the server using <strong>DELETE</strong>. Enter a filename and click delete.
+    </p>
 
-  <pre id="out" style="margin-top:12px;"></pre>
+    <form class="demo-form" id="delForm">
+      <div class="form-block form-block-center">
+        <label class="form-label" for="delName">Filename to delete</label>
+        <input class="form-input" id="delName" type="text" value="note.txt">
+      </div>
+
+      <div class="form-actions form-actions-gap">
+        <button class="button button-lg" id="delBtn" type="submit">Delete</button>
+        <a class="button button-lg" href="/">Back</a>
+      </div>
+
+      <p class="demo-hint demo-hint-lg" id="out"></p>
+    </form>
+  </main>
 
   <script>
-    document.getElementById("delBtn").onclick = async () => {
-      const name = document.getElementById("delName").value.trim();
-      if (!name) return;
+    const form = document.getElementById("delForm");
+    const input = document.getElementById("delName");
+    const out = document.getElementById("out");
 
-      const res = await fetch("/delete/" + encodeURIComponent(name), { method: "DELETE" });
-      const text = await res.text().catch(() => "");
-      document.getElementById("out").textContent =
-        "Status: " + res.status + " " + res.statusText + "\n" + text;
-    };
+    function shortDeleteMessage(status, name) {
+      if (status === 200 || status === 204)
+        return `✅ Deleted "${name}" (HTTP ${status}).`;
+      if (status === 404)
+        return `❌ "${name}" not found (404).`;
+      return `❌ Delete failed (HTTP ${status}).`;
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const name = input.value.trim();
+      if (!name) {
+        out.textContent = "Please enter a filename.";
+        return;
+      }
+
+      try {
+        const res = await fetch("/delete/" + encodeURIComponent(name), { method: "DELETE" });
+        out.textContent = shortDeleteMessage(res.status, name);
+      } catch (err) {
+        out.textContent = "❌ Network error.";
+      }
+    });
   </script>
 </body>
 </html>

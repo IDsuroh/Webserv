@@ -170,6 +170,7 @@ main    {
 }
 
 .button.button-lg   {
+    border: none;
     font-size: 1.1rem;
     padding: 0.85rem 1.6rem;    /* bigger button */
 }

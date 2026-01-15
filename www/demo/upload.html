@@ -1,20 +1,68 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Upload Demo</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="container">
-  <h1>Upload Demo</h1>
 
-  <form action="/upload" method="post" enctype="multipart/form-data">
-    <input type="file" name="file" required>
-    <button class="button" type="submit">Upload</button>
-    <a class="button" href="/">Back</a>
-  </form>
+<body class="demo-page">
+  <main class="container demo-wrap">
+    <h1 class="demo-title">Upload Demo</h1>
 
-  <p><small>If your server doesn’t parse multipart yet, it may store raw multipart data. That’s okay for now.</small></p>
-  <p><a href="/files/">Go to autoindex to view files</a></p>
+    <p class="demo-text">
+      Select a file and upload it to the server using <strong>POST</strong>.
+    </p>
+
+    <form class="demo-form" id="uploadForm">
+      <div class="form-block form-block-center">
+        <label class="form-label" for="uploadFile">Choose a file</label>
+        <input class="form-input" id="uploadFile" type="file">
+      </div>
+
+      <div class="form-actions form-actions-gap">
+        <button class="button button-lg" type="submit">Upload</button>
+        <a class="button button-lg" href="/">Back</a>
+      </div>
+
+      <p class="demo-hint demo-hint-lg" id="uploadMsg"></p>
+    </form>
+  </main>
+
+  <script>
+    const form = document.getElementById("uploadForm");
+    const fileInput = document.getElementById("uploadFile");
+    const msg = document.getElementById("uploadMsg");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      if (!fileInput.files || fileInput.files.length === 0) {
+        msg.textContent = "Please choose a file.";
+        return;
+      }
+
+      const file = fileInput.files[0];
+
+      try {
+        // Raw-body upload (NOT multipart). Filename comes from URL.
+        const res = await fetch("/upload/" + encodeURIComponent(file.name), {
+          method: "POST",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          body: file
+        });
+
+        if (res.status === 200 || res.status === 201) {
+          msg.textContent = `✅ Uploaded "${file.name}" (HTTP ${res.status}).`;
+        } else if (res.status === 413) {
+          msg.textContent = "❌ File too large (413).";
+        } else {
+          msg.textContent = `❌ Upload failed (HTTP ${res.status}).`;
+        }
+      } catch (err) {
+        msg.textContent = "❌ Network error.";
+      }
+    });
+  </script>
 </body>
 </html>
