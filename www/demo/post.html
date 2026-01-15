@@ -1,29 +1,75 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>POST Demo</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="container">
-  <h1>POST Demo (Create file)</h1>
-  <p>Creates a file on the server using POST.</p>
 
-  <form action="/post" method="post">
-    <p>
-      <label>Filename</label><br>
-      <input type="text" name="filename" value="note.txt" required>
+<body class="demo-page">
+  <main class="container demo-wrap">
+    <h1 class="demo-title">POST Demo</h1>
+
+    <p class="demo-text">
+      Create a file on the server using <strong>POST</strong>. Choose a filename and content, then submit.
     </p>
 
-    <p>
-      <label>Content</label><br>
-      <textarea name="content" rows="8" required>Hello from POST!</textarea>
-    </p>
+    <form class="demo-form" id="postForm">
+      <div class="form-block form-block-center">
+        <label class="form-label" for="filename">Filename</label>
+        <input class="form-input" id="filename" type="text" value="note.txt" required>
+      </div>
 
-    <button class="button" type="submit">Create file</button>
-    <a class="button" href="/">Back</a>
-  </form>
+      <div class="form-block form-block-center">
+        <label class="form-label" for="content">Content</label>
+        <textarea class="form-textarea" id="content" rows="8" required>Hello from POST!</textarea>
+      </div>
 
-  <p><small>After submitting, Server response page should confirm creation (200/201) or show an error.</small></p>
+      <div class="form-actions form-actions-gap">
+        <button class="button button-lg" type="submit">Create file</button>
+        <a class="button button-lg" href="/">Back</a>
+      </div>
+
+      <p class="demo-hint demo-hint-lg" id="resultMsg"></p>
+      
+    </form>
+  </main>
+
+  <script>
+    const form = document.getElementById("postForm");
+    const filenameEl = document.getElementById("filename");
+    const contentEl = document.getElementById("content");
+    const result = document.getElementById("resultMsg");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault(); // don't navigate away (prevents blank page)
+
+      const name = filenameEl.value.trim();
+      const content = contentEl.value;
+
+      if (!name) {
+        result.textContent = "Please enter a filename.";
+        return;
+      }
+
+      try {
+        const res = await fetch("/post/" + encodeURIComponent(name), {
+          method: "POST",
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          body: content
+        });
+
+        if (res.status === 201 || res.status === 200) {
+          result.textContent = `✅ Created "${name}" (HTTP ${res.status}).`;
+        } else {
+          // try to show server error body if any (often empty in your case)
+          const txt = await res.text().catch(() => "");
+          result.textContent = `❌ Failed (HTTP ${res.status}). ${txt ? "Response: " + txt : ""}`;
+        }
+      } catch (err) {
+        result.textContent = "❌ Network error: " + err;
+      }
+    });
+  </script>
 </body>
 </html>

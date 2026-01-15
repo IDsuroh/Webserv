@@ -141,3 +141,108 @@ main    {
     background: #313131;
     margin-top: 1rem;
 }
+
+/* ---------- Demo pages (centered) ---------- */
+.demo-page  {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;        /* vertical center */
+    justify-content: center;    /* horizontal center */
+    text-align: center;
+}
+
+.demo-wrap  {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2rem;                  /* space between title / text / button */
+    max-width: 800px;
+}
+
+.demo-title {
+    font-size: 3rem;            /* big title */
+    line-height: 1.1;
+}
+
+.demo-text  {
+    font-size: 1.25rem;         /* bigger message */
+    max-width: 680px;
+}
+
+.button.button-lg   {
+    font-size: 1.1rem;
+    padding: 0.85rem 1.6rem;    /* bigger button */
+}
+
+/* ---------- Demo forms (bigger + centered) ---------- */
+.demo-form  {
+    width: 100%;
+    max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;                  /* more space between sections */
+}
+
+.form-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* Center labels and fields */
+.form-block-center  {
+    align-items: center;
+    text-align: center;
+}
+
+.form-label {
+    font-weight: 700;
+    font-size: 1.2rem;          /* bigger label font */
+    color: #e5e7eb;
+}
+
+/* Bigger rounded inputs */
+.form-input, .form-textarea  {
+    width: min(640px, 100%);    /* bigger boxes but responsive */
+    padding: 1.1rem 1.2rem;
+    border-radius: 1.25rem;     /* rounder */
+    border: 1px solid rgba(255,255,255,0.20);
+    background: rgba(255,255,255,0.06);
+    color: #f9fafb;
+    font-size: 1.1rem;          /* bigger text in the boxes */
+    outline: none;
+}
+
+/* Make textarea taller + nicer */
+.form-textarea  {
+    min-height: 220px;          /* bigger content box */
+    resize: vertical;
+}
+
+.form-input:focus, .form-textarea:focus    {
+    border-color: #3b82f6;
+}
+
+/* Buttons row: more gap above/below */
+.form-actions   {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+/* Extra spacing between buttons and last message */
+.form-actions-gap   {
+    margin-top: 0.5rem;
+    margin-bottom: 0.8rem;
+}
+
+.demo-hint  {
+    opacity: 0.9;
+    font-size: 1rem;
+    text-align: center;
+}
+
+.demo-hint-lg   {
+    font-size: 1.1rem;          /* bigger bottom message */
+}
