@@ -17,12 +17,12 @@
     <form class="demo-form" id="postForm">
       <div class="form-block form-block-center">
         <label class="form-label" for="filename">Filename</label>
-        <input class="form-input" id="filename" type="text" value="note.txt" required>
+        <input class="form-input" id="filename" type="text" value="note.txt">
       </div>
 
       <div class="form-block form-block-center">
         <label class="form-label" for="content">Content</label>
-        <textarea class="form-textarea" id="content" rows="8" required>Hello from POST!</textarea>
+        <textarea class="form-textarea" id="content" rows="8">Hello from POST!</textarea>
       </div>
 
       <div class="form-actions form-actions-gap">
@@ -41,8 +41,13 @@
     const contentEl = document.getElementById("content");
     const result = document.getElementById("resultMsg");
 
+    function shortErrorMessage(status) {
+      if (status === 409) return "File already exists (409 Conflict).";
+      return `Request failed (HTTP ${status}).`;
+    }
+
     form.addEventListener("submit", async (e) => {
-      e.preventDefault(); // don't navigate away (prevents blank page)
+      e.preventDefault();
 
       const name = filenameEl.value.trim();
       const content = contentEl.value;
@@ -62,14 +67,13 @@
         if (res.status === 201 || res.status === 200) {
           result.textContent = `✅ Created "${name}" (HTTP ${res.status}).`;
         } else {
-          // try to show server error body if any (often empty in your case)
-          const txt = await res.text().catch(() => "");
-          result.textContent = `❌ Failed (HTTP ${res.status}). ${txt ? "Response: " + txt : ""}`;
+          result.textContent = `❌ ${shortErrorMessage(res.status)}`;
         }
       } catch (err) {
-        result.textContent = "❌ Network error: " + err;
+        result.textContent = "❌ Network error.";
       }
     });
   </script>
+
 </body>
 </html>
