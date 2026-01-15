@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/15 18:52:25 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/15 21:39:23 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -996,11 +996,10 @@ namespace {
 	}
 
 	/*
-	 Prepares the CGI interpreter and argument list for a given filesystem
-	 path. Returns true only if the extension is mapped in cgi_pass and the
-	 interpreter is executable.
+	 Resolves the CGI interpreter from cgi_pass and builds the argv vector
+	 for execve execution of the CGI script.
 	*/
-	bool prepareCgiExecutor(const EffectiveConfig& cfg, const std::string& fsPath, std::string& interpreter, std::vector<std::string>& argv) {
+	bool prepareCgiExecutor(const EffectiveConfig& cfg, const std::string& fsPath, std::vector<std::string>& argv) {
 		
 		std::string ext = getFileExtension(fsPath);
 		
@@ -1019,10 +1018,8 @@ namespace {
 		if (access(it->second.c_str(), X_OK) != 0)
 			return false;
 
-		interpreter = it->second;
-
 		argv.clear();
-		argv.push_back(interpreter);
+		argv.push_back(it->second);
 		argv.push_back(fsPath);
 
 		return true;
@@ -1271,11 +1268,10 @@ namespace {
 	}
 
 	/*
-	 Reads the CGI child's stdout while streaming the request body to its stdin
-	 using non-blocking poll() slices; enforces an inactivity timeout, closes stdin to
-	 signal EOF, and collects the child's exit status (killing the child on timeout).
+	 Streams reqBody to the CGI child's stdin while draining its stdout using poll() slices;
+	 enforces an inactivity timeout, closes stdin to signal EOF, and returns collected stdout + exit status.
 	*/
-	CgiRawOutput readCgiOutput(const CgiPipes& pipes, std::size_t timeoutSeconds, const std::string& reqBody) {
+	CgiRawOutput pumpCgiPipes(const CgiPipes& pipes, std::size_t timeoutSeconds, const std::string& reqBody) {
 
 		CgiRawOutput	cgiOutput;
 
@@ -1352,7 +1348,7 @@ namespace {
 							eof = true;
 						}
 
-						break;															// no more data to read for now (n = -1)
+						break;															// no more data to read for now (case, n = -1)
 					}
 
 					if ((pfds[0].revents & POLLHUP) && !(pfds[0].revents & POLLIN))		// hangup with no pending data
@@ -1465,7 +1461,7 @@ namespace {
 	 Returns a lowercase ASCII copy of the input string.
 	*/
 	std::string toLowerCopy(const std::string& s)   {
-		std::string out(s);	// copy constructor
+		std::string out(s);											// copy constructor
 		for (std::size_t i = 0; i < out.size(); ++i)    {
 			unsigned char   c = static_cast<unsigned char>(out[i]);
 			out[i] = static_cast<char>(std::tolower(c));
@@ -1501,6 +1497,7 @@ namespace {
 	CgiParsedOutput parseCgiOutput(const std::string& raw)	{
 
 		CgiParsedOutput			parsedOutput;
+
 		std::string 			remainingHeaders;
 		std::string::size_type	pos;
 		std::string				lineDelim;
@@ -1610,120 +1607,54 @@ namespace {
 	 a timeout, validates CGI headers, and converts the result into an HTTP
 	 response or an appropriate 4xx/5xx error.
 	*/
-
-	HTTP_Response handleCgiRequest(const HTTP_Request& req,
-								const EffectiveConfig& cfg,
-								const std::string& fsPath,
-								bool& forceClose)
-	{
-		if (!isCgiMethodAllowed(req, cfg)) {
-			std::cerr << "[CGI DEBUG] 405: method not allowed for CGI\n";
+	HTTP_Response handleCgiRequest(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
+		
+		if (!isCgiMethodAllowed(req, cfg))
 			return makeErrorResponse(405, &cfg);
-		}
 
-
-		std::string interpreter;
 		std::vector<std::string> argv;
-
-		if (!prepareCgiExecutor(cfg, fsPath, interpreter, argv)) {
-			std::cerr << "[CGI DEBUG] 500: prepareCgiExecutor failed for " << fsPath
-					<< " (cgiPass size=" << cfg.cgiPass.size() << ")\n";
-			forceClose = true;
+		if (!prepareCgiExecutor(cfg, fsPath, argv))
 			return makeErrorResponse(500, &cfg);
-		}
-
-		std::cerr << "[CGI DEBUG] interpreter=" << interpreter << " script=" << fsPath << std::endl;
 
 		std::vector<std::string> envp = buildCgiEnv(req, cfg, fsPath);
 
-		// Debugging
-		for (size_t i = 0; i < envp.size(); ++i) {
-			if (envp[i].find("SCRIPT_NAME=") == 0
-				|| envp[i].find("PATH_INFO=") == 0
-				|| envp[i].find("PATH_TRANSLATED=") == 0
-				|| envp[i].find("SCRIPT_FILENAME=") == 0
-				|| envp[i].find("DOCUMENT_ROOT=") == 0
-				|| envp[i].find("REQUEST_METHOD=") == 0
-				|| envp[i].find("CONTENT_LENGTH=") == 0) {
-				std::cerr << "[CGI ENV] " << envp[i] << std::endl;
-			}
-		}
-
 		CgiPipes pipes;
-		if (!spawnCgiProcess(argv, envp, pipes)) {
-			std::cerr << "[CGI DEBUG] 500: spawnCgiProcess failed\n";
+		if (!spawnCgiProcess(argv, envp, pipes))
 			return makeErrorResponse(500, &cfg);
-		}
+		
+		CgiRawOutput raw = pumpCgiPipes(pipes, cfg.cgiTimeout, req.body);
 
-		CgiRawOutput raw = readCgiOutput(pipes, cfg.cgiTimeout, req.body);
-
-		// Debugging
-		std::string head = raw.data.substr(0, 400);
-		for (size_t i = 0; i < head.size(); ++i) {
-			if (head[i] == '\r') head[i] = 'R';
-			else if (head[i] == '\n') head[i] = 'N';
-		}
-		std::cerr << "[CGI DEBUG] raw head(400)=\"" << head << "\"" << std::endl;
-
-		if (raw.timedOut) {
-			std::cerr << "[CGI DEBUG] 504: CGI timed out\n";
+		if (raw.timedOut)
 			return makeErrorResponse(504, &cfg);
-		}
 
-		std::cerr << "[CGI DEBUG] CGI exitStatus=" << raw.exitStatus
-				<< " data.size=" << raw.data.size() << std::endl;
+		if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {	// If the CGI failed or produced no output, try to map the error
 
-		// if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {
-		//     std::cerr << "[CGI DEBUG] 500: bad exit status and no data\n";
-		//     return makeErrorResponse(500, &cfg);
-		// }
-
-		if (raw.exitStatus == -1 || (raw.exitStatus != 0 && raw.data.empty())) {
-
-			// Se o CGI não produziu headers/body, tenta mapear o erro de forma sensata
 			if (access(fsPath.c_str(), F_OK) != 0) {
 				if (errno == ENOENT)
 					return makeErrorResponse(404, &cfg);
 				if (errno == EACCES)
 					return makeErrorResponse(403, &cfg);
 			}
-
 			return makeErrorResponse(500, &cfg);
 		}
-
 
 		CgiParsedOutput parsedOutput = parseCgiOutput(raw.data);
 
-		if (!parsedOutput.headersValid) {
-			std::cerr << "[CGI DEBUG] 500: headers invalid after parseCgiOutput\n";
+		if (!parsedOutput.headersValid)
 			return makeErrorResponse(500, &cfg);
-		}
 
-		std::map<std::string, std::string>::const_iterator itContentType =
-			parsedOutput.headers.find("content-type");
-		std::map<std::string, std::string>::const_iterator itRedirection =
-			parsedOutput.headers.find("location");
-
-		if (itContentType == parsedOutput.headers.end() &&
-			itRedirection == parsedOutput.headers.end()) {
-			std::cerr << "[CGI DEBUG] 500: no Content-Type or Location in CGI headers\n";
+		std::map<std::string, std::string>::const_iterator itContentType = parsedOutput.headers.find("content-type");
+		std::map<std::string, std::string>::const_iterator itLocation = parsedOutput.headers.find("location");
+		if (itContentType == parsedOutput.headers.end() && itLocation == parsedOutput.headers.end())
 			return makeErrorResponse(500, &cfg);
-		}
 
 		HTTP_Response res = buildCgiHttpResponse(parsedOutput);
 
-		if (!req.keep_alive) {
+		if (!req.keep_alive)
 			res.close = true;
-		}
-
-		std::cerr << "[CGI DEBUG] final http status=" << res.status
-				<< " close=" << res.close
-				<< " body.size=" << res.body.size()
-				<< std::endl;
-
+		
 		return res;
 	}
-
 
 
 	// -------------------
@@ -2230,10 +2161,7 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 			break;
 
 		case RK_CGI: {
-			bool cgiForceClose = false;
-			res = handleCgiRequest(req, cfg, fsPath, cgiForceClose);
-			if (cgiForceClose)
-				keepAlive = false;
+			res = handleCgiRequest(req, cfg, fsPath);
 			break;
 		}
 
