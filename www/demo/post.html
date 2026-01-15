@@ -42,7 +42,8 @@
     const result = document.getElementById("resultMsg");
 
     function shortErrorMessage(status) {
-      if (status === 409) return "File already exists (409 Conflict).";
+      if (status === 409)
+        return "File already exists (409 Conflict).";
       return `Request failed (HTTP ${status}).`;
     }
 
