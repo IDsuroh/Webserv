@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/15 21:39:23 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/15 22:46:09 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1786,6 +1786,7 @@ namespace {
 	 Builds a 201 Created response with a Location header pointing to the target.
 	*/
 	HTTP_Response makeResponse201(const std::string& target) {
+
 		HTTP_Response res;
 
 		res.status = 201;
@@ -1804,38 +1805,30 @@ namespace {
 	 Handles a simple upload request: validates the filename and upload directory,
 	 checks for conflicts, writes the file, and returns 201 on success.
 	*/
+	HTTP_Response handleUploadRequest(const HTTP_Request& req, const EffectiveConfig& cfg) {
 
+		if (isMultipart(req))                                           // Allow only simple uploads (reject multipart/form-data - requires boundary parsing)
+			return makeErrorResponse(501, &cfg);
 
-	HTTP_Response handleUploadRequest(const HTTP_Request& req,
-                                  const EffectiveConfig& cfg,
-                                  const std::string& fsPath)
-{
-    (void)fsPath; // já não precisamos disto para extrair filename
+		std::string filename = extractFilename(req.path);
+		if (filename.empty() || !isSanitizedFilename(filename))         // Filename validation
+			return makeErrorResponse(400, &cfg);
 
-    if (isMultipart(req))                                           // Allow only simple uploads (reject multipart/form-data - requires boundary parsing)
-        return makeErrorResponse(501, &cfg);
+		std::string dest = joinPath(cfg.uploadStore, filename);
 
-    // IMPORTANTE: o filename deve vir do URI (req.path / path), não do fsPath já mapeado
-    std::string filename = extractFilename(req.path);
-    if (filename.empty() || !isSanitizedFilename(filename))         // Filename validation
-        return makeErrorResponse(400, &cfg);
+		if (!isValidUploadDirectory(cfg.uploadStore))
+			return makeErrorResponse(500, &cfg);
 
-    std::string dest = joinPath(cfg.uploadStore, filename);
+		int status = getExistingTargetStatus(dest);
+		if (status != 0)
+			return makeErrorResponse(status, &cfg);
 
-    if (!isValidUploadDirectory(cfg.uploadStore))
-        return makeErrorResponse(500, &cfg);
+		int writeStatus = writeUploadedFile(dest, req.body);
+		if (writeStatus != 0)
+			return makeErrorResponse(writeStatus, &cfg);
 
-    int status = getExistingTargetStatus(dest);
-    if (status != 0)
-        return makeErrorResponse(status, &cfg);
-
-    int writeStatus = writeUploadedFile(dest, req.body);
-    if (writeStatus != 0)
-        return makeErrorResponse(writeStatus, &cfg);
-
-    return makeResponse201(req.target);
-}
-
+		return makeResponse201(req.target);
+	}
 
 
 	// -----------------------------------------
@@ -1859,13 +1852,12 @@ namespace {
 		if (path.empty())
 			return "";
 
-		if (path[0] == '/') {						// Case URI under root (nginx-like)
+		if (path[0] == '/') {						// URI under server root (not filesystem absolute) (nginx-like)
 			return joinPath(cfg.root, path);
 		}
 
 		return path;
 	}
-
 
 	/*
 	 Returns the standard HTTP reason phrase for a given status code, or
@@ -1919,48 +1911,26 @@ namespace {
 	 Builds an HTTP error response for the given status code. Uses a configured
 	 custom error_page if available; otherwise falls back to a simple HTML body.
 	*/
-	
-	// DEBUG VERSION - just for testing. On the end return to the original version //
 	HTTP_Response makeErrorResponse(int status, const EffectiveConfig* cfg) {
-
-		std::cerr << "[ERROR] building error response"
-				<< " status=" << status
-				<< " cfg=" << (cfg ? "non-null" : "NULL")
-				<< std::endl;
-
-		std::string body;
+		
+		std::string	body;
 		const std::string reason = getReasonPhrase(status);
-
-		if (cfg) {
+		
+		if (cfg) {																// Try loading a custom error_page
 			const std::string errorPagePath = findErrorPagePath(*cfg, status);
-
-			std::cerr << "[ERROR] status=" << status
-					<< " errorPagePath=\"" << errorPagePath << "\""
-					<< std::endl;
-
 			if (!errorPagePath.empty()) {
 				std::ifstream file(errorPagePath.c_str(), std::ios::binary);
-				if (!file) {
-					std::cerr << "[ERROR] failed to open error page file: "
-							<< errorPagePath << std::endl;
-				} else {
+				if (file) {
 					std::ostringstream oss;
 					oss << file.rdbuf();
 					body = oss.str();
-
-					std::cerr << "[ERROR] custom error page loaded ("
-							<< body.size() << " bytes)"
-							<< std::endl;
 				}
 			}
 		}
-
-		if (body.empty()) {
-			std::cerr << "[ERROR] using fallback HTML for status "
-					<< status << std::endl;
-
+		
+		if (body.empty()) {												// Otherwise, generate default HTML (if no error_page or if reading fails)
 			std::ostringstream oss;
-			oss << "<!DOCTYPE html>\n"
+			oss	<< "<!DOCTYPE html>\n"
 				<< "<html><head><meta charset=\"utf-8\">"
 				<< "<title>" << status << ' ' << reason << "</title>"
 				<< "</head><body>"
@@ -1968,9 +1938,10 @@ namespace {
 				<< "</body></html>\n";
 			body = oss.str();
 		}
-
+		
 		HTTP_Response res;
-		res.status = status;
+
+		res.status = status;													// Fill in the response fields
 		res.reason = reason;
 		res.body = body;
 		res.headers.clear();
@@ -2157,7 +2128,7 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 	switch (kind) {
 
 		case RK_UPLOAD:
-			res = handleUploadRequest(req, cfg, fsPath);
+			res = handleUploadRequest(req, cfg);
 			break;
 
 		case RK_CGI: {
