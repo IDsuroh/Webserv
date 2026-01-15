@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/14 23:03:03 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/15 18:52:25 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1059,8 +1059,8 @@ namespace {
 	*/
 	std::vector<std::string> buildCgiEnv(const HTTP_Request& req, const EffectiveConfig& cfg, const std::string& fsPath) {
 		
-		std::vector<std::string>	env;												// Arbitrary but large enough to avoid reallocations
-		env.reserve(64);
+		std::vector<std::string>	env;
+		env.reserve(64);																// Arbitrary but large enough to avoid reallocations
 
 		// 1) Basic Request Pieces
 		const std::string		requestPath = req.path.empty() ? "/" : req.path;							// requestPath: URL path without query
@@ -1185,9 +1185,15 @@ namespace {
 	 Result container for CGI child execution, storing its output and status.
 	*/
 	struct CgiRawOutput {
-		bool		timedOut;		// true if reading from the child exceeded the timeout
-		int			exitStatus;		// Exit code of the CGI process (or -1 if unavailable)
-		std::string	data;			// everything read from the child's STDOUT
+		bool        timedOut;     // true if reading from the child exceeded the timeout
+		int         exitStatus;   // Exit code of the CGI process (or -1 if unavailable)
+		std::string data;         // everything read from the child's STDOUT
+
+		CgiRawOutput()
+			: timedOut(false)
+			, exitStatus(-1)
+			, data()
+		{}
 	};
 
 	/*
@@ -1265,103 +1271,80 @@ namespace {
 	}
 
 	/*
-	 Sends the request body to the CGI process, then reads its STDOUT using
-	 non-blocking I/O and poll() with a hard timeout. Collects all output data
-	 and, if the CGI exits normally, captures its exit status. If the process
-	 times out or the status cannot be obtained, exitStatus is set to -1.
+	 Reads the CGI child's stdout while streaming the request body to its stdin
+	 using non-blocking poll() slices; enforces an inactivity timeout, closes stdin to
+	 signal EOF, and collects the child's exit status (killing the child on timeout).
 	*/
-	CgiRawOutput readCgiOutput(const CgiPipes& pipes, std::size_t timeoutSeconds, const std::string& requestBody) {
+	CgiRawOutput readCgiOutput(const CgiPipes& pipes, std::size_t timeoutSeconds, const std::string& reqBody) {
+
 		CgiRawOutput	cgiOutput;
-		cgiOutput.timedOut = false;
-		cgiOutput.exitStatus = -1;
-		cgiOutput.data.clear();
-		
-		const int	timeoutMs = static_cast<int>(timeoutSeconds * 1000);
-		const int	sliceMs = 200;	// Use poll slices + idle accumulator
-		int			idleMs = 0;
 
-		// Make stdin non-blocking
-		int	flagsIn = fcntl(pipes.stdinParent, F_GETFL, 0);
-		if (flagsIn != -1)
-			fcntl(pipes.stdinParent, F_SETFL, flagsIn | O_NONBLOCK);
+		// Inactivity timeout implemented via repeated short poll() slices
+		const int		timeoutMs = static_cast<int>(timeoutSeconds * 1000);
+		const int		sliceMs = 200;						// max wait time per poll() call
+		int				idleMs = 0;							// time spent with no I/O activity
 
-		// Make stdout non-blocking
-		int	flagsOut = fcntl(pipes.stdoutParent, F_GETFL, 0);
-		if (flagsOut != -1)
-			fcntl(pipes.stdoutParent, F_SETFL, flagsOut | O_NONBLOCK);
+		size_t			written = 0;						// how many bytes have already been sent to the CGI
 
-		const char*		data = requestBody.data();
-		const size_t	total = requestBody.size();
-		size_t			written = 0;
+		bool			stdinClosed = false;				// parent closed CGI stdin (EOF sent)
+		bool			eof = false;						// reached EOF on CGI stdout
 
-		bool			stdinClosed = false;
-		bool			eof = false;
-
-		// IMPORTANT: if there is no body, close stdin immediately so CGI sees EOF
-		if (total == 0 && !stdinClosed)	{
-			
+		if (reqBody.size() == 0) {							// no body: close stdin immediately so CGI sees EOF
 			stdinClosed = true;
 			close(pipes.stdinParent);
 		}
 
+		while (!eof && !cgiOutput.timedOut){
+			
+			struct pollfd	pfds[2];						// stdout always; stdin only while open
+			int				nfds = 0;						// number of fds passed to poll()
 
-		while (!eof && !cgiOutput.timedOut)	{
-			struct pollfd	fds[2];
-			int				nfds = 0;
-
-			// stdout: always poll until EOF
-			fds[nfds].fd = pipes.stdoutParent;
-			fds[nfds].events = POLLIN | POLLHUP | POLLERR;
-			fds[nfds].revents = 0;
+			pfds[nfds].fd = pipes.stdoutParent;						// stdout: always poll until EOF
+			pfds[nfds].events = POLLIN | POLLHUP | POLLERR;
+			pfds[nfds].revents = 0;
 			nfds++;
 
-			// stdin: poll while we still have body to send (or until we close)
-			if (!stdinClosed)	{
-				fds[nfds].fd = pipes.stdinParent;
-				fds[nfds].events = POLLOUT | POLLERR | POLLHUP;
-				fds[nfds].revents = 0;
+			if (!stdinClosed)	{									// stdin: poll while we still have body to send (or until we close)
+				pfds[nfds].fd = pipes.stdinParent;
+				pfds[nfds].events = POLLOUT | POLLHUP | POLLERR ;
+				pfds[nfds].revents = 0;
 				nfds++;
 			}
 
-			int	pr = poll(fds, nfds, sliceMs);
-			if (pr < 0)	{
-				if (errno == EINTR)
+			int	pollResult = poll(pfds, nfds, sliceMs);
+
+			if (pollResult < 0)	{
+				if (errno == EINTR)						// interrupted by signal: retry
 					continue;
-				eof = true;
+				eof = true;								// poll failed: stop I/O loop
 				break;
 			}
 
-			if (pr == 0)	{
+			if (pollResult == 0)	{					// slice timed out: no events occurred
 				idleMs += sliceMs;
-				if (idleMs >= timeoutMs)	{
-					if (stdinClosed)
-						std::cerr << "[CGI IO] TIMEOUT while waiting for stdout POLLIN. outSize=" << cgiOutput.data.size() << std::endl;
-					else
-						std::cerr << "[CGI IO] TIMEOUT while waiting for stdin POLLOUT. written=" << written << "/" << total << std::endl;
-					cgiOutput.timedOut = true;
+				if (idleMs >= timeoutMs) {
+					cgiOutput.timedOut = true;			// inactivity timeout reached
 					break;
 				}
 				continue;
 			}
 
-			bool	progressed = false;
+			bool	progressed = false;							// any I/O progress in this iteration?
 			
 			// 1) Read CGI stdout (fd index 0)
 			{
-				short	re = fds[0].revents;
-
-				if (re & POLLERR)
+				if (pfds[0].revents & POLLERR)											// Fatal error on the file descriptor - no further reads are possible
 					eof = true;
 				
-				if (re & (POLLIN | POLLHUP))	{
-					char	buf[4096];
+				if (pfds[0].revents & (POLLIN | POLLHUP))	{
+					char	buf[4096];													// reasonable chunk size for pipe reads
 					for (;;)	{
-						ssize_t	n = read(pipes.stdoutParent, buf, sizeof(buf));
+						
+						ssize_t	n = read(pipes.stdoutParent, buf, sizeof(buf));			// signed size type (may be -1 on error)
 						
 						if (n > 0)	{
 							cgiOutput.data.append(buf, static_cast<size_t>(n));
 							progressed = true;
-
 							continue;
 						}
 						
@@ -1369,58 +1352,54 @@ namespace {
 							eof = true;
 						}
 
-						break;
+						break;															// no more data to read for now (n = -1)
 					}
 
-					if ((re & POLLHUP) && !(re & POLLIN))
+					if ((pfds[0].revents & POLLHUP) && !(pfds[0].revents & POLLIN))		// hangup with no pending data
 						eof = true;
 				}
 			}
 
 			// 2) Write CGI stdin (fd index 1, only if present)
 			if (!stdinClosed)	{
-				short	re = fds[1].revents;
 
-				if (re & (POLLERR | POLLHUP))	{
-					// Child closed stdin or error
+				if (pfds[1].revents & (POLLERR | POLLHUP))	{							// Child closed stdin or error
 					stdinClosed = true;
 					close(pipes.stdinParent);
 				}
-				else if (re & POLLOUT)	{
-					while (written < total)	{
-						ssize_t	n = write(pipes.stdinParent, data + written, total - written);
+				else if (pfds[1].revents & POLLOUT)	{									// stdin writable: can send more data to CGI stdin
+					while (written < reqBody.size())	{
+						
+						ssize_t	n = write(pipes.stdinParent, reqBody.data() + written, reqBody.size() - written);
 
 						if (n > 0)	{
 							written += static_cast<size_t>(n);
 							progressed = true;
-						
 							continue;
 						}
 
 						break;
 					}
 
-					if (!stdinClosed && written == total)	{
+					if (!stdinClosed && written == reqBody.size())	{
 						stdinClosed = true;
-						close(pipes.stdinParent);
+						close(pipes.stdinParent);							// close parent's write end (send EOF to CGI stdin)
 					}
 				}
 			}
 
-			if (progressed)
+			if (progressed)													// Reset the idle timeout when progress occurs
 				idleMs = 0;
 		}
 
-		// 3) Timeout => kill CGI
-		if (cgiOutput.timedOut)	{
+		if (cgiOutput.timedOut)	{											// timeout: kill CGI
 			kill(pipes.pid, SIGKILL);
-			waitpid(pipes.pid, NULL, 0);
+			waitpid(pipes.pid, NULL, 0);									// avoid zombie
 			close(pipes.stdoutParent);
 			return cgiOutput;
 		}
 
-		// 4) Collect exit status
-		int	childStatus = 0;
+		int	childStatus = 0;												// Retrieve exit status from CGI
 		if (waitpid(pipes.pid, &childStatus, 0) > 0)	{
 			if (WIFEXITED(childStatus))
 				cgiOutput.exitStatus = WEXITSTATUS(childStatus);
@@ -1428,11 +1407,10 @@ namespace {
 				cgiOutput.exitStatus = 128 + WTERMSIG(childStatus);
 		}
 
-		close(pipes.stdoutParent);
-		return cgiOutput;
-		
-	}
+		close(pipes.stdoutParent);											// done with CGI stdout pipe
 
+		return cgiOutput;
+	}
 
 	/*
 	 Container for parsed CGI output, storing status, headers, body and a flag
