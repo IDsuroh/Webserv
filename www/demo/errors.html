@@ -1,30 +1,69 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Error Demo</title>
+  <title>Error Pages Demo</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="container">
-  <h1>Error Pages Demo</h1>
-  <p>These links trigger custom error pages.</p>
 
-  <ul>
-    <li><a class="button" href="/this_should_404">Trigger 404</a></li>
-    <li><a class="button" href="/readonly">Open /readonly (GET)</a></li>
-    <li><button class="button" id="btn405">Trigger 405 (POST /readonly)</button></li>
-  </ul>
+<body class="demo-page">
+  <main class="container demo-wrap">
+    <h1 class="demo-title">Error Pages Demo</h1>
+    <p class="demo-text">
+      Use this page to (1) open your custom error HTML files and (2) trigger a few real errors.
+    </p>
 
-  <pre id="out"></pre>
-  <a class="button" href="/">Back</a>
+    <!-- 1) Open the files directly -->
+    <section class="download-list">
+      <h2 class="demo-subtitle">Open custom error files</h2>
+      <div class="form-actions">
+        <a class="button" href="/errors/400.html">400</a>
+        <a class="button" href="/errors/403.html">403</a>
+        <a class="button" href="/errors/404.html">404</a>
+        <a class="button" href="/errors/405.html">405</a>
+        <a class="button" href="/errors/413.html">413</a>
+        <a class="button" href="/errors/431.html">431</a>
 
-  <script>
-    document.getElementById("btn405").onclick = async () => {
-      const res = await fetch("/readonly", { method: "POST", body: "x" });
-      const text = await res.text().catch(() => "");
-      document.getElementById("out").textContent =
-        "Status: " + res.status + " " + res.statusText + "\n" + text;
-    };
-  </script>
+        <a class="button" href="/errors/500.html">500</a>
+        <a class="button" href="/errors/501.html">501</a>
+        <a class="button" href="/errors/502.html">502</a>
+        <a class="button" href="/errors/503.html">503</a>
+        <a class="button" href="/errors/504.html">504</a>
+        <a class="button" href="/errors/505.html">505</a>
+      </div>
+    </section>
+
+    <!-- 2) Trigger real errors -->
+    <section class="download-list">
+      <h2 class="demo-subtitle">Trigger real errors</h2>
+
+      <div class="form-actions">
+        <!-- 404 -->
+        <a class="button button-lg" href="/this_path_should_not_exist_404">Trigger 404</a>
+      </div>
+
+      <p class="demo-hint" style="margin-top: 1rem;">
+        This 404 error is triggered by trying to access a path/file<br>
+        (this_path_should_not_exist_404) that doesn't exist.
+      </p>
+
+      <br>
+
+      <form action="/demo/" method="post">
+        <div class="form-actions form-actions-gap">
+          <button class="button button-lg" type="submit">Trigger 405</button>
+        </div>
+      </form>
+
+      <p class="demo-hint">
+        This button tries to submit a POST request to /demo/. However, it is not allowed as<br>
+        the configuration only allows GET method.
+      </p>
+    </section>
+
+    <div class="form-actions form-actions-gap">
+      <a class="button button-lg" href="/">Back</a>
+    </div>
+  </main>
 </body>
 </html>
