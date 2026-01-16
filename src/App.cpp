@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/15 22:46:09 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/16 08:28:51 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -529,13 +529,10 @@ namespace {
 	 Returns true if allowed; otherwise sets the appropriate status code
 	 and indicates whether the connection must be closed.
 	*/
-	bool checkRequestBodyAllowed(const EffectiveConfig& cfg, const HTTP_Request& req, int& status, bool& forceClose) {
-
-		forceClose = false;
+	bool checkRequestBodyAllowed(const EffectiveConfig& cfg, const HTTP_Request& req, int& status) {
 		
 		if (cfg.clientMaxBodySize != 0 && req.content_length > cfg.clientMaxBodySize) {			// clientMaxBodySize == 0, means no limit
 			status = 413;
-			forceClose = true;				// Prevent protocol desynchronization by discarding remaining request body (RFC 9110)
 			return false;
 		}
 
@@ -2029,8 +2026,7 @@ namespace {
 	*/
 	void applyConnectionHeader(bool keepAlive, HTTP_Response& res) {
 
-		// Remove qualquer variante anterior (evita duplicados no serializer)
-		res.headers.erase("Connection");
+		res.headers.erase("Connection");				// patch to avoid duplicates
 		res.headers.erase("connection");
 
 		if (keepAlive) {
@@ -2099,10 +2095,7 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 	}
 
 	int  status = 0;
-	bool forceClose = false;
-	if (!checkRequestBodyAllowed(cfg, req, status, forceClose)) {
-		if (forceClose)
-			keepAlive = false;
+	if (!checkRequestBodyAllowed(cfg, req, status)) {
 		HTTP_Response res = makeErrorResponse(status, &cfg);
 		applyConnectionHeader(keepAlive, res);
 		return res;
@@ -2157,25 +2150,8 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 			break;
 	}
 
-	// ---------- FIX CRÍTICO ----------
-	// Se algum handler marcou close, isso tem prioridade.
-	if (res.close)
+	if (res.close)											// Close requested by handler
 		keepAlive = false;
-
-	// Se algum handler já definiu explicitamente "connection: close", respeitar.
-	{
-		std::map<std::string, std::string>::const_iterator itH;
-		itH = res.headers.find("connection");
-		if (itH == res.headers.end())
-			itH = res.headers.find("Connection");
-
-		if (itH != res.headers.end()) {
-			std::string v = toLowerCopy(itH->second);
-			if (v.find("close") != std::string::npos)
-				keepAlive = false;
-		}
-	}
-	// --------------------------------
 
 	applyConnectionHeader(keepAlive, res);
 	return res;
