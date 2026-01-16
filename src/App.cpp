@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/16 08:28:51 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/16 22:49:33 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -2038,6 +2038,53 @@ namespace {
 		}
 	}
 
+
+	// ----------------------------------------
+	// --- 17. Response post-processing     ---
+	// ----------------------------------------
+
+	/*
+	 Convert a header name to HTTP Title-Case format
+	*/
+	static std::string toHeaderCase(const std::string& key) {
+	
+		std::string result;
+		bool uppercase_next = true;
+
+		for (std::string::const_iterator it = key.begin(); it != key.end(); ++it) {
+		
+			if (*it == '-') {
+				result += '-';
+				uppercase_next = true;
+			}
+			
+			else {
+				if (uppercase_next)
+					result += std::toupper(static_cast<unsigned char>(*it));
+				else
+					result += std::tolower(static_cast<unsigned char>(*it));
+
+				uppercase_next = false;
+			}
+		}
+		
+		return result;
+	}
+
+	/*
+	 Normalize HTTP response header names to Title-Case
+	*/
+	void headersUppercase(HTTP_Response& res) {
+	
+		std::map<std::string, std::string> normalized;
+
+		for (std::map<std::string, std::string>::iterator it = res.headers.begin(); it != res.headers.end(); ++it) {
+			
+			normalized[toHeaderCase(it->first)] = it->second;
+		}
+
+		res.headers.swap(normalized);
+	}
 }
 
 /*
@@ -2154,5 +2201,6 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 		keepAlive = false;
 
 	applyConnectionHeader(keepAlive, res);
+	headersUppercase(res);
 	return res;
 }
