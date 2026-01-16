@@ -1,18 +1,27 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>CGI Demo</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="container">
-  <h1>CGI Demo (Dynamic Hello)</h1>
-  <p>Enter a name. CGI replies with “Hello, name!”</p>
 
-  <form action="/cgi-bin/hello.py" method="get">
-    <input type="text" name="name" value="Ada">
-    <button class="button" type="submit">Run CGI</button>
-    <a class="button" href="/">Back</a>
-  </form>
+<body class="demo-page">
+  <main class="container demo-wrap">
+    <h1 class="demo-title">CGI Demo</h1>
+    <p class="demo-text">Enter a name and the CGI will reply with “Hello, name!”</p>
+
+    <form class="demo-form" action="/cgi-bin/hello.py" method="get">
+      <div class="form-block form-block-center">
+        <label class="form-label" for="cgiName">Name</label>
+        <input class="form-input" id="cgiName" type="text" name="name" value="name">
+      </div>
+
+      <div class="form-actions form-actions-gap">
+        <button class="button button-lg" type="submit">Run CGI</button>
+        <a class="button button-lg" href="/">Back</a>
+      </div>
+    </form>
+  </main>
 </body>
 </html>
