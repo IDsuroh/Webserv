@@ -521,7 +521,7 @@ static const Location* longestPrefixMatch(const Server& srv, const std::string& 
 }
 
 
-    void    ServerRunner::handleRequest(Connection& connection) {
+    void    ServerRunner::dispatchRequest(Connection& connection) {
         /*
             Ask the App layer to build the response for this request
             Not the same function. It is calling handleRequest from the App.hpp
@@ -853,7 +853,7 @@ void ServerRunner::readFromClient(int clientFd) {
             // ---- Transition depending on body presence ----
             if (connection.request.body_reader_state == BR_NONE) {
                 
-                handleRequest(connection);
+                dispatchRequest(connection);
                 return;
             }
 
@@ -905,7 +905,7 @@ void ServerRunner::readFromClient(int clientFd) {
 
             if (result == http::BODY_COMPLETE) {
                 
-                handleRequest(connection);
+                dispatchRequest(connection);
                 return;
             }
 

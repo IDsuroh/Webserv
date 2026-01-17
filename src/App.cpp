@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   App.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
+/*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/16 22:49:33 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/17 16:13:28 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -856,7 +856,8 @@ namespace {
 
 		while ((entry = readdir(currentDir)) != NULL) {
 
-			if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 || entry->d_name[0] == '.')		// Skip hidden/system entries
+			std::string	name(entry->d_name);
+			if (name == "." || name == ".." || (!name.empty() && name[0] == '.'))		// Skip hidden/system entries
 				continue;
 
 			std::string fullPath = joinPath(fsPath, entry->d_name);
@@ -1221,7 +1222,7 @@ namespace {
 			if (dup2(pipeStdin[0], STDIN_FILENO) == -1 || dup2(pipeStdout[1], STDOUT_FILENO) == -1) {
 				const char msg[] = "CGI: dup2() failed\n";
 				write(2, msg, sizeof(msg) - 1);						// After fork, use write() instead of std::cerr to avoid inherited buffer/lock issues
-				_exit(1);
+				std::exit(1);
 			}
 
 			close(pipeStdin[0]); close(pipeStdin[1]); close(pipeStdout[0]);	close(pipeStdout[1]);
@@ -1242,7 +1243,7 @@ namespace {
 			
 			const char msg[] = "CGI: execve() failed\n";			// only reached if execve fails
 			write(2, msg, sizeof(msg) - 1);
-			_exit(1);
+			std::exit(1);
 		}
 
 		close(pipeStdin[0]); close(pipeStdout[1]);

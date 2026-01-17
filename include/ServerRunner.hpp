@@ -27,7 +27,7 @@ class   ServerRunner  {
         void    readFromClient(int clientFd);
         void    writeToClient(int clientFd);
         void    closeConnection(int clientFd);
-        void    handleRequest(Connection& connection);
+        void    dispatchRequest(Connection& connection);
 };
 
 // Listeners
