@@ -35,7 +35,7 @@ The configuration module transforms raw text into structured data (`Server` and 
 
 * **Rules:**
 * **Delimiters:** Whitespace separates tokens. `{`, `}`, and `;` are treated as standalone tokens.
-* **Quotes:** Supports single (`'`) and double (`"`) quotes. Whitespace inside quotes is preserved. Escaped quotes (e.g., `\"`) are handled literally.
+* **Quotes:** Supports single (`'`) and double (`"`) quotes. Whitespace inside quotes is preserved. Supports ' and " quoting.
 * **Comments:** Anything following a `#` (outside of quotes) is ignored until the end of the line.
 
 
@@ -191,9 +191,15 @@ We:
 - set `draining = true` / `state = S_DRAIN`
 - keep reading and discarding until body is fully consumed, once the pending response is fully sent, close.
 
+Why draining exists (if we check the logic of drain)
+
+If a request is invalid, for example the body is too large,
+we still need to read and discard the remaining data.
+Otherwise, the TCP stream would be corrupted for the next request on the same connection.
+
 ---
 
-##5) Request -> Response Bridge	**Location:** `ServerRunner::handleRequest(Connection& connection)`
+##5) Request -> Response Bridge	**Location:** `ServerRunner::dispatchRequest(Connection& connection)`
 
 This is the handover point from the Network Core to the Application Logic.
 
