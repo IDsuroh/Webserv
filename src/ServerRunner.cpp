@@ -527,7 +527,10 @@ static const Location* longestPrefixMatch(const Server& srv, const std::string& 
             Not the same function. It is calling handleRequest from the App.hpp
             which is a free function in the global namespace.
         */
-        HTTP_Response appRes = ::handleRequest(connection.request, _servers);
+        const Server& active = connection.srv ? *connection.srv : _servers[0];
+
+        HTTP_Response appRes = ::handleRequest(connection.request, active, _servers);
+        
 
         // If App says “close”, override keep-alive
         if (appRes.close)

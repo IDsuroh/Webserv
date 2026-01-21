@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   App.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
+/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/19 15:15:22 by suroh            ###   ########.fr       */
+/*   Updated: 2026/01/21 18:58:17 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -104,27 +104,108 @@ namespace {
 	}
 
 
-	// -----------------------------------
-	// --- 2. Server selection (vhost) ---
-	// -----------------------------------
+	// ---------------------------
+	// --- 2. Server selection ---
+	// ---------------------------
 
 	/*
-	 Selects the appropriate virtual server based on the Host header.
-	 Returns the first matching server_name; falls back to servers[0] if none match.
-	*/
-	const Server& selectServer(const std::vector<Server>& servers, const HTTP_Request& request) {
+	 Extracts and validates the port from a listen specification.
+	 Supports formats with or without host and applies the default
+	 port (80) when none is explicitly provided.
+	*/	
+	bool parseListenPort(const std::string& spec, int& outPort) {
+	
+		// Accepts: "8080", "127.0.0.1:8080", ":8080", "0.0.0.0:8080", "*:8080"
+		std::string pstr;
+		std::string::size_type colon = spec.rfind(':');
 
-		for (size_t i = 0; i < servers.size(); ++i) {
-
-			std::vector<std::string>::const_iterator it;
-
-			it = std::find(servers[i].server_name.begin(), servers[i].server_name.end(), request.host);
-
-			if (it != servers[i].server_name.end())
-				return servers[i];
+		if (colon == std::string::npos) {
+			// Either it is just "8080" (digits only) or it is just "host" (no port -> default 80)
+			bool allDigits = !spec.empty();
+			for (std::size_t i = 0; i < spec.size(); ++i) {
+				unsigned char c = static_cast<unsigned char>(spec[i]);
+				if (!std::isdigit(c)) { allDigits = false; break; }
+			}
+			if (allDigits)
+				pstr = spec;
+			else
+				pstr = ""; // host-only -> default
+		} else {
+			pstr = (colon + 1 < spec.size()) ? spec.substr(colon + 1) : "";
 		}
 
-		return servers[0];				// Falls back to the first server, matching real-world default vhost behavior (NGINX/Apache).
+		if (pstr.empty()) {
+			outPort = 80;
+			return true;
+		}
+
+		char* endptr = 0;
+		long v = std::strtol(pstr.c_str(), &endptr, 10);
+		if (endptr == pstr.c_str() || *endptr != '\0' || v < 1 || v > 65535)
+			return false;
+
+		outPort = static_cast<int>(v);
+		return true;
+	}
+
+	/*
+	 Determines the primary port associated with a server.
+	 For our use case, considering the first valid listen
+	 is sufficient under the “one server per port” model.
+	*/
+	int getServerPrimaryPort(const Server& srv) {
+		// “Server port”: for our case, it is enough to use the first valid listen.
+		// (This is exactly the “one server per port” case from the problem statement.)
+		for (std::size_t i = 0; i < srv.listen.size(); ++i) {
+			int port = 0;
+			if (parseListenPort(srv.listen[i], port))
+				return port;
+		}
+		return 80; // fallback defensivo
+	}
+
+	/*
+	 Removes the port from a host string, if present.
+	 Returns only the hostname, leaving it unchanged
+	 when no port is specified.
+	*/
+	std::string hostWithoutPort(const std::string& host) {
+		// If it receives "127.0.0.1:8080" it returns "127.0.0.1"
+		// If it receives "localhost" it returns "localhost"
+		std::string::size_type colon = host.rfind(':');
+		if (colon == std::string::npos)
+			return host;
+		return host.substr(0, colon);
+	}
+
+	/*
+	 Selects the most appropriate server for an HTTP request.
+	 Scopes first by port, then attempts a server_name match,
+	 falling back to the active server by default.
+	*/
+	static const Server& selectServerForRequest(const std::vector<Server>& allServers, const Server& activeServer, const HTTP_Request& request) {
+		
+		// 1) First: the port is the “scope”
+		const int activePort = getServerPrimaryPort(activeServer);
+
+		// 2) Within that port, try to match by server_name (optional extra)
+		const std::string hostKey = hostWithoutPort(request.host);
+
+		for (std::size_t i = 0; i < allServers.size(); ++i) {
+			const Server& candidate = allServers[i];
+			if (getServerPrimaryPort(candidate) != activePort)
+				continue;
+
+			if (hostKey.empty())
+				continue;
+
+			if (std::find(candidate.server_name.begin(), candidate.server_name.end(), hostKey) != candidate.server_name.end()) {
+				return candidate;
+			}
+		}
+
+		// 3) Correct fallback for evaluation: the port’s default server
+		return activeServer;
 	}
 
 
@@ -2093,12 +2174,12 @@ namespace {
  and location, builds the effective configuration, enforces method/body
  rules, maps the path to the filesystem or CGI, and delegates to the
  appropriate handler to produce the final HTTP response.
- */
-HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& servers) {
-
+*/
+HTTP_Response handleRequest(const HTTP_Request& req, const Server& activeServer, const std::vector<Server>& allServers)
+{
 	bool keepAlive = req.keep_alive;
 
-	if (servers.empty()) {
+	if (allServers.empty()) {
 		HTTP_Response res = makeErrorResponse(500, NULL);
 		applyConnectionHeader(keepAlive, res);
 		return res;
@@ -2112,7 +2193,8 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 		return res;
 	}
 
-	const Server&   srv = selectServer(servers, req);
+	// ✅ FIX: escolher server com base na porta (activeServer) e só depois host (opcional)
+	const Server&   srv = selectServerForRequest(allServers, activeServer, req);
 	const Location* loc = matchLocation(srv, path);
 
 	EffectiveConfig cfg;
@@ -2142,7 +2224,7 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 		return res;
 	}
 
-	int  status = 0;
+	int status = 0;
 	if (!checkRequestBodyAllowed(cfg, req, status)) {
 		HTTP_Response res = makeErrorResponse(status, &cfg);
 		applyConnectionHeader(keepAlive, res);
@@ -2167,15 +2249,13 @@ HTTP_Response handleRequest(const HTTP_Request& req, const std::vector<Server>& 
 
 	HTTP_Response res;
 	switch (kind) {
-
 		case RK_UPLOAD:
 			res = handleUploadRequest(req, cfg);
 			break;
 
-		case RK_CGI: {
+		case RK_CGI:
 			res = handleCgiRequest(req, cfg, fsPath);
 			break;
-		}
 
 		case RK_DIRECTORY:
 			res = handleDirectoryRequest(req, cfg, fsPath, path);
