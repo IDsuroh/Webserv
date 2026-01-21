@@ -217,7 +217,7 @@ Step 1 — start telnet
 	Ctrl + ]
 	quit
 
-BIGGG PROBLEM: We are not implementing this:
+BIGGG PROBLEM: We are not implementing this:	<- now working. Wait for Hugo to upload his fix.
 
 ✅ Multi-port / multi-server binding (mandatory)
 server {
@@ -232,3 +232,19 @@ server {
 
 Different ports → differentiated by TCP port
 ➡️ MANDATORY
+
+
+
+___________________________________________________________________
+
+Run a basic stress test
+
+Start your server, then in another terminal:
+
+siege -b http://127.0.0.1:8080/
+-b = benchmark mode (no delay between requests)
+
+siege -b -t30S http://127.0.0.1:8080/
+siege -b -c 50 -t30S http://127.0.0.1:8080/
+siege -b -c 50 -t30S http://127.0.0.1:8080/demo/get.html
+
