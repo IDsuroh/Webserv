@@ -1,0 +1,234 @@
+Siege is a HTTP load/stress testing tool. Evaluators use it to:
+- send many requests concurrently (GET/POST…) to your server
+- see if it stays stable (no hangs / no crashes)
+- check availability target (their sheet mentions 99.5%+ availability)
+
+siege -b http://127.0.0.1:8080/ (-b = benchmark mode, no delay)
+siege -c 50 -t30S http://127.0.0.1:8080/ (50 concurrent users for 30 seconds)
+Homebrew is a package manager for macOS (like apt on Debian).
+So “install siege with homebrew” basically means:
+Debian/Ubuntu: sudo apt install siege
+
+___________________________________________________________________
+
+I/O multiplexing = one thread/process can manage many sockets by asking the OS:
+
+“Which file descriptors are ready to read/write right now?”
+
+In your project, the correct answer is:
+
+“We use poll() for I/O multiplexing. Our server is non-blocking; we put listening sockets + client sockets in a pollfd array, call poll() in the main loop, and only call read/write when poll tells us the fd is ready.”
+
+Siege is a HTTP load/stress testing tool. Evaluators use it to:
+- send many requests concurrently (GET/POST…) to your server
+- see if it stays stable (no hangs / no crashes)
+- check availability target (their sheet mentions 99.5%+ availability)
+
+siege -b http://127.0.0.1:8080/ (-b = benchmark mode, no delay)
+siege -c 50 -t30S http://127.0.0.1:8080/ (50 concurrent users for 30 seconds)
+Homebrew is a package manager for macOS (like apt on Debian).
+So “install siege with homebrew” basically means:
+Debian/Ubuntu: sudo apt install siege
+
+___________________________________________________________________
+
+What select() is (conceptually)
+old API that watches sets of fds: readable / writable / exceptional.
+big limitation: it has an FD limit (FD_SETSIZE) and you must rebuild sets each call.
+
+What poll() is
+newer than select (still old, but better).
+you pass an array of struct pollfd where each element says:
+- fd
+- events you want to watch (POLLIN / POLLOUT)
+- OS fills revents with what happened
+“We chose poll() instead of select() because it scales better and doesn’t have FD_SETSIZE(Fd limits) limitations. but the concept is similar: poll waits until some fd becomes readable/writable, and then we handle only those.”
+
+___________________________________________________________________
+
+If they ask whether fds are being checked for read and write at the same time.
+
+“We use a single poll() in the main loop. That poll monitors readiness for both reading and writing. We never perform read or write unless poll reports readiness. Read and write readiness are handled in the same event loop and the same poll call.”
+“We use a single poll() in the main loop that monitors both read and write readiness. We never read or write unless poll reports readiness. Per-fd interest is state-driven, but all I/O is handled by the same poll call.”
+
+___________________________________________________________________
+
+So what you show them is:
+The poll() is in the main loop
+After poll(), you iterate fds and decide:
+if revents & POLLIN → call readFromClient(fd)
+if revents & POLLOUT → call writeToClient(fd)
+Show them ServerRunner::run() and ServerRunner::handleEvents():
+
+You remove connections via:
+ServerRunner::closeConnection(fd) (this closes + erases from _connections + removes from _fds/_fdIndex)
+
+A) poll reports hard failure
+In handleEvents():
+
+if (re & (POLLERR | POLLNVAL)) {
+    closeConnection(fd);
+    continue;
+}
+
+
+B) peer disconnected (EOF) in read
+In readFromClient(), if read() returns 0 and you’re not in a situation where you still owe a response, you close.
+
+C) timeouts / housekeeping
+If a connection stays stuck too long in a state, housekeeping() will close it.
+
+“We treat negative read/write as ‘stop now’, and rely on poll revents (POLLERR/POLLHUP/POLLNVAL) + timeouts to decide closure. When we decide to close, we always go through closeConnection() which cleans poll structures too.”
+
+
+Where to show in your code
+In readFromClient() you do:
+if (n > 0) append bytes
+if (n == 0) mark peerClosedRead / close in some cases
+else (n < 0) break (and you explicitly comment you don’t inspect errno)
+
+In writeToClient() you do:
+if (n > 0) advance writeOffset
+else (n <= 0) you stop and rely on future poll events (again no errno)
+
+“We only use errno for things like poll()/accept() handling (EINTR/EAGAIN). After read()/write() we do not branch on errno at all.”
+
+“We never perform socket I/O unless poll reports readiness (POLLIN/POLLOUT). Regular file I/O is exempt per subject.”
+
+_________________________++++++++++++______________________________
+You also have a separate poll() inside App.cpp in your CGI handling (polling the CGI pipes in short slices).
+
+That poll() is not for “client↔server sockets”, it’s for server↔CGI pipes.
+
+Outside ServerRunner, the only read/write are:
+CGI pipe I/O in App.cpp (and it is also poll-driven there)
+write(2,...) debug/error messages in the child (stderr)
+file I/O via streams in HttpSerializer/App (regular files are exempt from poll)
+
+
+_________________________++++++++++++______________________________
+
+How to do config test.
+
+1) Multiple servers with different ports ✅
+
+Just add another server {} block with a different listen port.
+
+server {
+    listen 127.0.0.1:8080;
+    server_name localhost;
+    root ./www;
+    index index.html;
+}
+
+server {
+    listen 127.0.0.1:8081;
+    server_name site2;
+    root ./www2;
+    index index.html;
+}
+
+TEST
+curl -i http://127.0.0.1:8080/
+curl -i http://127.0.0.1:8081/
+
+3) Default error page (change 404)
+Your config already has many error_page lines in webserv.conf
+
+To demonstrate:
+	1. Edit the 404 mapping to point to a custom file:
+
+error_page 404 ./www/errors/my404.html;
+
+	2. Create that file and put obvious text in it.
+
+	3. Request a missing URL:
+	curl -i http://127.0.0.1:8080/does-not-exist
+
+4) Limit client body size ✅
+
+You already support client_max_body_size at server and location level (you parse it in both). 
+
+Example (server-level):
+
+client_max_body_size 100;
+
+Or location-level:
+
+location /upload {
+  client_max_body_size 100;
+}
+
+Test:
+
+curl -i -X POST -H "Content-Type: text/plain" --data "short" http://127.0.0.1:8080/upload
+curl -i -X POST -H "Content-Type: text/plain" --data "$(python3 - <<'PY'
+print("A"*200)
+PY
+)" http://127.0.0.1:8080/upload
+
+___________________________________________________________________
+
+curl is a command-line HTTP client.
+That means:
+- It builds proper HTTP requests for you
+- It automatically formats:
+- request line (GET / HTTP/1.1)
+- headers (Host, Content-Length, etc.)
+- body (for POST/PUT)
+- It shows you the HTTP response easily
+
+telnet is not an HTTP tool.
+It’s a raw TCP client.
+Opens a TCP connection and lets you type raw bytes manually.
+
+How to use telnet (step-by-step, copy-paste)
+Step 1 — start telnet
+	telnet 127.0.0.1 8080
+
+	You’ll see something like:
+
+	Trying 127.0.0.1...
+	Connected to 127.0.0.1.
+
+	Step 2 — type a raw HTTP request
+
+	Type this EXACTLY, then press Enter twice at the end:
+
+	GET / HTTP/1.1
+	Host: localhost
+	(empty line)
+	
+	⚠️ The empty line at the end is mandatory.
+
+	Step 3 — observe response
+
+	You should see something like:
+
+	HTTP/1.1 200 OK
+	Content-Length: ...
+	Content-Type: text/html
+
+	<html>...</html>
+
+
+	To exit:
+
+	Ctrl + ]
+	quit
+
+BIGGG PROBLEM: We are not implementing this:
+
+✅ Multi-port / multi-server binding (mandatory)
+server {
+    listen 127.0.0.1:8080;
+    root ./wwwA;
+}
+server {
+    listen 127.0.0.1:8081;
+    root ./wwwB;
+}
+
+
+Different ports → differentiated by TCP port
+➡️ MANDATORY
