@@ -203,7 +203,7 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 			L.fd = fd;
 			L.config = &srv;
 			outListeners.push_back(L);	// Adds to _listeners array
-            std::cout	<< "Listening on " << srv.listen[i] << " for server #" << s << "\n\n";
+            std::cout	<< "Listening on port " << srv.listen[i] << "\n";
 		}
 
 	}
@@ -349,7 +349,6 @@ void    ServerRunner::setupPollFds()    { // only for listening sockets. setupPo
         _fds.push_back(p);
 		_fdIndex[p.fd] = _fds.size() - 1;	// - 1 because we should check the index number
 
-		std::cout << "listener[" << i << "] fd=" << fd << " registered in poll()\n";
 
 	}
 	// this process is important after opening the listening socket because this is the part where we are telling the poll()

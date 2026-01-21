@@ -59,8 +59,6 @@ void    Config::parse() {
 	//testTokens(tokens);
     parseTokens(tokens);
 
-	std::cout<< "\nResult:\n";
-
 }
 
 // Tokenize the contents of the configuration file
@@ -185,10 +183,8 @@ static void parseServerBlock(const std::vector<std::string>& tokens, std::size_t
     if (i >= tokens.size() || tokens[i] != "}")
         throw   std::runtime_error("Missing '}' at the end of server block");
     ++i;
-    std::cerr << "<<< leaving parseServerBlock now at token[" << i
-              << "] = '" << (i < tokens.size() ? tokens[i] : "<EOF>") << "'\n";
-    servers.push_back(srv);
 
+    servers.push_back(srv);
 }
 
 
