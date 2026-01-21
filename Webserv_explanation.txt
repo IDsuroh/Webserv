@@ -1,0 +1,235 @@
+Spoken Defense Script
+
+
+_______________________________________________________________________________________________
+What is a server?
+
+A server is a program that:
+    - opens a network connection endpoint (a socket)
+    - stays running continuously
+    - waits for incoming network connections
+    - receives data sent by other machines
+    - processes that data according to a protocol
+    - sends back a response
+
+In our project, Webserv is a small web server. It waits for HTTP requests from clients
+like a browser or curl, processes them, and sends back HTTP responses.
+
+Examples of servers:
+Web server
+Apache, Nginx, your Webserv
+-> serves HTML, files, images
+
+Mail server
+
+DNS server
+-> translates domain names into IP addresses
+
+Game server
+-> manages multiplayer state and messages
+
+SSH server
+-> allows remote login into a machine
+
+Database server
+MySQL, PostgreSQL
+-> receives queries and returns results
+
+_______________________________________________________________________________________________
+What is a client?
+
+A client is any program that initiates a connection and asks for data. For example, a web browser is a client.
+curl, anything that tries to connect to a server is a client.
+The client always asks first, and the server answers.
+
+_______________________________________________________________________________________________
+How do computers communicate?
+
+Computers communicate over networks using protocols.
+A protocol is a set of rules about how data are formatted and sent.
+
+For the web, we use HTTP, but HTTP itself is built on top of another protocol called TCP.
+(HTTP -> HyperText Transfer Protocol would be the language)
+
+_______________________________________________________________________________________________
+What is TCP? Like the manners of communication (saying hi when meeting and saying bye when separating)
+
+TCP is a protocol that guarantees reliable communication and it stands for Transmission Control Protocol.
+It makes sure data arrives in order, without corruption, and no data is lost.
+
+TCP works by creating a connection between two machines, and that connection stays
+open until one side closes it.
+
+TCP is
+    - part of the operating system
+    - implemented inside the kernel
+    - always running
+    - shared by all programs
+
+_______________________________________________________________________________________________
+What is an IP address and a port?
+
+An IP address identifies a machine on a network, like a street address.
+A port identifies a specific service on that machine, like an apartment number.
+
+For example,
+Common ports:
+80 -> HTTP
+443 -> HTTPS
+22 -> SSH (remote login)
+25 -> SMTP (mail sending)
+3306 -> MySQL
+5432 -> PostgreSQL
+
+In our Webserv we bind to ports defined in the config file.
+
+_______________________________________________________________________________________________
+What is a socket?
+
+A socket is a handle, meaning a small ID given by the operating system, that refers to a TCP connection
+managed by the kernel. The actual TCP connection lives in kernel space and is not accessible directly
+from user space, so programs interact with it only through this handle.
+
+User space is where application code runs. Kernel space is where the operating system manages hardware
+and resources, and user programs interact with it through system calls.
+
+TCP is implemented by the operating system whilst a socket is the handle the OS gives to a program so
+it can send and receive TCP data using read and write.
+In practice, it’s a file descriptor number that represents a network connection.
+
+_______________________________________________________________________________________________
+Listening socket vs connected socket
+
+There are two kinds of sockets in a server.
+The listening socket waits for incoming connections.
+It does not send or receive HTTP data. Its only job is to accept clients.
+
+When a client connects, the kernel creates a client socket using accept().
+That client socket represents one conversation with one client.
+
+All HTTP communication — GET, POST, file downloads, uploads — happens through the client socket.
+
+_______________________________________________________________________________________________
+Does the server send data? (important clarification)
+
+Yes, the server program sends data and does it by writing bytes to the client socket.
+The server program sends responses through the client sockets returned by accept().
+
+_______________________________________________________________________________________________
+Why we make the socket non-blocking I/O
+
+If the server is blocked, when we wait for one client, it couldn’t serve anyone else.
+
+So to say that all sockets are non-blocking it means reading and writing operations return immediately,
+even if no data is available. In other words, Non-blocking means read and write operations return immediately.
+If the operation cannot be completed, they return an error like EAGAIN instead of blocking.
+And when a program blocks it means the program pauses execution until the operation can be completed.
+If server blocks:
+    - one slow client = everyone waits
+    - one stalled read = server frozen
+    - one upload = no downloads
+
+
+_______________________________________________________________________________________________
+How does the server know when to read or write?
+
+We use poll() to ask the kernel which sockets are ready for reading or writing.
+The state machine is implemented in our code to track what each connection is currently doing.
+The kernel wakes us up only when something is ready.
+
+
+_______________________________________________________________________________________________
+Why we need a state machine
+
+HTTP requests don’t arrive all at once. They arrive in pieces.
+So each connection has a state:
+reading headers, reading body, writing response, or draining leftover data.
+This allows one thread to safely manage many clients at the same time.
+
+_______________________________________________________________________________________________
+What HTTP looks like
+
+HTTP is plain text and an HTTP request looks like:
+"
+        GET /index.html HTTP/1.1
+        Host: example.com
+        User-Agent: curl/7.88.1
+        Content-Length: 10
+
+        HelloWorld
+"
+
+It has:
+        Request line
+        Headers
+        Empty line
+        Optional body
+        The empty line (\r\n\r\n) is important.
+
+And the response, HTTP response looks like:
+"
+        HTTP/1.1 200 OK
+        Content-Type: text/html
+        Content-Length: 123
+
+        <html>...</html>
+"
+
+_______________________________________________________________________________________________
+Reading HTTP requests
+
+We read bytes from the socket until we detect the end of the HTTP headers, which is marked by
+a double CRLF (\r\n\r\n). Once headers are complete, we parse the request line and header fields.
+Based on the headers, we determine how the body must be read:
+    - no body
+    - a fixed length body (Content-Length)
+    - or chunked transfer encoding.”
+
+_______________________________________________________________________________________________
+Why draining exists (if we check the logic of drain)
+
+If a request is invalid, for example the body is too large,
+we still need to read and discard the remaining data.
+Otherwise, the TCP stream would be corrupted for the next request on the same connection.
+
+_______________________________________________________________________________________________
+Application layer vs core layer
+
+The core layer handles networking: sockets, poll, timeouts, reading and writing bytes.
+The application layer receives a fully parsed request and decides what to do:
+routing, method checks, filesystem access, CGI, and building the response.
+
+_______________________________________________________________________________________________
+CGI handling (For Hugo to explain)
+
+CGI is special because it runs external programs.
+We fork a child process, connect pipes to its stdin and stdout, and execute the CGI program.
+We also make sure CGI processes don’t inherit listening sockets, and we apply timeouts.
+
+_______________________________________________________________________________________________
+Keep-alive connections -> What is keep-alive?
+
+In HTTP/1.0, one request means one connection and it is closed immediately.
+In HTTP/1.1, one connection means multiple requests.
+
+Keep-alive exists because
+    - opening TCP connections is expensive
+    - keep-alive reduces latency
+    - browsers reuse connections
+
+It works by
+    - the client sending requests
+    - then the server sends a response
+    - connection stays open
+    - but a client may send another request
+    - No new TCP connection is created between requests
+
+Keep-alive means the server does not close the TCP connection after one response,
+allowing the client to send another request on the same connection.
+
+_______________________________________________________________________________________________
+Conclusion
+
+This project is about building a correct, non-blocking, event-driven HTTP server using low-level system calls.
+It combines networking, protocol parsing, state machines, and process control.
+All design choices were made to respect correctness, non-blocking behavior, and HTTP semantics.
