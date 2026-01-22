@@ -521,6 +521,7 @@ static const Location* longestPrefixMatch(const Server& srv, const std::string& 
 
 
     void    ServerRunner::dispatchRequest(Connection& connection) {
+    
         /*
             Ask the App layer to build the response for this request
             Not the same function. It is calling handleRequest from the App.hpp
@@ -581,9 +582,6 @@ static const Location* longestPrefixMatch(const Server& srv, const std::string& 
         if (pit != _fdIndex.end())
             _fds[pit->second].events = POLLOUT;
     }
-
-
-
 
 void ServerRunner::readFromClient(int clientFd) {
 
@@ -819,6 +817,9 @@ void ServerRunner::readFromClient(int clientFd) {
                 if (!fromLoc && connection.srv->directives.count("client_max_body_size"))
                     limit = parseSize(connection.srv->directives.find("client_max_body_size")->second);
             }
+
+            if (limit == 0)
+                limit = std::numeric_limits<size_t>::max();
             connection.clientMaxBodySize = limit;
 
             // ---- EARLY CHECKS (CL > limit) ----
@@ -853,8 +854,7 @@ void ServerRunner::readFromClient(int clientFd) {
             }
 
             // ---- Transition depending on body presence ----
-            if (connection.request.body_reader_state == BR_NONE) {
-                
+            if (connection.request.body_reader_state == BR_NONE)    {
                 dispatchRequest(connection);
                 return;
             }
@@ -906,7 +906,6 @@ void ServerRunner::readFromClient(int clientFd) {
             
 
             if (result == http::BODY_COMPLETE) {
-                
                 dispatchRequest(connection);
                 return;
             }
@@ -1095,6 +1094,20 @@ void ServerRunner::writeToClient(int clientFd) {
         connection.headersComplete = false;
         connection.sentContinue = false;
 
+        // Step 4: cleanup spooled body storage for this finished request
+        if (connection.request.body_in_file && !connection.request.body_file_path.empty())  {
+        
+            // Close fd if still open (should already be closed at BODY_COMPLETE, but safe)
+            connection.request.closeBodyFileFd();
+            
+            // Truncate file to 0 so disk doesn't fill (unlink/remove not used)
+            int tfd = open(connection.request.body_file_path.c_str(), O_WRONLY | O_TRUNC);
+            if (tfd != -1)
+            close(tfd);
+        }
+        else
+            std::string().swap(connection.request.body);
+
         connection.request = HTTP_Request();
         connection.response = HTTP_Response();
 
@@ -1134,6 +1147,21 @@ void ServerRunner::writeToClient(int clientFd) {
 
 
 void	ServerRunner::closeConnection(int clientFd)	{
+
+    // Step 4: cleanup spooled body storage before erasing connection
+    std::map<int, Connection>::iterator cit = _connections.find(clientFd);
+    if (cit != _connections.end())  {
+        HTTP_Request&   req = cit->second.request;
+
+        if (req.body_in_file && !req.body_file_path.empty())    {
+            req.closeBodyFileFd();
+            int tfd = open(req.body_file_path.c_str(), O_WRONLY | O_TRUNC);
+            if (tfd != -1)
+            close(tfd);
+        }
+        else
+            std::string().swap(req.body);
+    }
 
 	close(clientFd);
 	_connections.erase(clientFd);

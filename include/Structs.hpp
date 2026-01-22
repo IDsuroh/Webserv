@@ -58,6 +58,11 @@ struct HTTP_Request	{
 	BodyReaderState						body_reader_state;
 	ChunkState							chunk_state;
 
+	// NEW SPOOLING
+	bool		body_in_file;
+	std::string	body_file_path;
+	int			body_file_fd;
+
 	HTTP_Request()
 	:	keep_alive(true)
 	,	expectContinue(false)
@@ -75,7 +80,18 @@ struct HTTP_Request	{
 	,	chunk_bytes_left(0)
 	,	body_reader_state(BR_NONE)
 	,	chunk_state(CS_SIZE)
+	,	body_in_file(false)
+	,	body_file_path("")
+	,	body_file_fd(-1)
 	{}
+
+	// resetting temp file -> truncating it to 0
+	void	closeBodyFileFd()	{
+		if (body_file_fd != -1)	{
+			close(body_file_fd);
+			body_file_fd = -1;
+		}
+	}
 };
 
 struct HTTP_Response	{

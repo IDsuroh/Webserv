@@ -1,6 +1,102 @@
 #include "HttpBody.hpp"
 
+static const std::size_t    BODY_SPOOL_THRESHOLD = 1024 * 1024;
+static unsigned long        g_spoolCounter = 0;
+
 namespace   {
+
+    bool    open_spool_file(HTTP_Request& req, int connFd)  {
+        if (req.body_file_fd != -1)
+            return true;
+
+        // Generating path
+        std::ostringstream  oss;
+        oss << "/tmp/webserv_body_" << connFd << "_" << g_spoolCounter++ << ".tmp";
+        req.body_file_path = oss.str();
+
+        int fd = open(req.body_file_path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        if (fd == -1)
+            return false;
+
+        int fdflags = fcntl(fd, F_GETFD);
+        if (fdflags != -1)
+            fcntl(fd, F_SETFD, fdflags | FD_CLOEXEC);
+        
+        req.body_file_fd = fd;
+        req.body_in_file = true;
+        return true;
+    }
+
+    bool    write_all_file(int fd, const char* data, std::size_t len)   {
+        std::size_t off = 0;
+        while (off < len)   {
+            ssize_t w = write(fd, data + off, len - off);   // regular file writing
+            if (w <= 0)
+                return false;
+            off += (std::size_t)w;
+        }
+        return true;
+    }
+
+    bool    append_body_chunk(Connection& c, const char* data, std::size_t len, std::size_t maxBody, int& status, std::string& reason)  {
+        HTTP_Request&   req = c.request;
+
+        if (req.body_received + len > maxBody)  {
+            status = 413;
+            reason = "Payload Too Large";
+            return false;
+        }
+
+        // if already in spooling
+        if (req.body_in_file)   {
+            if (req.body_file_fd == -1) {
+                status = 500;
+                reason = "Internal Server Error";
+                return false;
+            }
+            if (!write_all_file(req.body_file_fd, data, len))   {
+                status = 500;
+                reason = "Internal Server Error";
+                return false;
+            }
+            req.body_received += len;
+            return true;
+        }
+
+        // not spooling yet
+        if (req.body.size() + len <= BODY_SPOOL_THRESHOLD)  {
+            req.body.append(data, len);
+            req.body_received += len;
+            return true;
+        }
+
+        // switch to spooling
+        if (!open_spool_file(req, c.fd))    {
+            status = 500;
+            reason = "Internal Server Error";
+            return false;
+        }
+
+        // Dump current in-memory body into file
+        if (!req.body.empty())  {
+            if (!write_all_file(req.body_file_fd, req.body.data(), req.body.size()))    {
+                status = 500;
+                reason = "Internal Server Error";
+                return false;
+            }
+            std::string().swap(req.body);
+        }
+
+        // Then write the new chunk
+        if (!write_all_file(req.body_file_fd, data, len))   {
+            status = 500;
+            reason = "Internal Server Error";
+            return false;
+        }
+
+        req.body_received += len;
+        return true;
+    }
 
     /* Trim helpers (ASCII space/tab/CR/LF). */
     std::string trimLeft(const std::string& s)  {
@@ -98,15 +194,24 @@ namespace http  {
         std::size_t avail = connection.readBuffer.size();
         std::size_t take = (avail < need) ? avail : need;
 
+        // changed part to support spool
         if (have + take > max_body)
             return body_fail(413, "Payload Too Large", status, reason);
 
-        request.body.append(connection.readBuffer.data(), take);
-        request.body_received += take;
+        // NEW: append into memory OR spool file
+        if (!append_body_chunk(connection, connection.readBuffer.data(), take, max_body, status, reason))
+            return BODY_ERROR; // status/reason already set
 
         connection.readBuffer.erase(0, take);
 
-        return (request.body_received == request.content_length) ? BODY_COMPLETE : BODY_INCOMPLETE;
+        // If complete, close the spool fd so App/CGI can open/read the file
+        if (request.body_received == request.content_length) {
+            if (request.body_in_file)
+                request.closeBodyFileFd();
+            return BODY_COMPLETE;
+        }
+        return BODY_INCOMPLETE;
+        //
     }
 
     BodyResult  consume_body_chunked(Connection& connection, std::size_t max_body, int& status, std::string& reason)    {
@@ -153,10 +258,11 @@ namespace http  {
                     if (take > max_body - request.body_received)
                         return body_fail(413, "Payload Too Large", status, reason);
 
-                    request.body.append(connection.readBuffer.data(), take);
-                    request.body_received += take;
-                    request.chunk_bytes_left -= take;
+                    // NEW: append into memory OR spool file
+                    if (!append_body_chunk(connection, connection.readBuffer.data(), take, max_body, status, reason))
+                        return BODY_ERROR;
 
+                    request.chunk_bytes_left -= take;
                     connection.readBuffer.erase(0, take);
 
                     if (request.chunk_bytes_left == 0)
@@ -181,6 +287,8 @@ namespace http  {
                         return trail;  // BODY_INCOMPLETE or BODY_ERROR (propagate)
 
 					request.chunk_state = CS_DONE;
+                    if (request.body_in_file)
+                        request.closeBodyFileFd();
 					return BODY_COMPLETE;
 				}
 

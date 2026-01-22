@@ -6,7 +6,7 @@
 /*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/22 10:46:09 by suroh            ###   ########.fr       */
+/*   Updated: 2026/01/22 21:10:26 by suroh            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1488,6 +1488,154 @@ namespace {
 	}
 
 	/*
+		NEW: newly added function for spooling
+		Streams a body from a regular file into CGI stdin while draining CGI stdout using poll().
+		Body file reads are regular disk I/O (exempt from poll). Pipe I/O remains poll-driven.
+	*/
+	CgiRawOutput pumpCgiPipesFromFile(const CgiPipes& pipes, std::size_t timeoutSeconds, const std::string& bodyPath)	{
+
+		CgiRawOutput	cgiOutput;
+		
+		const int	timeoutMs = static_cast<int>(timeoutSeconds * 1000);
+		const int	sliceMs = 200;
+		int	idleMs = 0;
+		
+		int	bodyFd = open(bodyPath.c_str(), O_RDONLY);
+		if (bodyFd == -1)
+			close(pipes.stdinParent);
+		
+		std::string	pending;	// bytes read from file but not yet written to CGI stdin
+		pending.reserve(64 * 1024);
+		
+		bool	stdinClosed = false;
+		bool	eof = false;
+		bool	bodyEof = false;
+		
+		if (bodyFd == -1)
+			stdinClosed = true;
+		
+		while (!eof && !cgiOutput.timedOut)	{
+
+			struct pollfd	pfds[2];
+			int	nfds = 0;
+			
+			pfds[nfds].fd = pipes.stdoutParent;
+			pfds[nfds].events = POLLIN | POLLHUP | POLLERR;
+			pfds[nfds].revents = 0;
+			nfds++;
+			
+			if (!stdinClosed)	{
+				pfds[nfds].fd = pipes.stdinParent;
+				pfds[nfds].events = POLLOUT | POLLHUP | POLLERR;
+				pfds[nfds].revents = 0;
+				nfds++;
+			}
+			
+			int	pollResult = poll(pfds, nfds, sliceMs);
+			
+			if (pollResult < 0)	{
+				if (errno == EINTR)
+					continue;
+				eof = true;
+				break;
+			}
+			
+			if (pollResult == 0)	{
+				idleMs += sliceMs;
+				if (idleMs >= timeoutMs)	{
+					cgiOutput.timedOut = true;
+					break;
+				}
+				continue;
+			}
+			
+			bool	progressed = false;
+			
+			// 1) Read stdout (index 0)
+			if (pfds[0].revents & POLLERR)
+				eof = true;
+			
+			if (pfds[0].revents & (POLLIN | POLLHUP))	{
+				char	buf[4096];
+				for (;;)	{
+					ssize_t	n = read(pipes.stdoutParent, buf, sizeof(buf));
+					if (n > 0)	{
+						cgiOutput.data.append(buf, static_cast<size_t>(n));
+						progressed = true;
+						continue;
+					}
+					if (n == 0)
+						eof = true;
+					break; // n <= 0, no errno logic
+				}
+
+				if ((pfds[0].revents & POLLHUP) && !(pfds[0].revents & POLLIN))
+					eof = true;
+			}//
+
+			// 2) Write stdin from file (index 1)
+			if (!stdinClosed)	{
+				if (pfds[1].revents & (POLLERR | POLLHUP))	{
+					stdinClosed = true;
+					close(pipes.stdinParent);
+				}
+				else if (pfds[1].revents & POLLOUT)	{
+					// Load pending if empty and not at file EOF
+					if (pending.empty() && !bodyEof)	{
+						char	b[64 * 1024];
+						ssize_t	r = read(bodyFd, b, sizeof(b));	// disk read: exempt
+						if (r > 0)
+							pending.assign(b, static_cast<size_t>(r));
+						else
+							bodyEof = true;
+					}
+
+					// Try to write pending to pipe
+					while (!pending.empty())	{
+						ssize_t	w = write(pipes.stdinParent, pending.data(), pending.size());
+						if (w > 0)	{
+							pending.erase(0, static_cast<size_t>(w));
+							progressed = true;
+							continue;
+						}
+						break;
+					}
+					// Finished sending body -> close stdin to send EOF
+					if (!stdinClosed && bodyEof && pending.empty())	{
+						stdinClosed = true;
+						close(pipes.stdinParent);
+					}
+				}
+			}
+
+			if (progressed)
+			idleMs = 0;
+		}
+
+		if (bodyFd != -1)
+			close(bodyFd);
+
+		if (cgiOutput.timedOut)	{
+			kill(pipes.pid, SIGKILL);
+			waitpid(pipes.pid, NULL, 0);
+			close(pipes.stdoutParent);
+			return cgiOutput;
+		}
+		
+		int	childStatus = 0;
+		if (waitpid(pipes.pid, &childStatus, 0) > 0)	{
+			if (WIFEXITED(childStatus))
+				cgiOutput.exitStatus = WEXITSTATUS(childStatus);
+			else if (WIFSIGNALED(childStatus))
+				cgiOutput.exitStatus = 128 + WTERMSIG(childStatus);
+		}
+		
+		close(pipes.stdoutParent);
+		return cgiOutput;
+	}
+
+
+	/*
 	 Container for parsed CGI output, storing status, headers, body and a flag
 	 indicating whether the header section was syntactically valid.
 	*/
@@ -1701,7 +1849,12 @@ namespace {
 		if (!spawnCgiProcess(argv, envp, pipes))
 			return makeErrorResponse(500, &cfg);
 		
-		CgiRawOutput raw = pumpCgiPipes(pipes, cfg.cgiTimeout, req.body);
+		CgiRawOutput	raw;
+		if (req.body_in_file)
+			raw = pumpCgiPipesFromFile(pipes, cfg.cgiTimeout, req.body_file_path);
+		else
+			raw = pumpCgiPipes(pipes, cfg.cgiTimeout, req.body);
+
 
 		if (raw.timedOut)
 			return makeErrorResponse(504, &cfg);
@@ -1861,6 +2014,44 @@ namespace {
 		return 0;									// Success
 	}
 
+
+	/*
+		NEW: new helper function for spooling
+		Copies an uploaded body from a spool file to the destination path.
+		Returns 0 on success, 403/500 on failure (same convention as writeUploadedFile).
+	*/
+	int	writeUploadedFileFromSpool(const std::string& dest, const std::string& spoolPath)	{
+	
+		std::ifstream	in(spoolPath.c_str(), std::ios::in | std::ios::binary);
+		if (in.fail())
+			return 500;
+		
+		std::ofstream	out(dest.c_str(), std::ios::out | std::ios::binary);
+		if (out.fail())	{
+			if (errno == EACCES)	// a check after opening a file. its on regular file not on read write
+				return 403;
+			return 500;
+		}
+		
+		char	buf[64 * 1024];
+		while (in.good())	{
+			in.read(buf, sizeof(buf));
+			std::streamsize	got = in.gcount();
+			if (got > 0)	{
+				out.write(buf, got);
+				if (out.fail())	{
+					out.close();
+					// Leaving a partial file is acceptable; server may overwrite next time or conflict-check prevents it.
+					return 500;
+				}
+			}
+		}
+		
+		out.close();
+		return 0;
+	}
+
+
 	/*
 	 Builds a 201 Created response with a Location header pointing to the target.
 	*/
@@ -1902,10 +2093,16 @@ namespace {
 		if (status != 0)
 			return makeErrorResponse(status, &cfg);
 
-		int writeStatus = writeUploadedFile(dest, req.body);
+		int	writeStatus;	// new: changed for spool
+
+		if (req.body_in_file)
+			writeStatus = writeUploadedFileFromSpool(dest, req.body_file_path);
+		else
+			writeStatus = writeUploadedFile(dest, req.body);
+
 		if (writeStatus != 0)
 			return makeErrorResponse(writeStatus, &cfg);
-
+		
 		return makeResponse201(req.target);
 	}
 
