@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/23 20:40:13 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/23 23:04:57 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -529,30 +529,31 @@ namespace {
 	 remaining path under the effective root directory.
 	 EffectiveConfig::root is expected to already reflect server/location merging.
 	*/
-	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& uriPath) {
+	std::string makeFilesystemPath(const EffectiveConfig& cfg, const std::string& reqPath) {
 
 		const std::string locationPrefix = (cfg.location ? cfg.location->path : "");	// ex: "/images" (or "")
-		std::string uriRemainder;
+		std::string reqPathRemainder;
 
 		if (!locationPrefix.empty() &&											// If there is a matched location, strip its prefix from the URI
-			uriPath.compare(0, locationPrefix.size(), locationPrefix) == 0)
-			uriRemainder = uriPath.substr(locationPrefix.size());				// ex: "/images/logo.png" -> "/logo.png"
+			reqPath.compare(0, locationPrefix.size(), locationPrefix) == 0)
+			reqPathRemainder = reqPath.substr(locationPrefix.size());			// ex: "/images/logo.png" -> "/logo.png"
 		else
-			uriRemainder = uriPath;
+			reqPathRemainder = reqPath;
 
-		if (uriRemainder.empty())												// Ensure we always join root + "/something"
-			uriRemainder = "/";
+		if (reqPathRemainder.empty())											// Ensure we always join root + "/something"
+			reqPathRemainder = "/";
 
-		if (!cfg.root.empty() && cfg.root[cfg.root.size() - 1] == '/' &&		// Join root + uriRemainder with exactly one '/'
-			!uriRemainder.empty() && uriRemainder[0] == '/')
-			return cfg.root.substr(0, cfg.root.size() - 1) + uriRemainder;
+		// Join root + uriRemainder with exactly one '/'
+		bool rootEndsSlash = !cfg.root.empty() && cfg.root[cfg.root.size() - 1] == '/';
+		bool remStartsSlash = !reqPathRemainder.empty() && reqPathRemainder[0] == '/';
+	
+		if (rootEndsSlash && remStartsSlash)
+			return cfg.root.substr(0, cfg.root.size() - 1) + reqPathRemainder;
+		if (!rootEndsSlash && !remStartsSlash)
+			return cfg.root + "/" + reqPathRemainder;
 
-		if (!uriRemainder.empty() && uriRemainder[0] == '/')
-			return cfg.root + uriRemainder;
-
-		return cfg.root + "/" + uriRemainder;
+		return cfg.root + reqPathRemainder;
 	}
-
 
 	/*
 	 Validates and canonicalizes a filesystem path relative to the given root.
