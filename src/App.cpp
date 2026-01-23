@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/23 12:48:48 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/23 15:30:10 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -104,113 +104,8 @@ namespace {
 	}
 
 
-	// ---------------------------
-	// --- 2. Server selection ---
-	// ---------------------------
-
-	/*
-	 Extracts and validates the port from a listen specification.
-	 Supports formats with or without host and applies the default
-	 port (80) when none is explicitly provided.
-	*/	
-	bool parseListenPort(const std::string& spec, int& outPort) {
-	
-		// Accepts: "8080", "127.0.0.1:8080", ":8080", "0.0.0.0:8080", "*:8080"
-		std::string pstr;
-		std::string::size_type colon = spec.rfind(':');
-
-		if (colon == std::string::npos) {
-			// Either it is just "8080" (digits only) or it is just "host" (no port -> default 80)
-			bool allDigits = !spec.empty();
-			for (std::size_t i = 0; i < spec.size(); ++i) {
-				unsigned char c = static_cast<unsigned char>(spec[i]);
-				if (!std::isdigit(c)) { allDigits = false; break; }
-			}
-			if (allDigits)
-				pstr = spec;
-			else
-				pstr = ""; // host-only -> default
-		} else {
-			pstr = (colon + 1 < spec.size()) ? spec.substr(colon + 1) : "";
-		}
-
-		if (pstr.empty()) {
-			outPort = 80;
-			return true;
-		}
-
-		char* endptr = 0;
-		long v = std::strtol(pstr.c_str(), &endptr, 10);
-		if (endptr == pstr.c_str() || *endptr != '\0' || v < 1 || v > 65535)
-			return false;
-
-		outPort = static_cast<int>(v);
-		return true;
-	}
-
-	/*
-	 Determines the primary port associated with a server.
-	 For our use case, considering the first valid listen
-	 is sufficient under the “one server per port” model.
-	*/
-	int getServerPrimaryPort(const Server& srv) {
-		// “Server port”: for our case, it is enough to use the first valid listen.
-		// (This is exactly the “one server per port” case from the problem statement.)
-		for (std::size_t i = 0; i < srv.listen.size(); ++i) {
-			int port = 0;
-			if (parseListenPort(srv.listen[i], port))
-				return port;
-		}
-		return 80; // fallback defensivo
-	}
-
-	/*
-	 Removes the port from a host string, if present.
-	 Returns only the hostname, leaving it unchanged
-	 when no port is specified.
-	*/
-	std::string hostWithoutPort(const std::string& host) {
-		// If it receives "127.0.0.1:8080" it returns "127.0.0.1"
-		// If it receives "localhost" it returns "localhost"
-		std::string::size_type colon = host.rfind(':');
-		if (colon == std::string::npos)
-			return host;
-		return host.substr(0, colon);
-	}
-
-	/*
-	 Selects the most appropriate server for an HTTP request.
-	 Scopes first by port, then attempts a server_name match,
-	 falling back to the active server by default.
-	*/
-	static const Server& selectServerForRequest(const std::vector<Server>& allServers, const Server& activeServer, const HTTP_Request& request) {
-		
-		// 1) First: the port is the “scope”
-		const int activePort = getServerPrimaryPort(activeServer);
-
-		// 2) Within that port, try to match by server_name (optional extra)
-		const std::string hostKey = hostWithoutPort(request.host);
-
-		for (std::size_t i = 0; i < allServers.size(); ++i) {
-			const Server& candidate = allServers[i];
-			if (getServerPrimaryPort(candidate) != activePort)
-				continue;
-
-			if (hostKey.empty())
-				continue;
-
-			if (std::find(candidate.server_name.begin(), candidate.server_name.end(), hostKey) != candidate.server_name.end()) {
-				return candidate;
-			}
-		}
-
-		// 3) Correct fallback for evaluation: the port’s default server
-		return activeServer;
-	}
-
-
 	// ----------------------------------------------
-	// --- 3. Location selection (longest prefix) ---
+	// --- 2. Location selection (longest prefix) ---
 	// ----------------------------------------------
 
 	/*
@@ -237,10 +132,10 @@ namespace {
 	
 
 	// -----------------------------------------------------
-	// --- 4. Effective config (merge Server + Location) ---
+	// --- 3. Effective config (merge Server + Location) ---
 	// -----------------------------------------------------
 
-	// --- 4.1. Effective Config Utilities (helper functions and structs) ---
+	// --- 3.1. Effective Config Utilities (helper functions and structs) ---
 
 	/*
 	 Default limits for maximum request body size and CGI execution timeout (default configuration constants).
@@ -493,7 +388,7 @@ namespace {
 			cfg.errorPages[parseHttpStatus(tokens[i])] = uri;
 	}
 
-	// --- 4.2. Effective Configuration Construction ---
+	// --- 3.2. Effective Configuration Construction ---
 
 	/*
 	 Builds the EffectiveConfig by merging Server and Location directives.
@@ -563,7 +458,7 @@ namespace {
 
 
 	// --------------------------------
-	// --- 5. Allowed methods / 405 ---
+	// --- 4. Allowed methods / 405 ---
 	// --------------------------------
 
 	/*
@@ -602,7 +497,7 @@ namespace {
 
 
 	// -----------------------------------------
-	// --- 6. Body validation (size, policy) ---
+	// --- 5. Body validation (size, policy) ---
 	// -----------------------------------------
 
 	/*
@@ -626,7 +521,7 @@ namespace {
 
 
 	// -----------------------------------------------
-	// --- 7. Root + path → secure filesystem path ---
+	// --- 6. Root + path → secure filesystem path ---
 	// -----------------------------------------------
 
 	/*
@@ -704,7 +599,7 @@ namespace {
 
 
 	// ----------------------------------
-	// --- 8. Request classification ----
+	// --- 7. Request classification ----
 	// ----------------------------------
 
 	/*
@@ -752,7 +647,7 @@ namespace {
 
 
 	// ----------------------
-	// --- 9. Static file ---
+	// --- 8. Static file ---
 	// ----------------------
 
 	std::string getMimeType(const std::string& extension);
@@ -807,9 +702,9 @@ namespace {
 	}
 
 
-	// -------------------------
-	// --- 9.1 DELETE method ---
-	// -------------------------
+	// --------------------------
+	// --- 8.1. DELETE method ---
+	// --------------------------
 
 	/*
 	 Deletes a file on disk using the standard C library remove().
@@ -853,11 +748,11 @@ namespace {
 	}
 
 
-	// -----------------------------------------
-	// --- 10. Directory / index / autoindex ---
-	// -----------------------------------------
+	// ----------------------------------------
+	// --- 9. Directory / index / autoindex ---
+	// ----------------------------------------
 
-	// --- 10.1. Directory/Index Utilities (Helper Functions) ---
+	// --- 9.1. Directory/Index Utilities (Helper Functions) ---
 
 	/*
 	 Escapes special HTML characters in a string, producing a safe HTML-encoded output.
@@ -961,7 +856,7 @@ namespace {
 		return oss.str();													// Return final HTML page
 	}
 
-	// --- 10.2. Directory Request Handler ---
+	// --- 9.2. Directory Request Handler ---
 	
 	/*
 	 Handles a request targeting a directory: tries index files first, then
@@ -1009,7 +904,7 @@ namespace {
 
 
 	// ---------------
-    // --- 11. CGI ---
+    // --- 10. CGI ---
 	// ---------------
 
 	/*
@@ -1737,10 +1632,10 @@ namespace {
 
 
 	// -------------------
-	// --- 12. Uploads ---
+	// --- 11. Uploads ---
 	// -------------------
 
-	// --- 12.1. Upload Utilities (Helper Functions) ---
+	// --- 11.1. Upload Utilities (Helper Functions) ---
 
 	/*
 	 Validates an upload filename to ensure it is safe: rejects empty names,
@@ -1878,7 +1773,7 @@ namespace {
 		return res;
 	}
 
-	// --- 12.2. Upload Request Handler ---
+	// --- 11.2. Upload Request Handler ---
 
 	/*
 	 Handles a simple upload request: validates the filename and upload directory,
@@ -1911,7 +1806,7 @@ namespace {
 
 
 	// -----------------------------------------
-	// --- 13. Error pages: custom / generic ---
+	// --- 12. Error pages: custom / generic ---
 	// -----------------------------------------
 
 	/*
@@ -2032,7 +1927,7 @@ namespace {
 
 
 	// ---------------------------------
-	// --- 14. Redirection responses ---
+	// --- 13. Redirection responses ---
 	// ---------------------------------
 
 	/*
@@ -2068,7 +1963,7 @@ namespace {
 	
 
 	// ----------------------
-	// --- 15. MIME types ---
+	// --- 14. MIME types ---
 	// ----------------------
 
 	/*
@@ -2099,7 +1994,7 @@ namespace {
 
 
 	// -----------------------------------
-	// --- 16. Connection / keep-alive ---
+	// --- 15. Connection / keep-alive ---
 	// -----------------------------------
 
 	/*
@@ -2122,7 +2017,7 @@ namespace {
 
 
 	// ----------------------------------------
-	// --- 17. Response post-processing     ---
+	// --- 16. Response post-processing     ---
 	// ----------------------------------------
 
 	/*
@@ -2175,15 +2070,9 @@ namespace {
  rules, maps the path to the filesystem or CGI, and delegates to the
  appropriate handler to produce the final HTTP response.
 */
-HTTP_Response handleRequest(const HTTP_Request& req, const Server& activeServer, const std::vector<Server>& allServers)
+HTTP_Response handleRequest(const HTTP_Request& req, const Server& srv)
 {
 	bool keepAlive = req.keep_alive;
-
-	if (allServers.empty()) {
-		HTTP_Response res = makeErrorResponse(500, NULL);
-		applyConnectionHeader(keepAlive, res);
-		return res;
-	}
 
 	std::string path;
 	std::string query;
@@ -2193,7 +2082,6 @@ HTTP_Response handleRequest(const HTTP_Request& req, const Server& activeServer,
 		return res;
 	}
 
-	const Server&   srv = selectServerForRequest(allServers, activeServer, req);
 	const Location* loc = matchLocation(srv, path);
 
 	EffectiveConfig cfg;

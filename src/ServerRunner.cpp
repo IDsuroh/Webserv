@@ -203,7 +203,7 @@ void	setupListeners(const std::vector<Server>& servers, std::vector<Listener>& o
 			L.fd = fd;
 			L.config = &srv;
 			outListeners.push_back(L);	// Adds to _listeners array
-            std::cout	<< "Listening on port " << srv.listen[i] << "\n";
+            std::cout	<< "Listening on " << srv.listen[i] << "\n";
 		}
 
 	}
@@ -526,9 +526,9 @@ static const Location* longestPrefixMatch(const Server& srv, const std::string& 
             Not the same function. It is calling handleRequest from the App.hpp
             which is a free function in the global namespace.
         */
-        const Server& active = connection.srv ? *connection.srv : _servers[0];
+        const Server& activeServer = connection.srv ? *connection.srv : _servers[0];
 
-        HTTP_Response appRes = ::handleRequest(connection.request, active, _servers);
+        HTTP_Response appRes = ::handleRequest(connection.request, activeServer);
         
 
         // If App says “close”, override keep-alive
