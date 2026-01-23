@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/23 18:38:50 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/23 18:48:44 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -251,6 +251,33 @@ namespace {
 	}
 
 	/*
+	 Parses a numeric string into size_t, validating digits and overflow conditions.
+	*/
+	size_t parseSizeT(const std::string& str) {
+
+		if (str.empty())
+			throw std::runtime_error("Empty numeric value");
+
+		size_t value = 0;
+		const size_t max = std::numeric_limits<size_t>::max();
+
+		for (size_t i = 0; i < str.size(); ++i) {
+
+			if (!(std::isdigit(static_cast<unsigned char>(str[i]))))
+				throw std::runtime_error("Invalid numeric value: " + str);
+
+			size_t digit = str[i] - '0';
+
+			if (value > max / 10 || (value == max / 10 && digit > max % 10))					// Prevent overflow before multiplication
+				throw std::runtime_error("Numeric value exceeds size_t range: " + str);
+
+			value = value * 10 + digit;
+		}
+
+		return value;
+	}
+
+	/*
 	 Parses a numeric value with an optional binary suffix (k, M, G) and returns
 	 the corresponding size in bytes. Throws on invalid syntax or overflow.
 	*/
@@ -306,34 +333,6 @@ namespace {
 
 		return static_cast<std::size_t>(result);
 	}
-
-	/*
-	 Parses a numeric string into size_t, validating digits and overflow conditions.
-	*/
-	size_t parseSizeT(const std::string& str) {
-
-		if (str.empty())
-			throw std::runtime_error("Empty numeric value");
-
-		size_t value = 0;
-		const size_t max = std::numeric_limits<size_t>::max();
-
-		for (size_t i = 0; i < str.size(); ++i) {
-
-			if (!(std::isdigit(static_cast<unsigned char>(str[i]))))
-				throw std::runtime_error("Invalid numeric value: " + str);
-
-			size_t digit = str[i] - '0';
-
-			if (value > max / 10 || (value == max / 10 && digit > max % 10))					// Prevent overflow before multiplication
-				throw std::runtime_error("Numeric value exceeds size_t range: " + str);
-
-			value = value * 10 + digit;
-		}
-
-		return value;
-	}
-
 
 	/*
 	 Looks up a directive by key, preferring Location over Server.
