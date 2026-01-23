@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   App.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: suroh <suroh@student.42.fr>                +#+  +:+       +#+        */
+/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/22 10:46:09 by suroh            ###   ########.fr       */
+/*   Updated: 2026/01/23 12:48:48 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -2193,7 +2193,6 @@ HTTP_Response handleRequest(const HTTP_Request& req, const Server& activeServer,
 		return res;
 	}
 
-	// FIX: escolher server com base na porta (activeServer) e só depois host (opcional)
 	const Server&   srv = selectServerForRequest(allServers, activeServer, req);
 	const Location* loc = matchLocation(srv, path);
 
