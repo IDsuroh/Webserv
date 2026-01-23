@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/23 15:30:10 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/23 18:38:50 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -285,7 +285,7 @@ namespace {
 
 			case 'm':
 			case 'M':
-				multiplier = 1024ULL * 1024ULL;
+				multiplier = 1024ULL * 1024ULL;									// to avoid intermediate overflow (evaluation as int)
 				break;
 
 			case 'g':
