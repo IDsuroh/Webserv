@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/23 18:48:44 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/23 20:40:13 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -483,7 +483,7 @@ namespace {
 
 		std::string allowed;
 		for (std::vector<std::string>::const_iterator it = cfg.allowedMethods.begin(); it != cfg.allowedMethods.end(); ++it) {
-			if (!allowed.empty())						// Add comma after the first method
+			if (!allowed.empty())						// Add comma only after the first method
 				allowed += ", ";
 			allowed += *it;
 		}
