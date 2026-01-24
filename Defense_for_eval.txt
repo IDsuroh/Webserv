@@ -17,7 +17,8 @@ I/O multiplexing = one thread/process can manage many sockets by asking the OS:
 
 In your project, the correct answer is:
 
-“We use poll() for I/O multiplexing. Our server is non-blocking; we put listening sockets + client sockets in a pollfd array, call poll() in the main loop, and only call read/write when poll tells us the fd is ready.”
+“We use poll() for I/O multiplexing. Our server is non-blocking; we put listening sockets + client sockets
+in a pollfd array, call poll() in the main loop, and only call read/write when poll tells us the fd is ready.”
 
 Siege is a HTTP load/stress testing tool. Evaluators use it to:
 - send many requests concurrently (GET/POST…) to your server
