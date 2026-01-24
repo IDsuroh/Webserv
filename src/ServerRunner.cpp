@@ -1,3 +1,15 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   ServerRunner.cpp                                   :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2026/01/24 10:44:46 by hugo-mar          #+#    #+#             */
+/*   Updated: 2026/01/24 10:45:53 by hugo-mar         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
 #include "../include/ServerRunner.hpp"
 #include "../include/HttpHeader.hpp"
 #include "../include/HttpSerializer.hpp"

@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/23 23:04:57 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/24 10:40:53 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -869,7 +869,7 @@ namespace {
 			std::string indexFileFsPath = joinPath(fsPath, cfg.indexFiles[i]);
 
 			struct stat st;
-			if (stat(indexFileFsPath.c_str(), &st) == 0 && S_ISREG(st.st_mode))			// Serve the first existing regular index file
+			if (stat(indexFileFsPath.c_str(), &st) == 0 && S_ISREG(st.st_mode))
 				return handleStaticFile(req, cfg, indexFileFsPath);
 		}
 
