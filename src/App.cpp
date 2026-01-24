@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/24 10:40:53 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/24 12:28:34 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1038,46 +1038,10 @@ namespace {
 		std::string::size_type	qPos = req.target.find('?');
 		const std::string		query = (qPos == std::string::npos) ? "" : req.target.substr(qPos + 1);		// query: without leading '?'
 
-		// 2) nginx-style split (ex, URL: /cgi-bin/app.py/users/42 -> SCRIPT_NAME = /cgi-bin/app.py, PATH_INFO = /users/42)
+		// 2) CGI path mapping (ex: /foo/bar -> SCRIPT_NAME=/foo/bar, PATH_INFO=/foo/bar, PATH_TRANSLATED=/var/www/foo/bar)
 		std::string			scriptName = requestPath;
-		std::string			pathInfo = "";
-		std::string			pathTranslated = "";
-
-		bool	foundBoundary = false;										// Track the best matching CGI script boundary 
-		size_t	bestBoundary = 0;
-		size_t	bestExtLen = 0;
-
-		for (std::map<std::string, std::string>::const_iterator it = cfg.cgiPass.begin(); it != cfg.cgiPass.end(); ++it) {		// Iterate over configured CGI extensions
-			const std::string&	ext = it->first;
-			if (ext.empty())
-				continue;
-
-			size_t	pos = requestPath.find(ext);																				// Find extension occurrences in the request path
-			while (pos != std::string::npos)	{
-				size_t	boundary = pos + ext.size();																			// Candidate boundary just after the extension
-
-				if (boundary <= requestPath.size() && (boundary == requestPath.size() || requestPath[boundary] == '/'))	{		// Valid boundary: end of path or followed by '/'
-					if (!foundBoundary || ext.size() > bestExtLen)	{															// Prefer the longest matching extension
-						foundBoundary = true;
-						bestExtLen = ext.size();
-						bestBoundary = boundary;
-					}
-					break;
-				}
-				pos = requestPath.find(ext, pos + 1);																			// Look for the next occurrence of this extension in URL (ex., /php/test.php/foo.php/bar)
-			}
-		}
-
-		if (foundBoundary) {											// If a valid CGI boundary was found, split script name and extra path
-			scriptName = requestPath.substr(0, bestBoundary);			// Script path up to and including the CGI extension
-			if (bestBoundary < requestPath.size())		
-				pathInfo = requestPath.substr(bestBoundary);			// Remaining path after the script becomes PATH_INFO (begins with '/')
-		}
-
-		if (pathInfo.empty()) {											// Fallback
-			pathInfo = requestPath;
-			pathTranslated = fsPath;
-		}
+		std::string			pathInfo = requestPath;
+		std::string			pathTranslated = fsPath;
 
 		if (!pathInfo.empty() && pathTranslated.empty()) {				// Translate PATH_INFO to filesystem path (only in case it hasn't been translated yet)
 
