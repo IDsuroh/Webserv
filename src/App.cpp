@@ -6,7 +6,7 @@
 /*   By: hugo-mar <hugo-mar@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/06 13:09:28 by hugo-mar          #+#    #+#             */
-/*   Updated: 2026/01/24 12:28:34 by hugo-mar         ###   ########.fr       */
+/*   Updated: 2026/01/25 11:03:01 by hugo-mar         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1251,6 +1251,10 @@ namespace {
 				if (errno == EINTR)						// interrupted by signal: retry
 					continue;
 				eof = true;								// poll failed: stop I/O loop
+				if (!stdinClosed) {
+					close(pipes.stdinParent);
+					stdinClosed = true;
+				}
 				break;
 			}
 
@@ -1258,6 +1262,10 @@ namespace {
 				idleMs += sliceMs;
 				if (idleMs >= timeoutMs) {
 					cgiOutput.timedOut = true;			// inactivity timeout reached
+					if (!stdinClosed) {
+						close(pipes.stdinParent);
+						stdinClosed = true;
+					}
 					break;
 				}
 				continue;
